@@ -39,6 +39,7 @@ void initOTA();
 bool connectToWiFi();
 void saveWiFiCredentials(const String& ssid, const String& password);
 void startConfigPortal();
+bool startConfigPortalSafe();
 void handleRoot();
 void handleSave();
 void handleWiFiLoop();

@@ -21,8 +21,8 @@ int bits_per_sample = 16;
 // Audio playback components
 
 const char *startFilePath="/";
-const char* ext="mp3";
-AudioSourceSDMMC source(startFilePath, ext);
+//const char* ext="mp3";
+AudioSourceSDMMC source(startFilePath);
 MP3DecoderHelix decoder;  // or change to MP3DecoderMAD
 AudioPlayer player(source, kit, decoder);
 bool isPlayingAudio = false;
@@ -34,13 +34,30 @@ const int MAX_SEQUENCE_LENGTH = 20;          // Maximum digits in sequence
 char dtmfSequence[MAX_SEQUENCE_LENGTH + 1];  // +1 for null terminator
 int sequenceIndex = 0;
 unsigned long lastDigitTime = 0;
-
+/*
+ * Audio Input Device Options (configurable via AUDIO_INPUT_DEVICE build flag):
+ * 
+ * ADC_INPUT_LINE1 - Microphone only (0x2020)
+ * ADC_INPUT_LINE2 - Line in only (0x0408) 
+ * ADC_INPUT_LINE3 - Right mic + left line in (0x0420)
+ * ADC_INPUT_ALL   - Both microphone and line in (0x0408 | 0x2020) [DEFAULT]
+ * 
+ * Set via platformio.ini build_flags:
+ * -DAUDIO_INPUT_DEVICE=ADC_INPUT_LINE2  ; for line in only
+ */
 // Helper function to setup audio input and FFT
 void setupAudioInput()
 {
     // Setup audio input (DTMF detection)
     auto cfg = kit.defaultConfig(RXTX_MODE);
-    cfg.input_device = ADC_INPUT_LINE2;
+    
+    // Configure input device - can be set via build flags
+#ifdef AUDIO_INPUT_DEVICE
+    cfg.input_device = AUDIO_INPUT_DEVICE;
+#else
+    cfg.input_device = ADC_INPUT_ALL; // Default: both microphone and line in
+#endif
+    
     cfg.channels = channels;
     cfg.sample_rate = samples_per_second;
     cfg.bits_per_sample = bits_per_sample;
@@ -135,11 +152,16 @@ bool checkForDTMFSequence()
 void setup()
 {
     Serial.begin(115200);
-    delay(1000); // Give serial time to initialize
+    delay(2000); // Give serial time to initialize
 
     Serial.printf("=== Bowie Phone Starting ===\n");
 
-    // Initialize WiFi first
+    // Add more startup delay for system stabilization
+    Serial.println("🔧 Allowing system to stabilize...");
+    delay(3000);
+
+    // Initialize WiFi with careful error handling
+    Serial.println("🔧 Starting WiFi initialization...");
     initWiFi();
 
     // Initialize OTA updates (must be after WiFi)
@@ -159,6 +181,17 @@ void setup()
 
 void loop()
 {
+    // Stack monitoring - check available stack space periodically
+    static unsigned long lastStackCheck = 0;
+    if (millis() - lastStackCheck > 10000) // Check every 10 seconds
+    {
+        size_t freeStack = uxTaskGetStackHighWaterMark(NULL);
+        if (freeStack < 1024) {
+            Serial.printf("⚠️ Low stack space: %d bytes remaining\n", freeStack);
+        }
+        lastStackCheck = millis();
+    }
+    
     // Handle WiFi management (config portal and OTA)
     handleWiFiLoop();
     

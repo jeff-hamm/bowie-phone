@@ -1,4 +1,5 @@
 #include "wifi_manager.h"
+#include "nvs_flash.h"
 
 // WiFi Setup Variables
 WebServer server(80);
@@ -9,7 +10,11 @@ bool isConfigMode = false;
 // Save WiFi credentials to preferences
 void saveWiFiCredentials(const String& ssid, const String& password)
 {
-    wifiPrefs.begin("wifi", false);
+    if (!wifiPrefs.begin("wifi", false))
+    {
+        Serial.println("❌ Failed to open WiFi preferences for writing");
+        return;
+    }
     
     wifiPrefs.putString("ssid", ssid);
     wifiPrefs.putString("password", password);
@@ -62,7 +67,12 @@ void handleSave()
 // Connect to WiFi using saved credentials
 bool connectToWiFi()
 {
-    wifiPrefs.begin("wifi", true); // Read-only
+    if (!wifiPrefs.begin("wifi", true)) // Read-only
+    {
+        Serial.println("❌ Failed to open WiFi preferences");
+        return false;
+    }
+    
     String ssid = wifiPrefs.getString("ssid", "");
     String password = wifiPrefs.getString("password", "");
     wifiPrefs.end();
@@ -103,16 +113,83 @@ bool connectToWiFi()
     }
 }
 
-// Start WiFi configuration portal
+// Safer version of configuration portal startup
+bool startConfigPortalSafe()
+{
+    Serial.println("🔧 Starting WiFi configuration portal (safe mode)...");
+    
+    // First, ensure we're in a clean state
+    Serial.println("🔧 Disconnecting from any existing WiFi...");
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    delay(2000);
+    
+    // Try to set mode carefully
+    Serial.println("🔧 Setting WiFi mode to AP...");
+    for (int retry = 0; retry < 3; retry++) {
+        if (WiFi.mode(WIFI_AP)) {
+            Serial.println("✅ WiFi mode set to AP");
+            break;
+        }
+        Serial.printf("⚠️ WiFi mode retry %d/3\n", retry + 1);
+        delay(1000);
+        if (retry == 2) {
+            Serial.println("❌ Failed to set WiFi mode after retries");
+            return false;
+        }
+    }
+    
+    delay(1000);
+    
+    // Try to start SoftAP carefully
+    Serial.println("🔧 Starting SoftAP...");
+    for (int retry = 0; retry < 3; retry++) {
+        if (WiFi.softAP(WIFI_AP_NAME, WIFI_AP_PASSWORD)) {
+            Serial.println("✅ SoftAP started successfully");
+            isConfigMode = true;
+            break;
+        }
+        Serial.printf("⚠️ SoftAP retry %d/3\n", retry + 1);
+        delay(1000);
+        if (retry == 2) {
+            Serial.println("❌ Failed to start SoftAP after retries");
+            return false;
+        }
+    }
+    
+    delay(1000);
+    
+    // Now setup the web server and DNS
+    IPAddress apIP = WiFi.softAPIP();
+    Serial.printf("📡 WiFi configuration portal started\n");
+    Serial.printf("AP Name: %s\n", WIFI_AP_NAME);
+    Serial.printf("AP Password: %s\n", WIFI_AP_PASSWORD);
+    Serial.printf("AP IP: %s\n", apIP.toString().c_str());
+    Serial.printf("Connect to '%s' and go to %s to configure WiFi\n", WIFI_AP_NAME, apIP.toString().c_str());
+    
+    // Start DNS server for captive portal
+    dnsServer.start(53, "*", apIP);
+    
+    // Setup web server routes
+    server.on("/", handleRoot);
+    server.on("/save", HTTP_POST, handleSave);
+    server.onNotFound([]() {
+        server.sendHeader("Location", "/", true);
+        server.send(302, "text/plain", "");
+    });
+    
+    server.begin();
+    Serial.println("📱 Configuration web server started");
+    return true;
+}
+
+// Start WiFi configuration portal (legacy function)
 void startConfigPortal()
 {
-    Serial.println("🔧 Starting WiFi configuration portal...");
-    
-    isConfigMode = true;
-    
-    // Start Access Point
-    WiFi.mode(WIFI_AP);
-    WiFi.softAP(WIFI_AP_NAME, WIFI_AP_PASSWORD);
+    if (!startConfigPortalSafe()) {
+        Serial.println("❌ Configuration portal startup failed");
+        return;
+    }
     
     IPAddress apIP = WiFi.softAPIP();
     Serial.printf("📡 WiFi configuration portal started\n");
@@ -141,15 +218,47 @@ void initWiFi()
 {
     Serial.printf("🔧 Starting WiFi initialization...\n");
     
+    // Longer initialization delay to allow system stabilization
+    delay(3000);
+    
+    // Initialize NVS if not already done
+    esp_err_t nvs_err = nvs_flash_init();
+    if (nvs_err != ESP_OK) {
+        Serial.printf("❌ NVS initialization failed: %s\n", esp_err_to_name(nvs_err));
+        if (nvs_err == ESP_ERR_NVS_NO_FREE_PAGES || nvs_err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+            Serial.println("🔄 Erasing NVS flash and retrying...");
+            nvs_flash_erase();
+            nvs_err = nvs_flash_init();
+            if (nvs_err != ESP_OK) {
+                Serial.printf("❌ NVS retry failed: %s\n", esp_err_to_name(nvs_err));
+                return;
+            }
+        } else {
+            return;
+        }
+    }
+    
+    Serial.println("✅ NVS initialized successfully");
+    delay(1000);
+    
     // Try to connect with saved credentials first
+    Serial.println("🔧 Attempting to connect with saved credentials...");
     if (connectToWiFi())
     {
         isConfigMode = false;
+        Serial.println("✅ Connected to saved WiFi network");
         return; // Successfully connected
     }
     
-    // If connection failed, start configuration portal
-    startConfigPortal();
+    // If connection failed, start configuration portal with more delays
+    Serial.println("🔧 No saved credentials found, starting configuration portal...");
+    delay(2000);
+    
+    // Try to start config portal in a more defensive way
+    if (!startConfigPortalSafe()) {
+        Serial.println("❌ Failed to start configuration portal");
+        return;
+    }
     
     // Wait for configuration with timeout
     unsigned long portalStartTime = millis();
