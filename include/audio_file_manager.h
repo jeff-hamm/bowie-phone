@@ -1,16 +1,16 @@
 /**
- * @file known_processor.h
- * @brief Known Sequence Processor Header
- * 
- * This library handles downloading, caching, and processing of known DTMF 
- * sequences from a remote server. Sequences are cached on SD card for offline use.
+ * @file audio_file_manager.h
+ * @brief Audio File Manager Header
+ *
+ * This library handles downloading, caching, and processing of audio files
+ * from a remote server. Files are cached on SD card for offline use.
  * 
  * @author Bowie Phone Project
  * @date 2025
  */
 
-#ifndef KNOWN_PROCESSOR_H
-#define KNOWN_PROCESSOR_H
+#ifndef AUDIO_FILE_MANAGER_H
+#define AUDIO_FILE_MANAGER_H
 
 // ============================================================================
 // INCLUDES
@@ -21,11 +21,11 @@
 // CONSTANTS AND CONFIGURATION
 // ============================================================================
 
-#ifndef KNOWN_SEQUENCES_FILE
-#define KNOWN_SEQUENCES_FILE "/known_sequences.json"
+#ifndef AUDIO_JSON_FILE
+#define AUDIO_JSON_FILE "/sdcard/audio_files.json"
 #endif
 #ifndef CACHE_TIMESTAMP_FILE
-#define CACHE_TIMESTAMP_FILE "/known_cache_time.txt"
+#define CACHE_TIMESTAMP_FILE "/sdcard/audio_cache_time.txt"
 #endif
 #ifndef CACHE_VALIDITY_HOURS
 #define CACHE_VALIDITY_HOURS 24     ///< Cache validity in hours
@@ -45,8 +45,8 @@
 #ifndef MAX_FILENAME_LENGTH
 #define MAX_FILENAME_LENGTH 64      ///< Maximum length for generated filenames
 #endif
-#ifndef KNOWN_SEQUENCES_URL
-#define KNOWN_SEQUENCES_URL "https://raw.githubusercontent.com/jeff-hamm/bowie-phone/main/sample-sequence.json"
+#ifndef KNOWN_FILES_URL
+#define KNOWN_FILES_URL "https://raw.githubusercontent.com/jeff-hamm/bowie-phone/main/sample-sequence.json"
 #endif
 #ifndef USER_AGENT_HEADER
 #define USER_AGENT_HEADER "BowiePhone/1.0"
@@ -60,14 +60,14 @@
 // ============================================================================
 
 /**
- * @brief Structure representing a known DTMF sequence
+ * @brief Structure representing an audio file entry
  */
-struct KnownSequence
+struct AudioFile
 {
-    const char *sequence;    ///< DTMF sequence (e.g., "123", "*67#")
+    const char *audioKey;    ///< Audio key (e.g., "dialtone", "busy", or DTMF sequence like "123")
     const char *description; ///< Human-readable description
-    const char *type;        ///< Sequence type (e.g., "phone", "service", "shortcut", "url")
-    const char *path;        ///< Additional path/URL information
+    const char *type;        ///< Entry type (e.g., "audio", "service", "shortcut", "url")
+    const char *path;        ///< File path or URL
 };
 
 // ============================================================================
@@ -75,71 +75,70 @@ struct KnownSequence
 // ============================================================================
 
 /**
- * @brief Initialize the known sequence processor
+ * @brief Initialize the audio file manager
  * 
- * Loads cached sequences from SD card if available.
- * Call this during setup().
+ * Loads cached audio files from SD card if available.
+ * Call this during setup() AFTER SD card is initialized.
  * 
  * @param useSDMMC If true, use SD_MMC interface (already initialized). If false, use SPI SD.
  */
-void initializeKnownProcessor(bool useSDMMC = true);
+void initializeAudioFileManager(bool useSDMMC = true);
 
 /**
- * @brief Download known sequences from remote server
+ * @brief Download audio file list from remote server
  * @return true if download successful, false otherwise
  * 
- * Makes HTTP GET request to configured URL to download sequence definitions.
+ * Makes HTTP GET request to configured URL to download audio file definitions.
  * Only downloads if cache is stale and WiFi is connected.
  * Automatically saves to SD card for caching.
  * 
  * Expected JSON format:
  * {
- *   "<DTMF code>": {
+ *   "<audio_key>": {
  *     "description": "<description>",
  *     "type": "<type>",
- *     "path": "<path>"
+ *     "path": "<path or URL>"
  *   }
  * }
  */
-bool downloadKnownSequences();
+bool downloadAudio();
 
 /**
- * @brief Check if a sequence is in the known sequences list
- * @param sequence DTMF sequence to check
- * @return true if sequence is known, false otherwise
+ * @brief Check if an audio key exists in the loaded audio files
+ * @param key Audio key to check (e.g., "dialtone", "123")
+ * @return true if key exists, false otherwise
  */
-bool isKnownSequence(const char *sequence);
+bool hasAudioKey(const char *key);
 
 /**
- * @brief Process a known DTMF sequence
- * @param sequence Known sequence to process
- * @return File path for audio playback, or nullptr if not an audio sequence
+ * @brief Process an audio key and get the local file path
+ * @param key Audio key to process
+ * @return Local file path for audio playback, or nullptr if not available
  * 
- * Looks up the sequence in the known sequences list and executes
- * appropriate action based on the sequence type. For audio sequences,
- * returns the local file path if available.
+ * Looks up the key in the audio files list. For remote URLs,
+ * returns the cached local path if available, or queues for download.
  */
-const char* processKnownSequence(const char *sequence);
+const char* processAudioKey(const char *key);
 
 /**
- * @brief List all known sequences to serial output
+ * @brief List all audio keys to serial output
  * 
  * Useful for debugging and configuration verification.
  */
-void listKnownSequences();
+void listAudioKeys();
 
 /**
- * @brief Get the number of loaded known sequences
- * @return Number of sequences currently loaded
+ * @brief Get the number of loaded audio files
+ * @return Number of audio files currently loaded
  */
-int getKnownSequenceCount();
+int getAudioKeyCount();
 
 /**
- * @brief Clear all known sequences from memory and SD card
+ * @brief Clear all audio files from memory and SD card cache
  * 
  * Frees allocated memory and clears cached data.
  */
-void clearKnownSequences();
+void clearAudioKeys();
 
 // ============================================================================
 // DOWNLOAD QUEUE MANAGEMENT FUNCTIONS
@@ -150,7 +149,7 @@ void clearKnownSequences();
  * @return true if item was processed, false if queue empty or error
  * 
  * Call this function periodically in main loop to download audio files
- * in the background. Non-blocking operation.
+ * in the background. Non-blocking operation with rate limiting.
  */
 bool processAudioDownloadQueue();
 
@@ -186,4 +185,4 @@ void clearDownloadQueue();
  */
 bool isDownloadQueueEmpty();
 
-#endif // KNOWN_PROCESSOR_H
+#endif // AUDIO_FILE_MANAGER_H

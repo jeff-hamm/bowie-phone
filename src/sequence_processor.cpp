@@ -1,5 +1,5 @@
 #include "sequence_processor.h"
-#include "known_processor.h"
+#include "audio_file_manager.h"
 
 // ============================================================================
 // MAIN PROCESSING FUNCTIONS
@@ -17,9 +17,9 @@ const char* processNumberSequence(const char *sequence)
     {
         processSpecialCommand(sequence);
     }
-    else if (isKnownSequence(sequence))
+    else if (hasAudioKey(sequence))
     {
-        audioPath = processKnownSequence(sequence);
+        audioPath = processAudioKey(sequence);
     }
     else
     {

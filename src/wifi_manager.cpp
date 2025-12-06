@@ -1,4 +1,5 @@
 #include "wifi_manager.h"
+#include "logging.h"
 #include "nvs_flash.h"
 
 // WiFi Setup Variables
@@ -6,13 +7,25 @@ WebServer server(80);
 DNSServer dnsServer;
 Preferences wifiPrefs;
 bool isConfigMode = false;
+unsigned long portalStartTime = 0;
+
+// WiFi connection callback
+static WiFiConnectedCallback wifiConnectedCallback = nullptr;
 
 // Save WiFi credentials to preferences
 void saveWiFiCredentials(const String& ssid, const String& password)
 {
+    // Ensure NVS is initialized
+    esp_err_t err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        Logger.println("⚠️ NVS partition issue, erasing and reinitializing...");
+        nvs_flash_erase();
+        nvs_flash_init();
+    }
+    
     if (!wifiPrefs.begin("wifi", false))
     {
-        Serial.println("❌ Failed to open WiFi preferences for writing");
+        Logger.println("❌ Failed to open WiFi preferences for writing");
         return;
     }
     
@@ -20,7 +33,14 @@ void saveWiFiCredentials(const String& ssid, const String& password)
     wifiPrefs.putString("password", password);
     wifiPrefs.end();
     
-    Serial.printf("✅ WiFi credentials saved for SSID: %s\n", ssid.c_str());
+    Logger.printf("✅ WiFi credentials saved for SSID: %s\n", ssid.c_str());
+}
+
+// Handle logs page request
+void handleLogs()
+{
+    String html = Logger.getLogsAsHtml();
+    server.send(200, "text/html", html);
 }
 
 // Web server handlers for WiFi configuration - Minimal version
@@ -32,12 +52,15 @@ void handleRoot()
 <style>body{font-family:Arial;margin:20px;background:#f0f0f0}
 .c{max-width:300px;margin:auto;background:white;padding:20px;border-radius:5px}
 input{width:100%;padding:8px;margin:5px 0;border:1px solid #ddd}
-button{width:100%;background:#007cba;color:white;padding:10px;border:none;cursor:pointer}
-</style></head><body><div class="c"><h2>Bowie Phone WiFi</h2>
+button{width:100%;background:#007cba;color:white;padding:10px;border:none;cursor:pointer;margin:5px 0}
+.logs-btn{background:#28a745;text-decoration:none;display:block;text-align:center}
+</style></head><body><div class="c"><h2>📱 WiFi Config</h2>
 <form action="/save" method="POST">
 <input type="text" name="ssid" placeholder="WiFi SSID" required>
 <input type="password" name="password" placeholder="Password">
-<button type="submit">Connect</button></form></div></body></html>
+<button type="submit">Connect to WiFi</button></form>
+<a href="/logs" class="logs-btn button">📄 View System Logs</a>
+</div></body></html>
 )";
     
     server.send(200, "text/html", html);
@@ -67,9 +90,20 @@ void handleSave()
 // Connect to WiFi using saved credentials
 bool connectToWiFi()
 {
+    // Ensure NVS is initialized
+    esp_err_t err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        Logger.println("⚠️ NVS partition issue, erasing and reinitializing...");
+        nvs_flash_erase();
+        err = nvs_flash_init();
+    }
+    if (err != ESP_OK) {
+        Logger.printf("❌ NVS init failed: %d\n", err);
+    }
+    
     if (!wifiPrefs.begin("wifi", true)) // Read-only
     {
-        Serial.println("❌ Failed to open WiFi preferences");
+        Logger.println("ℹ️ No WiFi preferences found (first boot?)");
         return false;
     }
     
@@ -79,62 +113,44 @@ bool connectToWiFi()
     
     if (ssid.length() == 0)
     {
-        Serial.println("📡 No saved WiFi credentials found");
+        Logger.println("📡 No saved WiFi credentials found");
         return false;
     }
     
-    Serial.printf("📡 Attempting to connect to WiFi: %s\n", ssid.c_str());
+    Logger.printf("📡 Starting WiFi connection to: %s\n", ssid.c_str());
     
     WiFi.mode(WIFI_STA);
     WiFi.begin(ssid.c_str(), password.c_str());
     
-    int attempts = 0;
-    const int maxAttempts = 30; // 15 seconds timeout (500ms * 30)
+    // Don't wait for connection - let main loop handle status
+    Logger.println("📡 WiFi connection initiated in background");
     
-    while (WiFi.status() != WL_CONNECTED && attempts < maxAttempts)
-    {
-        delay(500);
-        Serial.print(".");
-        attempts++;
-    }
-    Serial.println();
-    
-    if (WiFi.status() == WL_CONNECTED)
-    {
-        Serial.printf("✅ WiFi connected successfully!\n");
-        Serial.printf("IP Address: %s\n", WiFi.localIP().toString().c_str());
-        Serial.printf("Signal Strength: %d dBm\n", WiFi.RSSI());
-        return true;
-    }
-    else
-    {
-        Serial.printf("❌ Failed to connect to WiFi: %s\n", ssid.c_str());
-        return false;
-    }
+    // Return true to indicate credentials were present and connection attempt started
+    return true;
 }
 
 // Safer version of configuration portal startup
 bool startConfigPortalSafe()
 {
-    Serial.println("🔧 Starting WiFi configuration portal (safe mode)...");
+    Logger.println("🔧 Starting WiFi configuration portal (safe mode)...");
     
     // First, ensure we're in a clean state
-    Serial.println("🔧 Disconnecting from any existing WiFi...");
+    Logger.println("🔧 Disconnecting from any existing WiFi...");
     WiFi.disconnect(true);
     WiFi.mode(WIFI_OFF);
     delay(2000);
     
     // Try to set mode carefully
-    Serial.println("🔧 Setting WiFi mode to AP...");
+    Logger.println("🔧 Setting WiFi mode to AP...");
     for (int retry = 0; retry < 3; retry++) {
         if (WiFi.mode(WIFI_AP)) {
-            Serial.println("✅ WiFi mode set to AP");
+            Logger.println("✅ WiFi mode set to AP");
             break;
         }
-        Serial.printf("⚠️ WiFi mode retry %d/3\n", retry + 1);
+        Logger.printf("⚠️ WiFi mode retry %d/3\n", retry + 1);
         delay(1000);
         if (retry == 2) {
-            Serial.println("❌ Failed to set WiFi mode after retries");
+            Logger.println("❌ Failed to set WiFi mode after retries");
             return false;
         }
     }
@@ -142,17 +158,17 @@ bool startConfigPortalSafe()
     delay(1000);
     
     // Try to start SoftAP carefully
-    Serial.println("🔧 Starting SoftAP...");
+    Logger.println("🔧 Starting SoftAP...");
     for (int retry = 0; retry < 3; retry++) {
         if (WiFi.softAP(WIFI_AP_NAME, WIFI_AP_PASSWORD)) {
-            Serial.println("✅ SoftAP started successfully");
+            Logger.println("✅ SoftAP started successfully");
             isConfigMode = true;
             break;
         }
-        Serial.printf("⚠️ SoftAP retry %d/3\n", retry + 1);
+        Logger.printf("⚠️ SoftAP retry %d/3\n", retry + 1);
         delay(1000);
         if (retry == 2) {
-            Serial.println("❌ Failed to start SoftAP after retries");
+            Logger.println("❌ Failed to start SoftAP after retries");
             return false;
         }
     }
@@ -161,11 +177,11 @@ bool startConfigPortalSafe()
     
     // Now setup the web server and DNS
     IPAddress apIP = WiFi.softAPIP();
-    Serial.printf("📡 WiFi configuration portal started\n");
-    Serial.printf("AP Name: %s\n", WIFI_AP_NAME);
-    Serial.printf("AP Password: %s\n", WIFI_AP_PASSWORD);
-    Serial.printf("AP IP: %s\n", apIP.toString().c_str());
-    Serial.printf("Connect to '%s' and go to %s to configure WiFi\n", WIFI_AP_NAME, apIP.toString().c_str());
+    Logger.printf("📡 WiFi configuration portal started\n");
+    Logger.printf("AP Name: %s\n", WIFI_AP_NAME);
+    Logger.printf("AP Password: %s\n", WIFI_AP_PASSWORD);
+    Logger.printf("AP IP: %s\n", apIP.toString().c_str());
+    Logger.printf("Connect to '%s' and go to %s to configure WiFi\n", WIFI_AP_NAME, apIP.toString().c_str());
     
     // Start DNS server for captive portal
     dnsServer.start(53, "*", apIP);
@@ -173,13 +189,14 @@ bool startConfigPortalSafe()
     // Setup web server routes
     server.on("/", handleRoot);
     server.on("/save", HTTP_POST, handleSave);
+    server.on("/logs", handleLogs);
     server.onNotFound([]() {
         server.sendHeader("Location", "/", true);
         server.send(302, "text/plain", "");
     });
     
     server.begin();
-    Serial.println("📱 Configuration web server started");
+    Logger.println("📱 Configuration web server started");
     return true;
 }
 
@@ -187,16 +204,16 @@ bool startConfigPortalSafe()
 void startConfigPortal()
 {
     if (!startConfigPortalSafe()) {
-        Serial.println("❌ Configuration portal startup failed");
+        Logger.println("❌ Configuration portal startup failed");
         return;
     }
     
     IPAddress apIP = WiFi.softAPIP();
-    Serial.printf("📡 WiFi configuration portal started\n");
-    Serial.printf("AP Name: %s\n", WIFI_AP_NAME);
-    Serial.printf("AP Password: %s\n", WIFI_AP_PASSWORD);
-    Serial.printf("AP IP: %s\n", apIP.toString().c_str());
-    Serial.printf("Connect to '%s' and go to %s to configure WiFi\n", WIFI_AP_NAME, apIP.toString().c_str());
+    Logger.printf("📡 WiFi configuration portal started\n");
+    Logger.printf("AP Name: %s\n", WIFI_AP_NAME);
+    Logger.printf("AP Password: %s\n", WIFI_AP_PASSWORD);
+    Logger.printf("AP IP: %s\n", apIP.toString().c_str());
+    Logger.printf("Connect to '%s' and go to %s to configure WiFi\n", WIFI_AP_NAME, apIP.toString().c_str());
     
     // Start DNS server for captive portal
     dnsServer.start(53, "*", apIP);
@@ -204,83 +221,46 @@ void startConfigPortal()
     // Setup web server routes
     server.on("/", handleRoot);
     server.on("/save", HTTP_POST, handleSave);
+    server.on("/logs", handleLogs);
     server.onNotFound([]() {
         server.sendHeader("Location", "/", true);
         server.send(302, "text/plain", "");
     });
     
     server.begin();
-    Serial.println("📱 Configuration web server started");
+    Logger.println("📱 Configuration web server started");
 }
 
 // Initialize WiFi with auto-connect or configuration portal
-void initWiFi()
+void initWiFi(WiFiConnectedCallback onConnected)
 {
-    Serial.printf("🔧 Starting WiFi initialization...\n");
+    Logger.printf("🔧 Starting WiFi initialization (non-blocking)...\n");
     
-    // Longer initialization delay to allow system stabilization
-    delay(3000);
+    // Store the callback for later use
+    wifiConnectedCallback = onConnected;
     
-    // Initialize NVS if not already done
-    esp_err_t nvs_err = nvs_flash_init();
-    if (nvs_err != ESP_OK) {
-        Serial.printf("❌ NVS initialization failed: %s\n", esp_err_to_name(nvs_err));
-        if (nvs_err == ESP_ERR_NVS_NO_FREE_PAGES || nvs_err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-            Serial.println("🔄 Erasing NVS flash and retrying...");
-            nvs_flash_erase();
-            nvs_err = nvs_flash_init();
-            if (nvs_err != ESP_OK) {
-                Serial.printf("❌ NVS retry failed: %s\n", esp_err_to_name(nvs_err));
-                return;
-            }
-        } else {
-            return;
+    // Try to connect with saved credentials first (non-blocking)
+    Logger.println("🔧 Checking for saved credentials...");
+    bool hasCredentials = connectToWiFi(); // This now starts connection in background
+    
+    if (!hasCredentials)
+    {
+        // No saved credentials - start config portal immediately
+        Logger.println("📱 No saved WiFi credentials - starting configuration portal...");
+        if (startConfigPortalSafe()) {
+            portalStartTime = millis();
         }
     }
-    
-    Serial.println("✅ NVS initialized successfully");
-    delay(1000);
-    
-    // Try to connect with saved credentials first
-    Serial.println("🔧 Attempting to connect with saved credentials...");
-    if (connectToWiFi())
+    else
     {
+        // WiFi connection status will be handled in handleWiFiLoop()
         isConfigMode = false;
-        Serial.println("✅ Connected to saved WiFi network");
-        return; // Successfully connected
     }
     
-    // If connection failed, start configuration portal with more delays
-    Serial.println("🔧 No saved credentials found, starting configuration portal...");
-    delay(2000);
-    
-    // Try to start config portal in a more defensive way
-    if (!startConfigPortalSafe()) {
-        Serial.println("❌ Failed to start configuration portal");
-        return;
-    }
-    
-    // Wait for configuration with timeout
-    unsigned long portalStartTime = millis();
-    unsigned long timeout = WIFI_PORTAL_TIMEOUT * 1000UL;
-    
-    while (isConfigMode && (millis() - portalStartTime) < timeout)
-    {
-        dnsServer.processNextRequest();
-        server.handleClient();
-        delay(10);
-    }
-    
-    if (isConfigMode)
-    {
-        Serial.printf("⏰ Configuration portal timed out after %d seconds\n", WIFI_PORTAL_TIMEOUT);
-        Serial.printf("🔄 Restarting device...\n");
-        delay(2000);
-        ESP.restart();
-    }
+    Logger.println("📡 WiFi initialization complete - connection status will be monitored in background");
 }
 
-// Initialize Over-The-Air (OTA) updates - Minimal version
+// Configure Over-The-Air (OTA) updates - setup only, begin() called when WiFi ready
 void initOTA()
 {
     ArduinoOTA.setHostname(OTA_HOSTNAME);
@@ -288,23 +268,107 @@ void initOTA()
     ArduinoOTA.setPort(OTA_PORT);
     
     // Minimal callbacks
-    ArduinoOTA.onStart([]() { Serial.println("OTA Start"); });
-    ArduinoOTA.onEnd([]() { Serial.println("OTA End"); });
-    ArduinoOTA.onError([](ota_error_t error) { Serial.printf("OTA Error: %u\n", error); });
+    ArduinoOTA.onStart([]() { Logger.println("OTA Start"); });
+    ArduinoOTA.onEnd([]() { Logger.println("OTA End"); });
+    ArduinoOTA.onError([](ota_error_t error) { Logger.printf("OTA Error: %u\n", error); });
     
+    Logger.println("🔄 OTA configuration complete - will start when WiFi is ready");
+}
+
+// Start OTA service when WiFi is ready
+void startOTA()
+{
     ArduinoOTA.begin();
-    Serial.printf("OTA Ready: %s:%d\n", WiFi.localIP().toString().c_str(), OTA_PORT);
+    Logger.printf("✅ OTA Ready: %s:%d\n", WiFi.localIP().toString().c_str(), OTA_PORT);
+}
+
+// Stop OTA service when WiFi changes
+void stopOTA()
+{
+    ArduinoOTA.end();
+    Logger.println("🔄 OTA stopped due to WiFi change");
 }
 
 // Handle WiFi loop processing (call this in main loop)
 void handleWiFiLoop()
 {
+    static bool connectionLogged = false;
+    static bool otaStarted = false;
+    static unsigned long connectionStartTime = 0;
+    
     if (isConfigMode)
     {
+        // Handle DNS and web server requests
         dnsServer.processNextRequest();
         server.handleClient();
+        
+        // Start OTA in AP mode if not already started
+        if (!otaStarted)
+        {
+            startOTA();
+            otaStarted = true;
+        }
+        
+        // Optional: Log periodic reminder about configuration portal (every 5 minutes)
+        if (portalStartTime > 0 && (millis() - portalStartTime) % 300000UL == 0)
+        {
+            Logger.printf("📱 WiFi configuration portal still active - connect to '%s' to configure\n", WIFI_AP_NAME);
+        }
+    }
+    else if (WiFi.getMode() == WIFI_STA)
+    {
+        // Check if we're trying to connect and handle status
+        if (WiFi.status() == WL_CONNECTED && !connectionLogged)
+        {
+            Logger.printf("✅ WiFi connected successfully!\n");
+            Logger.printf("IP Address: %s\n", WiFi.localIP().toString().c_str());
+            Logger.printf("Signal Strength: %d dBm\n", WiFi.RSSI());
+            
+            // Call the user-provided callback if set
+            if (wifiConnectedCallback != nullptr)
+            {
+                Logger.println("📞 Calling WiFi connected callback...");
+                wifiConnectedCallback();
+            }
+            
+            // Start OTA now that we're connected
+            if (!otaStarted)
+            {
+                startOTA();
+                otaStarted = true;
+            }
+            connectionLogged = true;
+        }
+        else if (WiFi.status() != WL_CONNECTED && connectionStartTime == 0)
+        {
+            connectionStartTime = millis();
+        }
+        else if (WiFi.status() != WL_CONNECTED && connectionStartTime > 0 && 
+                 (millis() - connectionStartTime) > 30000) // 30 second timeout
+        {
+            Logger.println("❌ WiFi connection timeout - starting configuration portal");
+            
+            // Stop OTA if it was running in STA mode
+            if (otaStarted)
+            {
+                stopOTA();
+                otaStarted = false;
+            }
+            
+            connectionStartTime = 0;
+            connectionLogged = false;
+            
+            // Start config portal since connection failed
+            if (startConfigPortalSafe()) {
+                portalStartTime = millis();
+                // OTA will be restarted in AP mode above
+            }
+        }
     }
     
-    // Handle OTA updates
-    ArduinoOTA.handle();
+    // Handle OTA updates (only if started and WiFi is ready)
+    if (otaStarted && (WiFi.status() == WL_CONNECTED || isConfigMode))
+    {
+        ArduinoOTA.handle();
+    }
 }

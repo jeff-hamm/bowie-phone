@@ -1,4 +1,19 @@
 {
+  "dialtone": {
+    "description": "Dial Tone",
+    "type": "audio",
+    "path": "https://upload.wikimedia.org/wikipedia/commons/c/cd/Dial_tone.ogg"
+  },
+  "busy": {
+    "description": "Busy Signal",
+    "type": "audio",
+    "path": "https://upload.wikimedia.org/wikipedia/commons/6/6d/Busy_Signal.ogg"
+  },
+  "ringback": {
+    "description": "Ringback Tone",
+    "type": "audio",
+    "path": "https://upload.wikimedia.org/wikipedia/commons/c/c6/Ringing_signal.ogg"
+  },
   "911": {
     "description": "Emergency Services",
     "type": "audio",

@@ -1,0 +1,107 @@
+/**
+ * @file audio_player.h
+ * @brief Audio Player Header for Bowie Phone
+ * 
+ * This library handles audio playback using the AudioTools library.
+ * It integrates with known_processor for sequence-based lookups.
+ * 
+ * @date 2025
+ */
+
+#ifndef AUDIO_PLAYER_H
+#define AUDIO_PLAYER_H
+
+// ============================================================================
+// INCLUDES
+// ============================================================================
+#include <Arduino.h>
+
+// Include AudioTools first to get Vector and other base types defined
+#include "AudioTools.h"
+
+// Now include additional headers that depend on AudioTools types
+#include "AudioTools/AudioLibs/AudioBoardStream.h"
+
+// ============================================================================
+// CONSTANTS AND CONFIGURATION
+// ============================================================================
+
+#ifndef DEFAULT_AUDIO_VOLUME
+#define DEFAULT_AUDIO_VOLUME 0.7f  ///< Default audio volume (0.0 to 1.0)
+#endif
+
+// ============================================================================
+// FUNCTION DECLARATIONS
+// ============================================================================
+
+/**
+ * @brief Initialize the audio player system
+ * @param source Reference to the audio source
+ * @param output Reference to the audio output stream
+ * @param decoder Reference to the audio decoder
+ * 
+ * Sets up the audio player with the provided source and decoder.
+ */
+void initAudioPlayer(AudioSource &source, AudioStream &output, AudioDecoder &decoder);
+
+/**
+ * @brief Start playing an audio file by path
+ * @param filePath Path to the audio file to play
+ * @return true if playback started, false otherwise
+ * 
+ * Non-blocking call. Use processAudio() in loop to continue playback.
+ */
+bool playAudioPath(const char* filePath);
+
+/**
+ * @brief Start playing an audio file by sequence/key
+ * @param sequence DTMF sequence or audio key to look up and play
+ * @return true if playback started, false if key not found or error
+ * 
+ * Looks up the sequence in known_processor and plays the associated file.
+ */
+bool playAudioBySequence(const char* sequence);
+
+/**
+ * @brief Stop current audio playback
+ */
+void stopAudio();
+
+/**
+ * @brief Check if audio is currently playing
+ * @return true if playing, false otherwise
+ */
+bool isAudioActive();
+
+/**
+ * @brief Process audio playback (call this in main loop)
+ * @return true if still playing, false if finished or not playing
+ */
+bool processAudio();
+
+/**
+ * @brief Set the audio volume
+ * @param volume Volume level (0.0 to 1.0)
+ * 
+ * Sets the volume and saves it to preferences for persistence.
+ */
+void setAudioVolume(float volume);
+
+/**
+ * @brief Get the current audio volume
+ * @return Current volume level (0.0 to 1.0)
+ */
+float getAudioVolume();
+
+/**
+ * @brief Callback type for audio playback events
+ */
+typedef void (*AudioEventCallback)(bool started);
+
+/**
+ * @brief Set callback for audio playback events
+ * @param callback Function to call when audio starts/stops
+ */
+void setAudioEventCallback(AudioEventCallback callback);
+
+#endif // AUDIO_PLAYER_H

@@ -7,6 +7,9 @@
 #include <Preferences.h>
 #include <ArduinoOTA.h>
 
+// Type definition for WiFi connection callback
+typedef void (*WiFiConnectedCallback)();
+
 // WiFi configuration - Use build flags or defaults
 #ifndef WIFI_AP_NAME
 #define WIFI_AP_NAME "Bowie-Phone-Setup"
@@ -34,8 +37,11 @@
 #endif
 
 // Function declarations
-void initWiFi();
+void handleLogs();
+void initWiFi(WiFiConnectedCallback onConnected = nullptr);
 void initOTA();
+void startOTA();
+void stopOTA();
 bool connectToWiFi();
 void saveWiFiCredentials(const String& ssid, const String& password);
 void startConfigPortal();
@@ -44,10 +50,8 @@ void handleRoot();
 void handleSave();
 void handleWiFiLoop();
 
-// External variables (defined in wifi_manager.cpp)
+// Global variables
 extern WebServer server;
-extern DNSServer dnsServer;
-extern Preferences wifiPrefs;
 extern bool isConfigMode;
 
 #endif // WIFI_MANAGER_H

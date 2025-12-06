@@ -7,11 +7,15 @@
 
 #include "sequence_processor.h"
 #include "special_command_processor.h"
-#include "known_processor.h"
+#include "audio_file_manager.h"
 #include "wifi_manager.h"
-#include <SD.h>
+#include "logging.h"
+#include "phone_service.h"
+#include "audio_player.h"
+#include <WiFi.h>
+#include <SD_MMC.h>
 
-AudioBoardStream kit(AudioKitAC101); // Audio source
+AudioBoardStream kit(AudioKitEs8388V1); // Audio source
 AudioRealFFT fft;                       // or AudioKissFFT
 StreamCopy copier(fft, kit);            // copy mic to tfl
 int channels = 2;
@@ -24,9 +28,6 @@ const char *startFilePath="/";
 //const char* ext="mp3";
 AudioSourceSDMMC source(startFilePath);
 MP3DecoderHelix decoder;  // or change to MP3DecoderMAD
-AudioPlayer player(source, kit, decoder);
-bool isPlayingAudio = false;
-unsigned long audioStartTime = 0;
 
 // DTMF sequence configuration
 const unsigned long SEQUENCE_TIMEOUT = 2000; // 2 seconds timeout
@@ -61,7 +62,7 @@ void setupAudioInput()
     cfg.channels = channels;
     cfg.sample_rate = samples_per_second;
     cfg.bits_per_sample = bits_per_sample;
-    cfg.sd_active = true; // Enable SD card support
+    cfg.sd_active = false; // SD card initialized manually in setup()
     kit.begin(cfg);
 
     // Setup FFT
@@ -74,35 +75,15 @@ void setupAudioInput()
     fft.begin(tcfg);
 }
 
-// Audio playback functions
-void startAudioPlayback(const char* filePath)
+// Audio event callback - called when audio starts/stops
+void onAudioEvent(bool started)
 {
-    if (!filePath || isPlayingAudio)
+    if (!started)
     {
-        return;
+        // Audio finished - restart input audio system and FFT processing
+        setupAudioInput();
+        Logger.println("🎤 Resumed audio input and FFT processing");
     }
-    
-    Serial.printf("🎵 Starting audio playback: %s\n", filePath);
-    player.playPath(filePath);
-    isPlayingAudio = true;
-    audioStartTime = millis();
-    Serial.println("🎵 Audio playback started");
-}
-
-void stopAudioPlayback()
-{
-    if(player.isActive())
-        player.end();
-    if (!isPlayingAudio)
-    {
-        return;
-    }
-    
-    isPlayingAudio = false;
-    // Restart the input audio system and FFT processing
-    setupAudioInput();
-    
-    Serial.println("🎤 Resumed audio input and FFT processing");
 }
 
 // Check for new DTMF digits and manage sequence collection
@@ -154,14 +135,28 @@ void setup()
     Serial.begin(115200);
     delay(2000); // Give serial time to initialize
 
-    Serial.printf("=== Bowie Phone Starting ===\n");
+    // Initialize logging system first
+    Logger.addLogger(Serial);
+
+    Logger.printf("=== Bowie Phone Starting ===\n");
+
+    // Initialize SD_MMC in 1-bit mode (more reliable on some boards)
+    Logger.println("🔧 Initializing SD_MMC (1-bit mode)...");
+    if (!SD_MMC.begin("/sdcard", true)) {  // true = 1-bit mode
+        Logger.println("❌ Failed to initialize SD_MMC");
+    } else if (SD_MMC.cardType() == CARD_NONE) {
+        Logger.println("❌ No SD card detected");
+    } else {
+        uint64_t cardSize = SD_MMC.cardSize() / (1024 * 1024);
+        Logger.printf("✅ SD_MMC initialized (1-bit mode, %lluMB)\n", cardSize);
+    }
 
     // Add more startup delay for system stabilization
-    Serial.println("🔧 Allowing system to stabilize...");
+    Logger.println("🔧 Allowing system to stabilize...");
     delay(3000);
 
     // Initialize WiFi with careful error handling
-    Serial.println("🔧 Starting WiFi initialization...");
+    Logger.println("🔧 Starting WiFi initialization...");
     initWiFi();
 
     // Initialize OTA updates (must be after WiFi)
@@ -170,30 +165,63 @@ void setup()
     // Initialize special commands system
     initializeSpecialCommands();
     
-    // Initialize known sequences processor
-    initializeKnownProcessor();
+    // Initialize audio file manager
+    initializeAudioFileManager(true); // true = use SD_MMC (already initialized)
+
+    // Initialize Phone Service
+    Phone.begin();
+    Phone.setHookCallback([](bool isOffHook) {
+        if (isOffHook) {
+            // Handle off-hook event - play dial tone
+            Logger.println("⚡ Event: Phone Off Hook - Playing Dial Tone");
+            playAudioBySequence("dialtone");
+        } else {
+            // Handle on-hook event - stop audio, reset state
+            Logger.println("⚡ Event: Phone On Hook");
+            stopAudio();
+            // Reset DTMF sequence
+            sequenceIndex = 0;
+            dtmfSequence[0] = '\0';
+        }
+    });
 
     AudioToolsLogger.begin(Serial, AudioToolsLogLevel::Warning); // setup Audiokit
     
+    // Initialize Audio Player with event callback
+    initAudioPlayer(source, kit, decoder);
+    setAudioEventCallback(onAudioEvent);
+    
     // Setup audio input and FFT processing
     setupAudioInput();
+    
+    Logger.println("✅ Bowie Phone Ready!");
 }
 
 void loop()
 {
-    // Stack monitoring - check available stack space periodically
-    static unsigned long lastStackCheck = 0;
-    if (millis() - lastStackCheck > 10000) // Check every 10 seconds
-    {
-        size_t freeStack = uxTaskGetStackHighWaterMark(NULL);
-        if (freeStack < 1024) {
-            Serial.printf("⚠️ Low stack space: %d bytes remaining\n", freeStack);
-        }
-        lastStackCheck = millis();
-    }
-    
     // Handle WiFi management (config portal and OTA)
     handleWiFiLoop();
+
+    // Ensure audio catalog/downloads kick off once WiFi is available
+    static bool audioDownloadComplete = false;
+    static unsigned long lastAudioDownloadAttempt = 0;
+    const unsigned long audioDownloadRetryMs = 30000; // retry every 30s if needed
+
+    if (!audioDownloadComplete && WiFi.status() == WL_CONNECTED)
+    {
+        unsigned long now = millis();
+        if (lastAudioDownloadAttempt == 0 || (now - lastAudioDownloadAttempt) > audioDownloadRetryMs)
+        {
+            lastAudioDownloadAttempt = now;
+            if (downloadAudio())
+            {
+                audioDownloadComplete = true;
+            }
+        }
+    }
+    
+    // Process Phone Service
+    Phone.loop();
     
     // Skip other processing if in config mode
     if (isConfigMode)
@@ -209,13 +237,16 @@ void loop()
         lastDownloadCheck = millis();
     }
 
-    // Handle audio playback
-    if (isPlayingAudio)
+    // Only process if phone is off hook
+    if (!Phone.isOffHook())
     {
-        player.copy();
-        if (!player.isActive())
-            // Audio finished playing
-            stopAudioPlayback();
+        return; // Phone is on hook, nothing to do
+    }
+
+    // Handle audio playback
+    if (isAudioActive())
+    {
+        processAudio();
     }
     else
     {
@@ -230,9 +261,9 @@ void loop()
             const char* audioPath = processNumberSequence(dtmfSequence);
             
             // If an audio file path was returned, start playback
-            if (audioPath && SD.exists(audioPath))
+            if (audioPath && SD_MMC.exists(audioPath))
             {
-                startAudioPlayback(audioPath);
+                playAudioPath(audioPath);
             }
 
             // Reset sequence buffer for next sequence
