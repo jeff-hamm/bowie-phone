@@ -3,7 +3,7 @@
 #include "AudioTools.h"
 #include "AudioTools/AudioLibs/AudioBoardStream.h"
 #include "AudioTools/AudioLibs/AudioRealFFT.h" // or AudioKissFFT
-#include "AudioTools/Disk/AudioSourceSD.h" // SPI SD mode
+#include "AudioTools/Disk/AudioSourceSDMMC.h" // SD_MMC mode
 #include "AudioTools/AudioCodecs/CodecMP3Helix.h"
 
 #include "sequence_processor.h"
@@ -27,16 +27,9 @@ int bits_per_sample = 16;
 
 // Audio playback components
 
-// SD Card SPI pins for ESP32-A1S AudioKit
-// Working switch config: 2,3,4 UP, 5 DOWN
-#define SD_CS   13
-#define SD_CLK  14
-#define SD_MOSI 15
-#define SD_MISO 2
-
 const char *startFilePath="/";
 //const char* ext="mp3";
-AudioSourceSD source(startFilePath, SD_CS);
+AudioSourceSDMMC source(startFilePath);
 MP3DecoderHelix decoder;  // or change to MP3DecoderMAD
 
 // DTMF sequence configuration
@@ -154,36 +147,82 @@ void setup()
     Logger.addLogger(Serial);
 
     Logger.printf("\n\n=== Bowie Phone Starting ===\n");
+    Logger.println("=== SD CARD DIAGNOSTIC MODE ===");
+    Logger.println("Testing both SPI and SD_MMC modes every 2 seconds");
+    Logger.println("Press reset when SD works to continue normal boot.\n");
     AudioToolsLogger.begin(Serial, AudioToolsLogLevel::Warning);
 
-    // Initialize SD card in SPI mode
-    // Working switch config: 2,3,4 UP, 5 DOWN
-    Logger.println("🔧 Initializing SD card (SPI mode)...");
-    Logger.printf("   Pins: CS=%d, CLK=%d, MOSI=%d, MISO=%d\n", SD_CS, SD_CLK, SD_MOSI, SD_MISO);
+    // Continuous test loop - try both SPI and SD_MMC modes
+    int testAttempt = 0;
+    while (true) {
+        testAttempt++;
+        
+        Logger.printf("\n--- Attempt #%d ---\n", testAttempt);
+        
+        // First try SPI mode (uses GPIO13 as CS, which matches switch labels)
+        Logger.println("Trying SD SPI mode (CS=13, CLK=14, MOSI=15, MISO=2)...");
+        SPI.begin(14, 2, 15, 13);  // CLK=14, MISO=2, MOSI=15, CS=13
+        if (SD.begin(13, SPI)) {
+            uint64_t cardSize = SD.cardSize() / (1024 * 1024);
+            Logger.printf("✅ SUCCESS with SPI mode! SD card size: %lluMB\n", cardSize);
+            Logger.println("🎉 SD card is working in SPI mode!");
+            SD.end();
+        } else {
+            Logger.println("❌ SPI mode failed");
+            SD.end();
+        }
+        
+        delay(500);
+        
+        // Then try SD_MMC 1-bit mode
+        Logger.println("Trying SD_MMC 1-bit mode (CMD=15, CLK=14, D0=2)...");
+        if (SD_MMC.begin("/sdcard", true)) {
+            if (SD_MMC.cardType() != CARD_NONE) {
+                uint64_t cardSize = SD_MMC.cardSize() / (1024 * 1024);
+                Logger.printf("✅ SUCCESS with SD_MMC! Card size: %lluMB\n", cardSize);
+                Logger.println("🎉 SD card is working in SD_MMC mode!");
+                SD_MMC.end();
+            } else {
+                Logger.println("❌ SD_MMC.begin() succeeded but no card detected");
+                SD_MMC.end();
+            }
+        } else {
+            Logger.println("❌ SD_MMC mode failed (0x107 timeout)");
+            SD_MMC.end();
+        }
+        
+        delay(1500);  // Total ~2 seconds between full cycles
+    }
+    // Code below won't run until you remove the while(true) loop
+
+    // Explicitly configure SD_MMC pins with proper pull-ups before initialization
+    // ESP32 SD_MMC 1-bit mode uses: GPIO15 (CMD), GPIO14 (CLK), GPIO2 (D0)
+    Logger.println("🔧 Configuring SD_MMC pins...");
     
-    SPI.begin(SD_CLK, SD_MISO, SD_MOSI, SD_CS);
-    
+    // Try multiple times with increasing delays
     bool sdInitialized = false;
     for (int attempt = 1; attempt <= 3 && !sdInitialized; attempt++) {
-        Logger.printf("🔧 SD SPI initialization attempt %d/3...\n", attempt);
-        delay(attempt * 300);
+        Logger.printf("🔧 SD_MMC initialization attempt %d/3...\n", attempt);
+        delay(attempt * 500);  // Increasing delay: 500ms, 1000ms, 1500ms
         
-        if (SD.begin(SD_CS, SPI)) {
-            uint8_t cardType = SD.cardType();
-            if (cardType != CARD_NONE) {
-                uint64_t cardSize = SD.cardSize() / (1024 * 1024);
-                Logger.printf("✅ SD card initialized (SPI mode, %lluMB)\n", cardSize);
+        // Initialize SD_MMC in 1-bit mode
+        if (SD_MMC.begin("/sdcard", true)) {  // true = 1-bit mode
+            if (SD_MMC.cardType() != CARD_NONE) {
+                uint64_t cardSize = SD_MMC.cardSize() / (1024 * 1024);
+                Logger.printf("✅ SD_MMC initialized (1-bit mode, %lluMB) on attempt %d\n", cardSize, attempt);
                 sdInitialized = true;
             } else {
                 Logger.println("❌ No SD card detected");
+                SD_MMC.end();
             }
         } else {
-            Logger.println("❌ SD.begin() failed");
+            Logger.println("❌ Failed to initialize SD_MMC");
+            SD_MMC.end();  // Clean up before retry
         }
     }
     
     if (!sdInitialized) {
-        Logger.println("⚠️ SD initialization failed - continuing without SD card");
+        Logger.println("⚠️ SD_MMC initialization failed after all attempts - continuing without SD card");
     }
 
     // Add more startup delay for system stabilization
@@ -215,8 +254,8 @@ void setup()
         Logger.println("✅ AudioKit initialized successfully");
     }
 
-    // Initialize audio file manager (SPI mode)
-    initializeAudioFileManager(SD_CS, false); // CS pin, false=use SPI (not SD_MMC)
+    // Initialize audio file manager (CS pin ignored for SD_MMC mode)
+    initializeAudioFileManager(13, true); // 13=CS pin (ignored), true=use SD_MMC
 
     // Initialize Audio Player with event callback
     initAudioPlayer(source, kit, decoder);
@@ -329,7 +368,7 @@ void loop()
             const char* audioPath = processNumberSequence(dtmfSequence);
             
             // If an audio file path was returned, start playback
-            if (audioPath && SD.exists(audioPath))
+            if (audioPath && SD_MMC.exists(audioPath))
             {
                 playAudioPath(audioPath);
             }

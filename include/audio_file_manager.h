@@ -78,11 +78,12 @@ struct AudioFile
  * @brief Initialize the audio file manager
  * 
  * Loads cached audio files from SD card if available.
- * Call this during setup() AFTER SD card is initialized.
+ * Call this during setup() AFTER SD card is initialized (for SD_MMC mode).
  * 
- * @param useSDMMC If true, use SD_MMC interface (already initialized). If false, use SPI SD.
+ * @param sdCsPin CS pin for SPI SD mode (ignored if mmcSupport is true)
+ * @param mmcSupport If true, use SD_MMC interface (already initialized). If false, use SPI SD.
  */
-void initializeAudioFileManager(bool useSDMMC = true);
+void initializeAudioFileManager(int sdCsPin = 13, bool mmcSupport = true);
 
 /**
  * @brief Download audio file list from remote server

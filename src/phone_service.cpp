@@ -15,9 +15,12 @@ PhoneService::PhoneService()
 void PhoneService::begin() {
     Logger.println("📞 Initializing Phone Service...");
     
+    // Note: PD is hardwired to +3.3V (SLIC always enabled)
+    
     //Configure pins
     pinMode(_pinFR, OUTPUT);
     pinMode(_pinRM, OUTPUT);
+    // Use pull-up so the hook signal is not left floating; SHK should pull low when on-hook if wired that way
     pinMode(_pinSHK, INPUT);
     
     //Set initial states
@@ -25,7 +28,11 @@ void PhoneService::begin() {
     digitalWrite(_pinRM, LOW);
     
     // Read initial hook state
+    #ifdef ASSUME_HOOK
+    _isOffHook = false;
+    #else
     _isOffHook = digitalRead(_pinSHK);
+    #endif
     _lastShkReading = _isOffHook;
     
     Logger.printf("📞 Phone Service Ready. Initial State: %s\n", _isOffHook ? "OFF HOOK" : "ON HOOK");
@@ -37,6 +44,14 @@ void PhoneService::loop() {
     if (_isRinging) {
         updateRingSignal();
     }
+
+    // Periodic debug to verify hook sensing in hardware
+    // static unsigned long lastDebug = 0;
+    // if (millis() - lastDebug > 1000) {
+    //     bool raw = digitalRead(_pinSHK);
+    //     Logger.printf("📟 Hook debug: raw=%d, isOffHook=%d, isRinging=%d\n", raw, _isOffHook, _isRinging);
+    //     lastDebug = millis();
+    // }
 }
 
 void PhoneService::startRinging() {
@@ -51,8 +66,13 @@ void PhoneService::startRinging() {
     Logger.println("🔔 Starting Ring Signal");
     _isRinging = true;
     digitalWrite(_pinRM, HIGH); // Enable ring mode
-    _lastRingToggleTime = millis();
     _ringState = false;
+    digitalWrite(_pinFR, LOW);
+    // Force immediate first toggle on next loop to verify FR movement
+    _lastRingToggleTime = millis() - RING_CYCLE_MS;
+
+    // One-time debug snapshot when ring starts
+    Logger.printf("📟 Ring start debug: RM=%d FR=%d SHK=%d\n", digitalRead(_pinRM), digitalRead(_pinFR), digitalRead(_pinSHK));
 }
 
 void PhoneService::stopRinging() {
@@ -73,7 +93,8 @@ void PhoneService::updateRingSignal() {
 
     unsigned long currentTime = millis();
     // 20Hz ring signal = 50ms period (25ms high, 25ms low)
-    if (currentTime - _lastRingToggleTime >= 25) {
+    if (currentTime - _lastRingToggleTime >= RING_CYCLE_MS)
+    {
         _ringState = !_ringState;
         digitalWrite(_pinFR, _ringState ? HIGH : LOW);
         _lastRingToggleTime = currentTime;
@@ -81,8 +102,12 @@ void PhoneService::updateRingSignal() {
 }
 
 void PhoneService::checkHookState() {
-    bool reading = digitalRead(_pinSHK);
     
+#ifdef ASSUME_HOOK
+    bool reading = false;
+#else
+    bool reading = digitalRead(_pinSHK);
+#endif    
     // If the switch changed, reset the debouncing timer
     if (reading != _lastShkReading) {
         _lastDebounceTime = millis();

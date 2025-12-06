@@ -6,7 +6,6 @@
 
 // Define callback types
 typedef std::function<void(bool)> HookStateCallback;
-
 class PhoneService {
 public:
     PhoneService();
