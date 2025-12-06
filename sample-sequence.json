@@ -2,7 +2,7 @@
   "dialtone": {
     "description": "Dial Tone",
     "type": "audio",
-    "path": "https://upload.wikimedia.org/wikipedia/commons/c/cd/Dial_tone.ogg"
+    "path": "https://upload.wikimedia.org/wikipedia/commons/e/e5/US_dial_tone.ogg"
   },
   "busy": {
     "description": "Busy Signal",

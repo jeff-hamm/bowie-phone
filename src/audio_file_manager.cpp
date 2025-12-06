@@ -209,6 +209,63 @@ static bool audioFileExists(const char* url)
 }
 
 /**
+ * @brief Ensure the AUDIO_FILES_DIR exists, creating intermediate dirs if needed
+ */
+static bool ensureAudioDirExists()
+{
+    if (SD_MMC.exists(AUDIO_FILES_DIR))
+    {
+        return true;
+    }
+
+    // Build path incrementally to handle nested components like /sdcard/audio
+    char path[128];
+    size_t len = strlen(AUDIO_FILES_DIR);
+    if (len == 0 || len >= sizeof(path))
+    {
+        Serial.println("❌ Invalid audio directory path");
+        return false;
+    }
+
+    // Copy once for parsing
+    strncpy(path, AUDIO_FILES_DIR, sizeof(path) - 1);
+    path[sizeof(path) - 1] = '\0';
+
+    // Skip leading slash for tokenization
+    char* token = strtok(path + 1, "/");
+    char partial[128] = "/"; // Start at root
+    while (token)
+    {
+        // Append next segment
+        if (strlen(partial) + strlen(token) + 1 >= sizeof(partial))
+        {
+            Serial.println("❌ Audio directory path too long");
+            return false;
+        }
+        strcat(partial, token);
+
+        if (!SD_MMC.exists(partial))
+        {
+            if (!SD_MMC.mkdir(partial))
+            {
+                Serial.printf("❌ Failed to create directory: %s\n", partial);
+                return false;
+            }
+        }
+
+        // Add trailing slash for next component
+        if (strlen(partial) + 1 < sizeof(partial))
+        {
+            strcat(partial, "/");
+        }
+
+        token = strtok(nullptr, "/");
+    }
+
+    return SD_MMC.exists(AUDIO_FILES_DIR);
+}
+
+/**
  * @brief Add audio file to download queue
  * @param url URL to download
  * @param description Description for logging
@@ -348,16 +405,13 @@ static bool processDownloadQueueInternal()
     
     item->inProgress = true;
     
-    // Ensure audio directory exists
-    if (!SD_MMC.exists(AUDIO_FILES_DIR))
+    // Ensure audio directory exists (handles nested paths like /sdcard/audio)
+    if (!ensureAudioDirExists())
     {
-        if (!SD_MMC.mkdir(AUDIO_FILES_DIR))
-        {
-            Serial.println("❌ Failed to create audio directory");
-            item->inProgress = false;
-            downloadQueueIndex++; // Skip this item
-            return false;
-        }
+        Serial.println("❌ Failed to ensure audio directory exists");
+        item->inProgress = false;
+        downloadQueueIndex++; // Skip this item
+        return false;
     }
     
     // Download the file
