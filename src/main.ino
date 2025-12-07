@@ -16,7 +16,6 @@
 #include <WiFi.h>
 #include <SPI.h>
 #include <SD.h>
-#include <SD_MMC.h>
 
 AudioBoardStream kit(AudioKitEs8388V1); // Audio source
 AudioRealFFT fft;                       // or AudioKissFFT
@@ -35,8 +34,9 @@ int bits_per_sample = 16;
 #define SD_MISO 2
 
 const char *startFilePath="/";
-//const char* ext="mp3";
-AudioSourceSD source(startFilePath, SD_CS);
+const char* ext="mp3";
+// AudioSourceSD will be created in setup() after SPI is initialized
+AudioSourceSD *pSource = nullptr;
 MP3DecoderHelix decoder;  // or change to MP3DecoderMAD
 
 // DTMF sequence configuration
@@ -64,8 +64,7 @@ static bool audioKitInitialized = false;
 void setupAudioInput()
 {
     // Setup audio input (DTMF detection)
-    // Note: Using TX_MODE for SD_MMC compatibility - DTMF may need alternative approach
-    auto cfg = kit.defaultConfig(TX_MODE);
+    auto cfg = kit.defaultConfig(RXTX_MODE);
     
     // Configure input device - can be set via build flags
 #ifdef AUDIO_INPUT_DEVICE
@@ -156,7 +155,32 @@ void setup()
     Logger.printf("\n\n=== Bowie Phone Starting ===\n");
     AudioToolsLogger.begin(Serial, AudioToolsLogLevel::Warning);
 
-    // Initialize SD card in SPI mode
+    // Initialize AudioKit FIRST with sd_active=false
+    // This prevents AudioKit from interfering with our SPI SD card pins
+    Logger.println("🔧 Initializing AudioKit (TX_MODE)...");
+    auto cfg = kit.defaultConfig(RXTX_MODE);
+    
+    // Configure input device - can be set via build flags
+#ifdef AUDIO_INPUT_DEVICE
+    cfg.input_device = AUDIO_INPUT_DEVICE;
+#else
+    cfg.input_device = ADC_INPUT_ALL; // Default: both microphone and line in
+#endif
+    
+    cfg.channels = channels;
+    cfg.sample_rate = samples_per_second;
+    cfg.bits_per_sample = bits_per_sample;
+    cfg.sd_active = false; // Don't let AudioKit touch SD pins - we'll handle SD ourselves
+    if (!kit.begin(cfg))
+    {
+        Logger.println("❌ Failed to initialize AudioKit");
+    }
+    else
+    {
+        Logger.println("✅ AudioKit initialized successfully");
+    }
+
+    // Now initialize SD card in SPI mode AFTER AudioKit
     // Working switch config: 2,3,4 UP, 5 DOWN
     Logger.println("🔧 Initializing SD card (SPI mode)...");
     Logger.printf("   Pins: CS=%d, CLK=%d, MOSI=%d, MISO=%d\n", SD_CS, SD_CLK, SD_MOSI, SD_MISO);
@@ -184,43 +208,24 @@ void setup()
     
     if (!sdInitialized) {
         Logger.println("⚠️ SD initialization failed - continuing without SD card");
+    } else {
+        // Create AudioSourceSD now that SPI is initialized
+        // Pass custom SPI instance for ESP32-A1S AudioKit pins
+        pSource = new AudioSourceSD(startFilePath, ext, SD_CS, SPI);
+        Logger.println("✅ AudioSourceSD created");
     }
 
-    // Add more startup delay for system stabilization
-    Logger.println("🔧 Allowing system to stabilize...");
-    delay(3000);
+    // Initialize audio file manager (SPI mode, SD already initialized)
+    initializeAudioFileManager(SD_CS, false, true); // CS pin, false=use SPI (not SD_MMC), true=SD already init
 
-    // Initialize AudioKit with sd_active=false since we already initialized SD_MMC
-    // Using TX_MODE like Pheromone Dating - RXTX_MODE may conflict with SD_MMC pins
-    Logger.println("🔧 Initializing AudioKit (TX_MODE)...");
-    auto cfg = kit.defaultConfig(TX_MODE);
-    
-    // Configure input device - can be set via build flags
-#ifdef AUDIO_INPUT_DEVICE
-    cfg.input_device = AUDIO_INPUT_DEVICE;
-#else
-    cfg.input_device = ADC_INPUT_ALL; // Default: both microphone and line in
-#endif
-    
-    cfg.channels = channels;
-    cfg.sample_rate = samples_per_second;
-    cfg.bits_per_sample = bits_per_sample;
-    cfg.sd_active = false; // SD card already initialized manually above
-    if (!kit.begin(cfg))
-    {
-        Logger.println("❌ Failed to initialize AudioKit");
+    // Initialize Audio Player with event callback (only if SD initialized)
+    if (pSource != nullptr) {
+        initAudioPlayer(*pSource, kit, decoder);
+        setAudioEventCallback(onAudioEvent);
+        Logger.println("✅ Audio player initialized");
+    } else {
+        Logger.println("⚠️ Audio player not initialized - no SD card");
     }
-    else
-    {
-        Logger.println("✅ AudioKit initialized successfully");
-    }
-
-    // Initialize audio file manager (SPI mode)
-    initializeAudioFileManager(SD_CS, false); // CS pin, false=use SPI (not SD_MMC)
-
-    // Initialize Audio Player with event callback
-    initAudioPlayer(source, kit, decoder);
-    setAudioEventCallback(onAudioEvent);
 
     // Setup FFT for DTMF detection
     auto tcfg = fft.defaultConfig();
@@ -249,7 +254,7 @@ void setup()
         if (isOffHook) {
             // Handle off-hook event - play dial tone
             Logger.println("⚡ Event: Phone Off Hook - Playing Dial Tone");
-            playAudioBySequence("dialtone1");
+            playAudioBySequence("dialtone");
         } else {
             // Handle on-hook event - stop audio, reset state
             Logger.println("⚡ Event: Phone On Hook");

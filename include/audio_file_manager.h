@@ -22,10 +22,10 @@
 // ============================================================================
 
 #ifndef AUDIO_JSON_FILE
-#define AUDIO_JSON_FILE "/sdcard/audio_files.json"
+#define AUDIO_JSON_FILE "/audio_files.json"
 #endif
 #ifndef CACHE_TIMESTAMP_FILE
-#define CACHE_TIMESTAMP_FILE "/sdcard/audio_cache_time.txt"
+#define CACHE_TIMESTAMP_FILE "/audio_cache_time.txt"
 #endif
 #ifndef CACHE_VALIDITY_HOURS
 #define CACHE_VALIDITY_HOURS 24     ///< Cache validity in hours
@@ -37,7 +37,7 @@
 #define MAX_HTTP_RESPONSE_SIZE 8192 ///< Maximum HTTP response size
 #endif
 #ifndef AUDIO_FILES_DIR
-#define AUDIO_FILES_DIR "/sdcard/audio"    ///< Directory for cached audio files
+#define AUDIO_FILES_DIR "/audio"    ///< Directory for cached audio files
 #endif
 #ifndef MAX_DOWNLOAD_QUEUE
 #define MAX_DOWNLOAD_QUEUE 20       ///< Maximum items in download queue
@@ -82,8 +82,9 @@ struct AudioFile
  * 
  * @param sdCsPin CS pin for SPI SD mode (ignored if mmcSupport is true)
  * @param mmcSupport If true, use SD_MMC interface (already initialized). If false, use SPI SD.
+ * @param sdAlreadyInitialized If true, skip SD.begin() call (SD already initialized in main)
  */
-void initializeAudioFileManager(int sdCsPin = 13, bool mmcSupport = true);
+void initializeAudioFileManager(int sdCsPin = 13, bool mmcSupport = true, bool sdAlreadyInitialized = false);
 
 /**
  * @brief Download audio file list from remote server

@@ -59,7 +59,7 @@ void PhoneService::startRinging() {
     
     // Don't ring if phone is already off hook
     if (_isOffHook) {
-        Logger.println("⚠️ Cannot start ringing: Phone is off hook");
+//        Logger.println("⚠️ Cannot start ringing: Phone is off hook");
         return;
     }
     

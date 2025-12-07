@@ -12,7 +12,7 @@
 #include "audio_file_manager.h"
 #include "logging.h"
 #include <Preferences.h>
-#include <SD_MMC.h>
+#include <SD.h>
 
 // ============================================================================
 // GLOBAL VARIABLES
@@ -114,7 +114,7 @@ bool playAudioPath(const char* filePath)
     }
     
     // Check if file exists
-    if (!SD_MMC.exists(filePath))
+    if (!SD.exists(filePath))
     {
         Logger.printf("❌ Audio file not found: %s\n", filePath);
         return false;

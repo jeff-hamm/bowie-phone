@@ -719,7 +719,7 @@ static bool loadAudioFilesFromSDCard()
 // PUBLIC FUNCTIONS
 // ============================================================================
 
-void initializeAudioFileManager(int sdCsPin, bool mmcSupport)
+void initializeAudioFileManager(int sdCsPin, bool mmcSupport, bool sdAlreadyInitialized)
 {
     Serial.println("🔧 Initializing Audio File Manager...");
     
@@ -728,7 +728,7 @@ void initializeAudioFileManager(int sdCsPin, bool mmcSupport)
     sdCardCsPin = sdCsPin;
     audioFileCount = 0;
     lastCacheTime = 0;
-    sdCardInitialized = false;
+    sdCardInitialized = sdAlreadyInitialized;  // Use passed value instead of forcing false
     
     // Try to load from SD card first
     if (loadAudioFilesFromSDCard())
