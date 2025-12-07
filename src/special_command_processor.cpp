@@ -1,4 +1,5 @@
 #include "special_command_processor.h"
+#include "tailscale_manager.h"
 #include <WiFi.h>
 #include <EEPROM.h>
 #include <Preferences.h>
@@ -89,6 +90,8 @@ static const SpecialCommand DEFAULT_SPECIAL_COMMANDS[] = {
     {"*#01#", "Save to EEPROM"},  
     {"*#02#", "Load from EEPROM"},
     {"*#99#", "Erase EEPROM"},
+    // Tailscale/VPN command
+    {"*#88#", "Tailscale Status"},
 };
 
 // ============================================================================
@@ -389,6 +392,9 @@ void assignDefaultHandler(int index, const char* sequence)
         specialCommands[index].handler = executeLoadEEPROM;
     else if (strcmp(sequence, "*#99#") == 0)
         specialCommands[index].handler = executeEraseEEPROM;
+    // Tailscale command
+    else if (strcmp(sequence, "*#88#") == 0)
+        specialCommands[index].handler = executeTailscaleStatus;
     else
         specialCommands[index].handler = nullptr; // Custom command, no default handler
 }
@@ -567,4 +573,18 @@ void executeEraseEEPROM()
     // Reload defaults after erasing
     Serial.printf("🔄 Reinitializing with defaults...\n");
     initializeSpecialCommands();
+}
+
+void executeTailscaleStatus()
+{
+    Serial.printf("🔐 Tailscale/WireGuard Status:\n");
+    Serial.printf("   Status: %s\n", getTailscaleStatus());
+    
+    if (isTailscaleConnected()) {
+        Serial.printf("   Tailnet IP: %s\n", getTailscaleIP());
+        Serial.printf("   Connection: Active\n");
+    } else {
+        Serial.printf("   Connection: Inactive\n");
+        Serial.printf("   Configure via WIREGUARD_* build flags\n");
+    }
 }
