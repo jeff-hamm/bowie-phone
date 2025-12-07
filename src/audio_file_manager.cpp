@@ -753,7 +753,7 @@ void initializeAudioFileManager(int sdCsPin, bool mmcSupport, bool sdAlreadyInit
 
 bool downloadAudio()
 {
-    Serial.println("🌐 Downloading audio files from server...");
+    Serial.println("🌐 Downloading list from server...");
     
     // Check WiFi connection
     if (WiFi.status() != WL_CONNECTED)
@@ -843,16 +843,16 @@ bool downloadAudio()
         audioFileCount++;
     }
     
-    Serial.printf("✅ Downloaded and parsed %d audio files\n", audioFileCount);
+    Serial.printf("✅ Downloaded and parsed %d file list entries\n", audioFileCount);
     
     // Save to SD card for caching
     if (saveAudioFilesToSDCard())
     {
-        Serial.println("💾 Audio files cached to SD card");
+        Serial.println("💾 Files list cached to SD card");
     }
     else
     {
-        Serial.println("⚠️ Failed to cache audio files to SD card");
+        Serial.println("⚠️ Failed to cache files list to SD card");
     }
 
     // Queue any missing remote audio files now that the list is refreshed

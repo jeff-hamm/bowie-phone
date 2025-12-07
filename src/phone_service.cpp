@@ -5,11 +5,18 @@
 PhoneService Phone;
 
 PhoneService::PhoneService() 
+#ifdef CAN_RING
     : _pinFR(F_R), _pinRM(RM), _pinSHK(SHK),
       _isRinging(false), _isOffHook(false), _lastShkReading(false),
       _lastRingToggleTime(0), _ringState(false),
       _lastDebounceTime(0), _debounceDelay(50),
       _hookCallback(nullptr) {
+#else
+    : _pinSHK(SHK),
+      _isOffHook(false), _lastShkReading(false),
+      _lastDebounceTime(0), _debounceDelay(50),
+      _hookCallback(nullptr) {
+#endif
 }
 
 void PhoneService::begin() {
@@ -17,15 +24,16 @@ void PhoneService::begin() {
     
     // Note: PD is hardwired to +3.3V (SLIC always enabled)
     
-    //Configure pins
+#ifdef CAN_RING
+    //Configure ring pins
     pinMode(_pinFR, OUTPUT);
     pinMode(_pinRM, OUTPUT);
-    // Use pull-up so the hook signal is not left floating; SHK should pull low when on-hook if wired that way
-    pinMode(_pinSHK, INPUT);
-    
-    //Set initial states
     digitalWrite(_pinFR, LOW);
     digitalWrite(_pinRM, LOW);
+#endif
+    
+    // Use pull-up so the hook signal is not left floating; SHK should pull low when on-hook if wired that way
+    pinMode(_pinSHK, INPUT);
     
     // Read initial hook state
     #ifdef ASSUME_HOOK
@@ -35,15 +43,21 @@ void PhoneService::begin() {
     #endif
     _lastShkReading = _isOffHook;
     
-    Logger.printf("📞 Phone Service Ready. Initial State: %s\n", _isOffHook ? "OFF HOOK" : "ON HOOK");
+#ifdef CAN_RING
+    Logger.printf("📞 Phone Service Ready (ringing enabled). Initial State: %s\n", _isOffHook ? "OFF HOOK" : "ON HOOK");
+#else
+    Logger.printf("📞 Phone Service Ready (ringing disabled). Initial State: %s\n", _isOffHook ? "OFF HOOK" : "ON HOOK");
+#endif
 }
 
 void PhoneService::loop() {
     checkHookState();
     
+#ifdef CAN_RING
     if (_isRinging) {
         updateRingSignal();
     }
+#endif
 
     // Periodic debug to verify hook sensing in hardware
     // static unsigned long lastDebug = 0;
@@ -54,6 +68,7 @@ void PhoneService::loop() {
     // }
 }
 
+#ifdef CAN_RING
 void PhoneService::startRinging() {
     if (_isRinging) return;
     
@@ -84,6 +99,10 @@ void PhoneService::stopRinging() {
     digitalWrite(_pinFR, LOW); // Ensure F/R is low
 }
 
+bool PhoneService::isRinging() const {
+    return _isRinging;
+}
+
 void PhoneService::updateRingSignal() {
     // If phone is picked up while ringing, stop ringing immediately
     if (_isOffHook) {
@@ -100,6 +119,13 @@ void PhoneService::updateRingSignal() {
         _lastRingToggleTime = currentTime;
     }
 }
+
+#else
+// No-op implementations when CAN_RING is not defined
+void PhoneService::startRinging() {}
+void PhoneService::stopRinging() {}
+bool PhoneService::isRinging() const { return false; }
+#endif
 
 void PhoneService::checkHookState() {
     
@@ -123,10 +149,12 @@ void PhoneService::checkHookState() {
             
             if (_isOffHook) {
                 Logger.println("📞 Phone picked up (OFF HOOK)");
+#ifdef CAN_RING
                 // Stop ringing if we were ringing
                 if (_isRinging) {
                     stopRinging();
                 }
+#endif
             } else {
                 Logger.println("📞 Phone hung up (ON HOOK)");
             }

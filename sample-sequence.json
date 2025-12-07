@@ -2,17 +2,7 @@
   "dialtone": {
     "description": "Dial Tone",
     "type": "audio",
-    "path": "https://upload.wikimedia.org/wikipedia/commons/e/e5/US_dial_tone.ogg"
-  },
-  "busy": {
-    "description": "Busy Signal",
-    "type": "audio",
-    "path": "https://upload.wikimedia.org/wikipedia/commons/6/6d/Busy_Signal.ogg"
-  },
-  "ringback": {
-    "description": "Ringback Tone",
-    "type": "audio",
-    "path": "https://upload.wikimedia.org/wikipedia/commons/c/c6/Ringing_signal.ogg"
+    "path": "https://github.com/jeff-hamm/bowie-phone/raw/refs/heads/main/data/dialtone.mp3"
   },
   "911": {
     "description": "Emergency Services",
@@ -23,46 +13,6 @@
     "description": "Information Services",
     "type": "audio", 
     "path": "https://archive.org/download/testmp3testfile/mpthreetest.mp3"
-  },
-  "123": {
-    "description": "Test Sequence",
-    "type": "audio",
-    "path": "https://file-examples.com/storage/fe68c04fa694027b56be9dd/2017/11/file_example_MP3_700KB.mp3"
-  },
-  "456": {
-    "description": "Demo Audio",
-    "type": "audio",
-    "path": "https://file-examples.com/storage/fe68c04fa694027b56be9dd/2017/11/file_example_MP3_1MG.mp3"
-  },
-  "789": {
-    "description": "Sample Message",
-    "type": "audio",
-    "path": "https://file-examples.com/storage/fe68c04fa694027b56be9dd/2017/11/file_example_MP3_2MG.mp3"
-  },
-  "000": {
-    "description": "Operator",
-    "type": "audio",
-    "path": "https://www.learningcontainer.com/wp-content/uploads/2020/02/Kalimba.mp3"
-  },
-  "555": {
-    "description": "Directory Assistance",
-    "type": "audio",
-    "path": "https://sample-videos.com/zip/10/mp3/SampleAudio_0.4mb_mp3.mp3"
-  },
-  "*67": {
-    "description": "Block Caller ID",
-    "type": "service",
-    "path": ""
-  },
-  "*69": {
-    "description": "Call Return",
-    "type": "service", 
-    "path": ""
-  },
-  "611": {
-    "description": "Customer Service",
-    "type": "service",
-    "path": ""
   },
   "411*": {
     "description": "Weather Service",

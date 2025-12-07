@@ -5,11 +5,13 @@
 #include "AudioTools/AudioLibs/AudioRealFFT.h" // or AudioKissFFT
 #include "AudioTools/Disk/AudioSourceSD.h" // SPI SD mode
 #include "AudioTools/AudioCodecs/CodecMP3Helix.h"
+#include "AudioTools/AudioCodecs/OggVorbisDecoder.h"
 
 #include "sequence_processor.h"
 #include "special_command_processor.h"
 #include "audio_file_manager.h"
 #include "wifi_manager.h"
+#include "tailscale_manager.h"
 #include "logging.h"
 #include "phone_service.h"
 #include "audio_player.h"
@@ -18,8 +20,12 @@
 #include <SD.h>
 
 AudioBoardStream kit(AudioKitEs8388V1); // Audio source
+AudioSourceSD *source = nullptr;        // to be initialized in setup()
 AudioRealFFT fft;                       // or AudioKissFFT
 StreamCopy copier(fft, kit);            // copy mic to tfl
+MultiDecoder multi_decoder;
+CodecMP3Helix mp3_decoder;
+WAVDecoder wav_decoder;
 int channels = 2;
 int samples_per_second = 44100;
 int bits_per_sample = 16;
@@ -33,72 +39,15 @@ int bits_per_sample = 16;
 #define SD_MOSI 15
 #define SD_MISO 2
 
-const char *startFilePath="/";
-const char* ext="mp3";
-// AudioSourceSD will be created in setup() after SPI is initialized
-AudioSourceSD *pSource = nullptr;
-MP3DecoderHelix decoder;  // or change to MP3DecoderMAD
-
+const char *startFilePath="/audio";
 // DTMF sequence configuration
 const unsigned long SEQUENCE_TIMEOUT = 2000; // 2 seconds timeout
 const int MAX_SEQUENCE_LENGTH = 20;          // Maximum digits in sequence
 char dtmfSequence[MAX_SEQUENCE_LENGTH + 1];  // +1 for null terminator
 int sequenceIndex = 0;
 unsigned long lastDigitTime = 0;
-/*
- * Audio Input Device Options (configurable via AUDIO_INPUT_DEVICE build flag):
- * 
- * ADC_INPUT_LINE1 - Microphone only (0x2020)
- * ADC_INPUT_LINE2 - Line in only (0x0408) 
- * ADC_INPUT_LINE3 - Right mic + left line in (0x0420)
- * ADC_INPUT_ALL   - Both microphone and line in (0x0408 | 0x2020) [DEFAULT]
- * 
- * Set via platformio.ini build_flags:
- * -DAUDIO_INPUT_DEVICE=ADC_INPUT_LINE2  ; for line in only
- */
-
-// Flag to track if audio kit has been initialized
 static bool audioKitInitialized = false;
 
-// Helper function to setup audio input and FFT (called after audio playback ends)
-void setupAudioInput()
-{
-    // Setup audio input (DTMF detection)
-    auto cfg = kit.defaultConfig(RXTX_MODE);
-    
-    // Configure input device - can be set via build flags
-#ifdef AUDIO_INPUT_DEVICE
-    cfg.input_device = AUDIO_INPUT_DEVICE;
-#else
-    cfg.input_device = ADC_INPUT_ALL; // Default: both microphone and line in
-#endif
-    
-    cfg.channels = channels;
-    cfg.sample_rate = samples_per_second;
-    cfg.bits_per_sample = bits_per_sample;
-    cfg.sd_active = false; // SD card initialized manually in setup()
-    kit.begin(cfg);
-
-    // Setup FFT
-    auto tcfg = fft.defaultConfig();
-    tcfg.length = 8192;
-    tcfg.channels = channels;
-    tcfg.sample_rate = samples_per_second;
-    tcfg.bits_per_sample = bits_per_sample;
-    tcfg.callback = &fftResult;
-    fft.begin(tcfg);
-}
-
-// Audio event callback - called when audio starts/stops
-void onAudioEvent(bool started)
-{
-    if (!started)
-    {
-        // Audio finished - restart input audio system and FFT processing
-        setupAudioInput();
-        Logger.println("🎤 Resumed audio input and FFT processing");
-    }
-}
 
 // Check for new DTMF digits and manage sequence collection
 // Returns true when a complete sequence is ready to process
@@ -114,6 +63,13 @@ bool checkForDTMFSequence()
         if (detectedChar != 0)
         {
             Serial.printf("DTMF digit detected: %c\n", detectedChar);
+
+            // Stop dial tone when first digit is pressed
+            if (isDialTonePlaying())
+            {
+                Logger.println("🔇 Stopping dial tone - digit detected");
+                stopAudio();
+            }
 
             // Add digit to sequence
             if (sequenceIndex < MAX_SEQUENCE_LENGTH)
@@ -153,24 +109,35 @@ void setup()
     Logger.addLogger(Serial);
 
     Logger.printf("\n\n=== Bowie Phone Starting ===\n");
-    AudioToolsLogger.begin(Serial, AudioToolsLogLevel::Warning);
+    AudioToolsLogger.begin(Serial, AudioToolsLogLevel::Info);
 
     // Initialize AudioKit FIRST with sd_active=false
     // This prevents AudioKit from interfering with our SPI SD card pins
-    Logger.println("🔧 Initializing AudioKit (TX_MODE)...");
+    Logger.println("🔧 Initializing AudioKit (RXTX_MODE)...");
     auto cfg = kit.defaultConfig(RXTX_MODE);
-    
+    cfg.channels = channels;
+    cfg.sample_rate = samples_per_second;
+    cfg.bits_per_sample = bits_per_sample;
     // Configure input device - can be set via build flags
 #ifdef AUDIO_INPUT_DEVICE
     cfg.input_device = AUDIO_INPUT_DEVICE;
 #else
     cfg.input_device = ADC_INPUT_ALL; // Default: both microphone and line in
 #endif
-    
-    cfg.channels = channels;
-    cfg.sample_rate = samples_per_second;
-    cfg.bits_per_sample = bits_per_sample;
-    cfg.sd_active = false; // Don't let AudioKit touch SD pins - we'll handle SD ourselves
+
+    //    cfg.sd_active = false; // SD card initialized manually in setup()
+    kit.begin(cfg);
+
+    // Setup FFT
+    auto tcfg = fft.defaultConfig();
+    tcfg.length = 8192;
+    tcfg.channels = channels;
+    tcfg.sample_rate = samples_per_second;
+    tcfg.bits_per_sample = bits_per_sample;
+    tcfg.callback = &fftResult;
+    fft.begin(tcfg);
+
+    //    cfg.sd_active = false; // Don't let AudioKit touch SD pins - we'll handle SD ourselves
     if (!kit.begin(cfg))
     {
         Logger.println("❌ Failed to initialize AudioKit");
@@ -178,54 +145,58 @@ void setup()
     else
     {
         Logger.println("✅ AudioKit initialized successfully");
+        
+        // Set input volume/gain to maximum for DTMF detection
+        // Volume range is 0-100 (percentage)
+        kit.setInputVolume(100);
+        Logger.println("🔊 Input volume set to 100%");
     }
 
-    // Now initialize SD card in SPI mode AFTER AudioKit
-    // Working switch config: 2,3,4 UP, 5 DOWN
-    Logger.println("🔧 Initializing SD card (SPI mode)...");
-    Logger.printf("   Pins: CS=%d, CLK=%d, MOSI=%d, MISO=%d\n", SD_CS, SD_CLK, SD_MOSI, SD_MISO);
+    // // Now initialize SD card in SPI mode AFTER AudioKit
+    // // Working switch config: 2,3,4 UP, 5 DOWN
+    // Logger.println("🔧 Initializing SD card (SPI mode)...");
+    // Logger.printf("   Pins: CS=%d, CLK=%d, MOSI=%d, MISO=%d\n", SD_CS, SD_CLK, SD_MOSI, SD_MISO);
     
-    SPI.begin(SD_CLK, SD_MISO, SD_MOSI, SD_CS);
+    // SPI.begin(SD_CLK, SD_MISO, SD_MOSI, SD_CS);
     
-    bool sdInitialized = false;
-    for (int attempt = 1; attempt <= 3 && !sdInitialized; attempt++) {
-        Logger.printf("🔧 SD SPI initialization attempt %d/3...\n", attempt);
-        delay(attempt * 300);
+    // bool sdInitialized = false;
+    // for (int attempt = 1; attempt <= 3 && !sdInitialized; attempt++) {
+    //     Logger.printf("🔧 SD SPI initialization attempt %d/3...\n", attempt);
+    //     delay(attempt * 300);
         
-        if (SD.begin(SD_CS, SPI)) {
-            uint8_t cardType = SD.cardType();
-            if (cardType != CARD_NONE) {
-                uint64_t cardSize = SD.cardSize() / (1024 * 1024);
-                Logger.printf("✅ SD card initialized (SPI mode, %lluMB)\n", cardSize);
-                sdInitialized = true;
-            } else {
-                Logger.println("❌ No SD card detected");
-            }
-        } else {
-            Logger.println("❌ SD.begin() failed");
-        }
-    }
+    //     if (SD.begin(SD_CS, SPI)) {
+    //         uint8_t cardType = SD.cardType();
+    //         if (cardType != CARD_NONE) {
+    //             uint64_t cardSize = SD.cardSize() / (1024 * 1024);
+    //             Logger.printf("✅ SD card initialized (SPI mode, %lluMB)\n", cardSize);
+    //             sdInitialized = true;
+    //         } else {
+    //             Logger.println("❌ No SD card detected");
+    //         }
+    //     } else {
+    //         Logger.println("❌ SD.begin() failed");
+    //     }
+    // }
     
-    if (!sdInitialized) {
-        Logger.println("⚠️ SD initialization failed - continuing without SD card");
-    } else {
+    // if (!sdInitialized) {
+    //     Logger.println("⚠️ SD initialization failed - continuing without SD card");
+    // } else {
         // Create AudioSourceSD now that SPI is initialized
         // Pass custom SPI instance for ESP32-A1S AudioKit pins
-        pSource = new AudioSourceSD(startFilePath, ext, SD_CS, SPI);
+        source = new AudioSourceSD(startFilePath, "na", SD_CS, SPI);
         Logger.println("✅ AudioSourceSD created");
-    }
+//    }
 
     // Initialize audio file manager (SPI mode, SD already initialized)
     initializeAudioFileManager(SD_CS, false, true); // CS pin, false=use SPI (not SD_MMC), true=SD already init
 
     // Initialize Audio Player with event callback (only if SD initialized)
-    if (pSource != nullptr) {
-        initAudioPlayer(*pSource, kit, decoder);
-        setAudioEventCallback(onAudioEvent);
-        Logger.println("✅ Audio player initialized");
-    } else {
-        Logger.println("⚠️ Audio player not initialized - no SD card");
-    }
+    multi_decoder.addDecoder(ogg_decoder, "audio/ogg");
+    multi_decoder.addDecoder(mp3_decoder, "audio/mpeg");
+    multi_decoder.addDecoder(wav_decoder, "audio/wav");
+    initAudioPlayer(*source, kit, multi_decoder);
+    //        setAudioEventCallback(onAudioEvent);
+    Logger.println("✅ Audio player initialized");
 
     // Setup FFT for DTMF detection
     auto tcfg = fft.defaultConfig();
@@ -245,6 +216,10 @@ void setup()
     // Initialize OTA updates (must be after WiFi)
     initOTA();
 
+    // Initialize Tailscale/WireGuard VPN (if configured)
+    // Configure in platformio.ini with WIREGUARD_* build flags
+    initTailscaleFromConfig();
+
     // Initialize special commands system
     initializeSpecialCommands();
 
@@ -259,7 +234,7 @@ void setup()
             // Handle on-hook event - stop audio, reset state
             Logger.println("⚡ Event: Phone On Hook");
             stopAudio();
-            // Reset DTMF sequence
+            // Reset DTMF sequence` 1222333333333333333333333333333333333333333333333333333333333333333333333333333333333331
             sequenceIndex = 0;
             dtmfSequence[0] = '\0';
         }
@@ -272,6 +247,9 @@ void loop()
 {
     // Handle WiFi management (config portal and OTA)
     handleWiFiLoop();
+
+    // Handle Tailscale VPN keepalive/reconnection
+    handleTailscaleLoop();
 
     // Ensure audio catalog/downloads kick off once WiFi is available
     static bool audioDownloadComplete = false;
@@ -290,8 +268,8 @@ void loop()
             }
         }
     }
-    if(!Phone.isRinging())
-        Phone.startRinging();
+    // if(!Phone.isRinging())
+    //     Phone.startRinging();
 
     // Process Phone Service
     Phone.loop();
@@ -311,37 +289,34 @@ void loop()
     }
 
     // Only process if phone is off hook
-    // if (!Phone.isOffHook())
-    // {
-    //     return; // Phone is on hook, nothing to do
-    // }
+    if (!Phone.isOffHook())
+    {
+        return; // Phone is on hook, nothing to do
+    }
+
+    // Always process audio input for DTMF detection (even during playback in RXTX_MODE)
+    copier.copy();
 
     // Handle audio playback
     if (isAudioActive())
     {
         processAudio();
     }
-    else
-    {
-        // Only process DTMF when not playing audio
-        // Process audio - FFT callback collects frequency data
-        copier.copy();
-        
-        // Check for complete DTMF sequences
-        if (checkForDTMFSequence())
-        {
-            // Process the complete sequence and check for audio playback
-            const char* audioPath = processNumberSequence(dtmfSequence);
-            
-            // If an audio file path was returned, start playback
-            if (audioPath && SD.exists(audioPath))
-            {
-                playAudioPath(audioPath);
-            }
 
-            // Reset sequence buffer for next sequence
-            sequenceIndex = 0;
-            dtmfSequence[0] = '\0';
+    // Check for complete DTMF sequences
+    if (checkForDTMFSequence())
+    {
+        // Process the complete sequence and check for audio playback
+        const char* audioPath = processNumberSequence(dtmfSequence);
+        
+        // If an audio file path was returned, start playback
+        if (audioPath && SD.exists(audioPath))
+        {
+            playAudioPath(audioPath);
         }
+
+        // Reset sequence buffer for next sequence
+        sequenceIndex = 0;
+        dtmfSequence[0] = '\0';
     }
 }

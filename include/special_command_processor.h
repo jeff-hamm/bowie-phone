@@ -142,6 +142,11 @@ void executeLoadEEPROM();
  */
 void executeEraseEEPROM();
 
+/**
+ * @brief Display Tailscale/WireGuard VPN status
+ */
+void executeTailscaleStatus();
+
 // ============================================================================
 // EEPROM PERSISTENCE FUNCTIONS
 // ============================================================================

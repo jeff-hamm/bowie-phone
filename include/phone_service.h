@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include <functional>
+#include "config.h"
 
 // Define callback types
 typedef std::function<void(bool)> HookStateCallback;
@@ -16,29 +17,30 @@ public:
     // Main processing loop - call this frequently
     void loop();
     
-    // Ringing control
+    // Ringing control (no-op when CAN_RING is not defined)
     void startRinging();
     void stopRinging();
-    bool isRinging() const { return _isRinging; }
+    bool isRinging() const;
     
     // Hook state
     bool isOffHook() const { return _isOffHook; }
     void setHookCallback(HookStateCallback callback);
 
 private:
-    // Pin definitions (will be loaded from config.h in cpp)
+#ifdef CAN_RING
+    // Pin definitions for ringing (will be loaded from config.h in cpp)
     int _pinFR;
     int _pinRM;
+    bool _isRinging;
+    unsigned long _lastRingToggleTime;
+    bool _ringState;
+    void updateRingSignal();
+#endif
     int _pinSHK;
     
     // State variables
-    bool _isRinging;
     bool _isOffHook;
     bool _lastShkReading;
-    
-    // Timing variables
-    unsigned long _lastRingToggleTime;
-    bool _ringState;
     
     unsigned long _lastDebounceTime;
     unsigned long _debounceDelay;
@@ -47,7 +49,6 @@ private:
     HookStateCallback _hookCallback;
     
     // Internal helpers
-    void updateRingSignal();
     void checkHookState();
 };
 

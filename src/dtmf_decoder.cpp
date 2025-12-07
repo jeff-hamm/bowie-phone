@@ -5,6 +5,9 @@
 // Uncomment to enable debug output
 // #define DEBUG
 
+// Uncomment to see ALL FFT values (not just DTMF candidates)
+// #define DEBUG_FFT_ALL
+
 // DTMF frequency definitions
 const float DTMF_ROW_FREQS[] = {697.0, 770.0, 852.0, 941.0};
 const float DTMF_COL_FREQS[] = {1209.0, 1336.0, 1477.0, 1633.0};
@@ -23,6 +26,15 @@ const unsigned long DETECTION_COOLDOWN = 200; // 200ms between detections (reduc
 FrequencyPeak detectedPeaks[10];
 int peakCount = 0;
 unsigned long lastDetectionTime = 0;
+
+// Debug: track max magnitude seen for signal level monitoring
+#ifdef DEBUG_FFT_ALL
+static float maxMagnitudeSeen = 0;
+static unsigned long lastDebugPrintTime = 0;
+static unsigned long fftCallCount = 0;
+static float lastStrongestFreq = 0;
+static float lastStrongestMag = 0;
+#endif
 
 // Find closest DTMF frequency
 int findClosestDTMFFreq(float freq, const float *freqArray, int arraySize)
@@ -178,9 +190,41 @@ void fftResult(AudioFFTBase &fft)
   auto result = fft.result();
   static unsigned long lastAnalysisTime = 0;
 
+#ifdef DEBUG_FFT_ALL
+  fftCallCount++;
+  
+  // Track the strongest signal we see
+  if (result.magnitude > lastStrongestMag)
+  {
+    lastStrongestMag = result.magnitude;
+    lastStrongestFreq = result.frequency;
+  }
+  if (result.magnitude > maxMagnitudeSeen)
+  {
+    maxMagnitudeSeen = result.magnitude;
+  }
+  
+  // Print debug info every 500ms
+  unsigned long now = millis();
+  if (now - lastDebugPrintTime > 500)
+  {
+    Serial.printf("🎵 FFT Debug: calls=%lu, strongest=%.1fHz (mag=%.1f), max_ever=%.1f, threshold=%.1f, peaks=%d\n",
+                  fftCallCount, lastStrongestFreq, lastStrongestMag, maxMagnitudeSeen, MAGNITUDE_THRESHOLD, peakCount);
+    lastDebugPrintTime = now;
+    fftCallCount = 0;
+    lastStrongestMag = 0;
+    lastStrongestFreq = 0;
+  }
+#endif
+
   // Only consider frequencies with sufficient magnitude
   if (result.magnitude > MAGNITUDE_THRESHOLD)
   {
+#ifdef DEBUG_FFT_ALL
+    // Print any signal above threshold
+    Serial.printf("📊 Signal: %.1fHz (mag=%.1f)\n", result.frequency, result.magnitude);
+#endif
+
     // Check if this is potentially a DTMF frequency
     bool isDTMFCandidate = false;
 

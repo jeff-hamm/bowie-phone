@@ -74,6 +74,18 @@ void stopAudio();
 bool isAudioActive();
 
 /**
+ * @brief Check if dial tone is currently playing
+ * @return true if dial tone is playing, false otherwise
+ */
+bool isDialTonePlaying();
+
+/**
+ * @brief Get the current audio key being played
+ * @return Current audio key string, or nullptr if nothing playing
+ */
+const char* getCurrentAudioKey();
+
+/**
  * @brief Process audio playback (call this in main loop)
  * @return true if still playing, false if finished or not playing
  */

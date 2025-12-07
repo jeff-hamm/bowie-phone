@@ -24,6 +24,7 @@ static unsigned long audioStartTime = 0;
 static float currentVolume = DEFAULT_AUDIO_VOLUME;
 static Preferences volumePrefs;
 static AudioEventCallback eventCallback = nullptr;
+static char currentAudioKey[32] = {0};  // Track what audio is currently playing
 
 // ============================================================================
 // HELPER FUNCTIONS
@@ -91,6 +92,10 @@ void initAudioPlayer(AudioSource &source, AudioStream &output, AudioDecoder &dec
     // Create audio player with provided source and decoder
     audioPlayer = new AudioPlayer(source, output, decoder);
     
+    // IMPORTANT: Disable auto-advancing to next file
+    // We want to play only the requested file, not iterate through all files
+    audioPlayer->setAutoNext(false);
+    
     // Load volume from storage
     currentVolume = loadVolumeFromStorage();
     
@@ -128,9 +133,18 @@ bool playAudioPath(const char* filePath)
     }
     
     Logger.printf("🎵 Starting audio playback: %s\n", filePath);
-    audioPlayer->playPath(filePath);
+    
+    // Use setPath which properly closes the previous file before opening the new one
+    // This is important to prevent SD card corruption from leftover file handles
+    if (!audioPlayer->setPath(filePath))
+    {
+        Logger.printf("❌ Failed to set path: %s\n", filePath);
+        return false;
+    }
+    
     isPlaying = true;
     audioStartTime = millis();
+    // Note: currentAudioKey is set by playAudioBySequence if called via key
     
     // Notify callback
     if (eventCallback)
@@ -157,6 +171,10 @@ bool playAudioBySequence(const char* sequence)
         return false;
     }
     
+    // Store the audio key for tracking
+    strncpy(currentAudioKey, sequence, sizeof(currentAudioKey) - 1);
+    currentAudioKey[sizeof(currentAudioKey) - 1] = '\0';
+    
     Logger.printf("🎯 Playing audio for key: %s\n", sequence);
     
     // Process the audio key to get the file path
@@ -179,9 +197,12 @@ void stopAudio()
         return;
     }
     
+    // Stop playback but don't end/close the player
+    // Using stop() instead of end() to keep the player ready for next file
     if (audioPlayer->isActive())
     {
-        audioPlayer->end();
+        audioPlayer->stop();
+        Logger.println("⏹️ Audio player stopped");
     }
     
     if (!isPlaying)
@@ -190,6 +211,7 @@ void stopAudio()
     }
     
     isPlaying = false;
+    currentAudioKey[0] = '\0';  // Clear the audio key
     
     // Notify callback
     if (eventCallback)
@@ -203,6 +225,16 @@ void stopAudio()
 bool isAudioActive()
 {
     return isPlaying;
+}
+
+bool isDialTonePlaying()
+{
+    return isPlaying && (strcmp(currentAudioKey, "dialtone") == 0);
+}
+
+const char* getCurrentAudioKey()
+{
+    return currentAudioKey[0] != '\0' ? currentAudioKey : nullptr;
 }
 
 bool processAudio()
