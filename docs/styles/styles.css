@@ -136,12 +136,45 @@ h2 {
     font-size: var(--font-size-text-small);
 }
 
+.sequence-play-btn {
+    background: var(--color-primary);
+    color: var(--color-bg);
+    border: none;
+    padding: var(--spacing-xs) var(--spacing-sm);
+    border-radius: var(--border-radius-sm);
+    font-weight: var(--font-weight-medium);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    box-shadow: var(--shadow-md);
+    transition: transform var(--transition-fast), box-shadow var(--transition-fast), opacity var(--transition-fast);
+}
+
+.sequence-play-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-primary);
+}
+
+.sequence-play-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    box-shadow: none;
+}
+
+.sequence-play-btn.is-loading {
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+}
+
 .sequence-link-text {
     max-width: 200px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     cursor: pointer;
+    position: relative;
+    padding-right: calc(var(--spacing-lg));
     padding: var(--spacing-xs) var(--spacing-sm);
     border-radius: var(--border-radius-sm);
     transition: all var(--transition-fast);
@@ -191,6 +224,11 @@ h2 {
     margin-left: var(--spacing-xs);
     font-size: var(--font-size-icon-small);
     transition: opacity var(--transition-fast);
+    position: absolute;
+    right: var(--spacing-xs);
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 2;
 }
 
 .editable-field:hover .edit-icon {
@@ -260,6 +298,16 @@ h2 {
     display: flex;
     align-items: center;
     gap: var(--spacing-sm);
+}
+
+.sync-status.is-loading {
+    border-color: var(--color-primary);
+    box-shadow: var(--accent-glow);
+    color: var(--color-primary);
+}
+
+.sync-status.is-loading::before {
+    content: '...';
 }
 
 .floating-add-btn {
@@ -418,6 +466,15 @@ h2 {
     cursor: pointer;
     transition: all var(--transition-fast);
     text-decoration: none;
+}
+
+.btn:disabled,
+.btn[disabled] {
+    opacity: 0.45;
+    cursor: not-allowed;
+    filter: grayscale(30%);
+    box-shadow: none;
+    transform: none;
 }
 
 .btn-primary {

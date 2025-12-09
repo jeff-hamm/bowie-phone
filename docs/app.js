@@ -28,6 +28,7 @@ class PhoneSequenceApp {
         this.recordedBlob = null;
         this.recordingStartTime = null;
         this.recordingTimer = null;
+        this.listAudioPlayer = null;
         
         // Edit state
         this.editingSequenceId = null;
@@ -84,6 +85,12 @@ class PhoneSequenceApp {
         if (numberInput) {
             numberInput.addEventListener('input', (e) => this.validateNumber(e.target.value));
             numberInput.addEventListener('blur', (e) => this.validateNumber(e.target.value, true));
+            numberInput.addEventListener('input', () => this.updateSubmitButtonState());
+            numberInput.addEventListener('blur', () => this.updateSubmitButtonState());
+        }
+        const nameInput = document.getElementById('sequence-name');
+        if (nameInput) {
+            nameInput.addEventListener('input', () => this.updateSubmitButtonState());
         }
         
         // Search
@@ -96,6 +103,11 @@ class PhoneSequenceApp {
         const urlToggle = document.getElementById('url-toggle');
         if (urlToggle) {
             urlToggle.addEventListener('click', () => this.toggleUrlInput());
+        }
+
+        const linkUrlInput = document.getElementById('sequence-link-url');
+        if (linkUrlInput) {
+            linkUrlInput.addEventListener('input', () => this.updateSubmitButtonState());
         }
     }
 
@@ -123,6 +135,7 @@ class PhoneSequenceApp {
         } catch (error) {
             console.error('❌ Error loading data:', error);
             this.showError(`Failed to load: ${error.message}`);
+            this.updateSyncStatus('⚠️ Refresh failed');
         } finally {
             this.showLoading(false);
         }
@@ -270,7 +283,8 @@ class PhoneSequenceApp {
         
         sorted.forEach(seq => {
             const linkDisplay = seq.link ? this.truncateUrl(seq.link, 30) : '<span class="empty-field">No audio/link</span>';
-            const linkIcon = seq.link ? (seq.link.includes('drive.google.com') ? '🎵' : '🔗') : '';
+            const playableLink = seq.link ? this.getPlayableUrl(seq.link) : '';
+            const linkHref = seq.link ? this.escapeHtml(seq.link) : '';
             
             html += `
                 <div class="sequence-item" data-id="${this.escapeHtml(seq.id)}">
@@ -292,7 +306,9 @@ class PhoneSequenceApp {
                         </div>
                         
                         <div class="sequence-link">
-                            ${linkIcon}
+                            <button class="sequence-play-btn" ${seq.link ? `onclick="phoneApp.playSequenceLink('${this.escapeHtml(seq.id)}', event)"` : 'disabled title="Add an audio/link to enable playback"'} aria-label="Play audio">
+                                ▶ Play
+                            </button>
                             <span class="sequence-link-text editable-field"
                                   data-field="link"
                                   data-id="${this.escapeHtml(seq.id)}"
@@ -300,7 +316,7 @@ class PhoneSequenceApp {
                                 ${linkDisplay}
                                 <span class="edit-icon">✏️</span>
                             </span>
-                            ${seq.link ? `<a href="${this.escapeHtml(seq.link)}" target="_blank" title="Open link" onclick="event.stopPropagation()">↗</a>` : ''}
+                            ${seq.link ? `<a href="${linkHref}" target="_blank" title="Open link" onclick="event.stopPropagation()">↗</a>` : ''}
                         </div>
                         
                         <button class="delete-btn" onclick="phoneApp.deleteSequence('${this.escapeHtml(seq.id)}')" title="Delete">
@@ -422,12 +438,21 @@ class PhoneSequenceApp {
         
         document.getElementById('form-title').textContent = '➕ Add New Sequence';
         document.getElementById('submit-btn').textContent = 'Add Sequence';
+
+        this.updateSubmitButtonState();
         
         this.showModal();
     }
 
     showEditModal(sequence, focusField = null) {
         this.editingSequenceId = sequence.id;
+        this.resetAudioUI();
+        const urlContainer = document.getElementById('url-input-container');
+        const urlToggle = document.getElementById('url-toggle');
+        if (urlContainer && urlToggle) {
+            urlContainer.style.display = 'none';
+            urlToggle.textContent = 'Show URL input';
+        }
         
         document.getElementById('form-title').textContent = '✏️ Edit Sequence';
         document.getElementById('submit-btn').textContent = 'Save Changes';
@@ -439,6 +464,13 @@ class PhoneSequenceApp {
         document.getElementById('sequence-link-url').value = sequence.link || '';
         
         this.showModal();
+
+        this.updateSubmitButtonState();
+        
+        // If an audio/link already exists, show playback by default and hide record until re-record is chosen
+        if (sequence.link) {
+            this.showPlayback(sequence.link, { showAccept: false });
+        }
         
         // Focus specific field if requested
         if (focusField === 'link') {
@@ -471,10 +503,13 @@ class PhoneSequenceApp {
         document.getElementById('number-validation').style.display = 'none';
         
         this.resetAudioUI();
+
+        this.updateSubmitButtonState();
         
         // Hide URL input
         document.getElementById('url-input-container').style.display = 'none';
         document.getElementById('url-toggle').style.display = 'block';
+        document.getElementById('url-toggle').textContent = 'Show URL input';
     }
 
     toggleUrlInput() {
@@ -486,7 +521,7 @@ class PhoneSequenceApp {
             toggle.textContent = 'Hide URL input';
         } else {
             container.style.display = 'none';
-            toggle.textContent = 'Or enter a URL directly...';
+            toggle.textContent = 'Show URL input';
         }
     }
 
@@ -535,6 +570,46 @@ class PhoneSequenceApp {
         return dialPattern.test(trimmed);
     }
 
+    isValidUrl(value) {
+        if (!value) return false;
+        try {
+            const parsed = new URL(value);
+            return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+        } catch {
+            return false;
+        }
+    }
+
+    updateSubmitButtonState() {
+        const submitBtn = document.getElementById('submit-btn');
+        const linkInput = document.getElementById('sequence-link-url');
+        const hiddenLinkInput = document.getElementById('sequence-link');
+        const nameInput = document.getElementById('sequence-name');
+        const numberInput = document.getElementById('sequence-number');
+        if (!submitBtn) return;
+
+        const linkValue = (hiddenLinkInput?.value || '').trim() || (linkInput?.value || '').trim();
+        const nameValue = (nameInput?.value || '').trim();
+        const numberValue = (numberInput?.value || '').trim();
+
+        const nameOk = !!nameValue;
+        const numberOk = !!numberValue && this.validateNumber(numberValue, false);
+        const linkOk = this.isValidUrl(linkValue);
+
+        const valid = nameOk && numberOk && linkOk;
+
+        submitBtn.disabled = !valid;
+        if (!nameOk) {
+            submitBtn.title = 'Enter a name to enable saving';
+        } else if (!numberOk) {
+            submitBtn.title = 'Enter a valid number to enable saving';
+        } else if (!linkOk) {
+            submitBtn.title = 'Add a valid audio/link URL to enable saving';
+        } else {
+            submitBtn.title = '';
+        }
+    }
+
     // ==================== AUDIO RECORDING ====================
     
     setupAudioRecording() {
@@ -567,11 +642,14 @@ class PhoneSequenceApp {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             
-            // Prefer M4A (MP4 audio), then MP3, then WAV; allow WebM as capture fallback (converted before upload)
+            // Prefer AAC/MP4 (M4A), then MP3, then WAV; allow WebM as capture fallback (converted before upload)
             const candidates = [
                 this.config.audio?.mimeType,
+                'audio/mp4;codecs=aac',
+                'audio/mp4;codecs=mp4a.40.2',
                 'audio/mp4',
                 'audio/m4a',
+                'audio/aac',
                 'audio/mpeg',
                 'audio/mp3',
                 'audio/wav',
@@ -660,20 +738,162 @@ class PhoneSequenceApp {
         }
     }
 
-    showPlayback() {
+    async playSequenceLink(sequenceId, event = null) {
+        if (event) {
+            event.stopPropagation();
+        }
+
+        const sequence = this.sequences.find(seq => seq.id === sequenceId);
+        if (!sequence || !sequence.link) {
+            this.showError('No audio/link to play yet.');
+            return;
+        }
+
+        const button = event?.currentTarget;
+        const originalLabel = button?.innerHTML;
+        if (button) {
+            button.disabled = true;
+            button.classList.add('is-loading');
+            button.innerHTML = '⏳';
+        }
+
+        try {
+            const targetUrl = this.getPlayableUrl(sequence.link) || sequence.link;
+            if (!targetUrl) {
+                throw new Error('Invalid audio URL');
+            }
+
+            let playbackUrl = targetUrl;
+            if (targetUrl.includes('action=getDriveFile')) {
+                playbackUrl = await this.fetchProxyAudioAsBlobUrl(targetUrl) || targetUrl;
+            } else {
+                playbackUrl = await this.fetchAsBlobUrl(targetUrl) || targetUrl;
+            }
+
+            if (this.listAudioPlayer && !this.listAudioPlayer.paused) {
+                this.listAudioPlayer.pause();
+            }
+
+            this.listAudioPlayer = new Audio(playbackUrl);
+            await this.listAudioPlayer.play();
+            this.updateSyncStatus('▶️ Playing audio');
+        } catch (error) {
+            console.warn('Playback failed:', error);
+            this.showError('Could not play audio. Check the link or proxy access.');
+        } finally {
+            if (button) {
+                button.disabled = false;
+                button.classList.remove('is-loading');
+                button.innerHTML = originalLabel || '▶ Play';
+            }
+        }
+    }
+
+    async showPlayback(sourceUrl = null, { showAccept = true } = {}) {
         const playback = document.getElementById('audio-playback');
         const player = document.getElementById('audio-player');
         const timerEl = document.getElementById('recording-timer');
         const recordBtn = document.getElementById('record-btn');
+        const acceptBtn = document.getElementById('accept-audio-btn');
+        const statusEl = document.getElementById('upload-status');
         
-        // Hide record button, show playback
-        recordBtn.style.display = 'none';
-        timerEl.style.display = 'none';
-        playback.style.display = 'flex';
+        // Hide record/timer; show playback
+        if (recordBtn) recordBtn.style.display = 'none';
+        if (timerEl) timerEl.style.display = 'none';
+        if (statusEl) statusEl.style.display = 'none';
+        if (playback) playback.style.display = 'flex';
+        if (acceptBtn) acceptBtn.style.display = showAccept ? '' : 'none';
         
-        // Set audio source
-        const audioUrl = URL.createObjectURL(this.recordedBlob);
-        player.src = audioUrl;
+        // Set audio source (prefer provided URL, else recorded blob)
+        const audioUrl = sourceUrl || (this.recordedBlob ? URL.createObjectURL(this.recordedBlob) : null);
+        const playableUrl = this.getPlayableUrl(audioUrl);
+        const finalUrl = playableUrl || audioUrl;
+
+        if (player && finalUrl) {
+            // For proxied Drive audio, fetch base64 and convert to blob URL
+            const isProxyDrive = finalUrl.includes('action=getDriveFile');
+            if (isProxyDrive) {
+                const blobUrl = await this.fetchProxyAudioAsBlobUrl(finalUrl);
+                player.src = blobUrl || finalUrl;
+            } else {
+                const blobUrl = await this.fetchAsBlobUrl(finalUrl);
+                player.src = blobUrl || finalUrl;
+            }
+        }
+    }
+
+    /**
+     * Fetch audio from Apps Script proxy (returns base64) and convert to blob URL
+     */
+    async fetchProxyAudioAsBlobUrl(proxyUrl) {
+        try {
+            const response = await fetch(proxyUrl);
+            if (!response.ok) {
+                console.warn('Proxy audio fetch failed:', response.status);
+                return null;
+            }
+            const json = await response.json();
+            if (!json.success || !json.data?.base64) {
+                console.warn('Proxy audio response invalid:', json.error || 'no base64 data');
+                return null;
+            }
+            
+            // Decode base64 to binary
+            const binaryString = atob(json.data.base64);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            
+            const blob = new Blob([bytes], { type: json.data.mimeType || 'audio/wav' });
+            return URL.createObjectURL(blob);
+        } catch (err) {
+            console.warn('Proxy audio fetch/decode failed:', err);
+            return null;
+        }
+    }
+
+    getPlayableUrl(url) {
+        if (!url) return '';
+        if (url.startsWith('blob:')) return url; // keep recorded blobs as-is
+        const driveFileId = (() => {
+            const fileMatch = url.match(/https?:\/\/drive\.google\.com\/file\/d\/([^/]+)\//i);
+            if (fileMatch && fileMatch[1]) return fileMatch[1];
+            const openMatch = url.match(/https?:\/\/drive\.google\.com\/open\?id=([^&]+)/i);
+            if (openMatch && openMatch[1]) return openMatch[1];
+            const ucMatch = url.match(/https?:\/\/drive\.google\.com\/uc\?id=([^&]+)/i);
+            if (ucMatch && ucMatch[1]) return ucMatch[1];
+            return null;
+        })();
+        if (driveFileId) {
+            const appsScriptConfigured = this.appsScriptUrl &&
+                this.appsScriptUrl !== 'YOUR_GOOGLE_APPS_SCRIPT_URL_HERE' &&
+                this.appsScriptUrl !== 'YOUR_UNIVERSAL_APPS_SCRIPT_URL_HERE';
+
+            if (appsScriptConfigured) {
+                const proxyUrl = new URL(this.appsScriptUrl);
+                proxyUrl.searchParams.set('action', 'getDriveFile');
+                proxyUrl.searchParams.set('id', driveFileId);
+                return proxyUrl.toString();
+            }
+
+            return `https://drive.google.com/uc?export=download&id=${driveFileId}`;
+        }
+        return url;
+    }
+
+    async fetchAsBlobUrl(url) {
+        try {
+            const response = await fetch(url, { mode: 'cors' });
+            if (!response.ok) return null;
+            const contentType = response.headers.get('content-type') || '';
+            if (!contentType.includes('audio') && !contentType.includes('octet-stream')) return null;
+            const blob = await response.blob();
+            return URL.createObjectURL(blob);
+        } catch (err) {
+            console.warn('Audio fetch as blob failed, falling back to direct src:', err);
+            return null;
+        }
     }
 
     async acceptRecording() {
@@ -692,6 +912,7 @@ class PhoneSequenceApp {
                 // Set the link value
                 document.getElementById('sequence-link').value = url;
                 document.getElementById('sequence-link-url').value = url;
+                this.updateSubmitButtonState();
                 
                 statusEl.className = 'upload-status success';
                 statusEl.querySelector('.status-text').textContent = '✓ Uploaded successfully';
@@ -719,6 +940,7 @@ class PhoneSequenceApp {
         const recordBtn = document.getElementById('record-btn');
         const timerEl = document.getElementById('recording-timer');
         const statusEl = document.getElementById('upload-status');
+        const acceptBtn = document.getElementById('accept-audio-btn');
         
         if (playback) playback.style.display = 'none';
         if (recordBtn) {
@@ -730,6 +952,7 @@ class PhoneSequenceApp {
             timerEl.textContent = '00:00';
         }
         if (statusEl) statusEl.style.display = 'none';
+        if (acceptBtn) acceptBtn.style.display = '';
         
         this.recordedBlob = null;
         this.audioChunks = [];
@@ -897,6 +1120,12 @@ class PhoneSequenceApp {
         if (!link) {
             link = document.getElementById('sequence-link-url').value.trim();
         }
+
+        if (!this.isValidUrl(link)) {
+            this.showError('Please provide a valid audio/link URL.');
+            this.updateSubmitButtonState();
+            return;
+        }
         
         // Validate number
         if (!this.validateNumber(number, true)) {
@@ -1031,9 +1260,13 @@ class PhoneSequenceApp {
     // ==================== UI HELPERS ====================
     
     showLoading(show) {
-        const list = document.getElementById('sequence-list');
-        if (show && list) {
-            list.innerHTML = '<div class="loading">Loading sequences...</div>';
+        const status = document.getElementById('sync-status');
+        const statusText = document.getElementById('sync-status-text');
+        if (status) {
+            status.classList.toggle('is-loading', show);
+        }
+        if (statusText && show) {
+            statusText.textContent = 'Refreshing...';
         }
     }
 
