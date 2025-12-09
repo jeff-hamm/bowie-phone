@@ -89,7 +89,7 @@ h2 {
 
 .sequence-item-content {
     display: grid;
-    grid-template-columns: auto 1fr auto;
+    grid-template-columns: auto 1fr auto auto;
     gap: var(--spacing-md);
     align-items: center;
 }
@@ -130,10 +130,24 @@ h2 {
 /* Link/Audio column */
 .sequence-link {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: var(--spacing-sm);
     color: var(--color-text-muted);
     font-size: var(--font-size-text-small);
+}
+
+.sequence-play-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xxs, 4px);
+    align-items: flex-end;
+    min-width: 96px;
+}
+
+.sequence-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-xs);
 }
 
 .sequence-play-btn {
@@ -149,6 +163,8 @@ h2 {
     gap: var(--spacing-xs);
     box-shadow: var(--shadow-md);
     transition: transform var(--transition-fast), box-shadow var(--transition-fast), opacity var(--transition-fast);
+    min-width: 88px;
+    justify-content: center;
 }
 
 .sequence-play-btn:hover {
@@ -165,6 +181,21 @@ h2 {
 .sequence-play-btn.is-loading {
     background: var(--color-bg-secondary);
     color: var(--color-text);
+}
+
+.sequence-play-btn.is-playing {
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    border: var(--border-width) solid var(--color-primary);
+}
+
+.play-timer {
+    min-width: 120px;
+    color: var(--color-text-muted);
+    font-size: var(--font-size-text-small);
+    font-family: var(--font-family-mono);
+    text-align: right;
+    padding-right: 0;
 }
 
 .sequence-link-text {
@@ -186,24 +217,40 @@ h2 {
 }
 
 /* Delete button */
-.delete-btn {
+.icon-btn {
     background: transparent;
-    border: none;
+    border: var(--border-width) solid var(--border-color);
     color: var(--color-text-muted);
     cursor: pointer;
     padding: var(--spacing-xs);
     border-radius: var(--border-radius-sm);
-    opacity: 0;
     transition: all var(--transition-fast);
+    line-height: 1;
 }
 
-.sequence-item:hover .delete-btn {
-    opacity: 1;
+.icon-btn:hover {
+    color: var(--color-primary);
+    border-color: var(--color-primary);
+    box-shadow: var(--shadow-sm);
+}
+
+.edit-btn {
+    color: var(--color-text);
+}
+
+.edit-btn:hover {
+    color: var(--color-primary);
+}
+
+.delete-btn {
+    color: var(--color-error);
+    border-color: rgba(218, 54, 51, 0.35);
 }
 
 .delete-btn:hover {
-    color: var(--color-error);
     background: rgba(218, 54, 51, 0.1);
+    border-color: var(--color-error);
+    color: var(--color-error);
 }
 
 /* === EDITABLE FIELDS === */

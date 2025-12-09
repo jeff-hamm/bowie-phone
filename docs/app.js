@@ -33,6 +33,12 @@ class PhoneSequenceApp {
         // Edit state
         this.editingSequenceId = null;
         this.currentEditField = null;
+
+        // List playback state
+        this.listAudioPlayer = null;
+        this.listPlayingId = null;
+        this.listPlaybackButton = null;
+        this.listPlaybackTimer = null;
     }
 
     init() {
@@ -306,9 +312,12 @@ class PhoneSequenceApp {
                         </div>
                         
                         <div class="sequence-link">
-                            <button class="sequence-play-btn" ${seq.link ? `onclick="phoneApp.playSequenceLink('${this.escapeHtml(seq.id)}', event)"` : 'disabled title="Add an audio/link to enable playback"'} aria-label="Play audio">
-                                ▶ Play
-                            </button>
+                            <div class="sequence-play-wrap">
+                                <button class="sequence-play-btn" ${seq.link ? `onclick="phoneApp.playSequenceLink('${this.escapeHtml(seq.id)}', event)"` : 'disabled title="Add an audio/link to enable playback"'} aria-label="Play audio">
+                                    ▶ Play
+                                </button>
+                                <span class="play-timer" style="display:none;">00:00 / --:--</span>
+                            </div>
                             <span class="sequence-link-text editable-field"
                                   data-field="link"
                                   data-id="${this.escapeHtml(seq.id)}"
@@ -318,10 +327,11 @@ class PhoneSequenceApp {
                             </span>
                             ${seq.link ? `<a href="${linkHref}" target="_blank" title="Open link" onclick="event.stopPropagation()">↗</a>` : ''}
                         </div>
-                        
-                        <button class="delete-btn" onclick="phoneApp.deleteSequence('${this.escapeHtml(seq.id)}')" title="Delete">
-                            🗑️
-                        </button>
+
+                        <div class="sequence-actions">
+                            <button class="icon-btn edit-btn" onclick="phoneApp.showEditModalById('${this.escapeHtml(seq.id)}')" title="Open edit dialog">✏️</button>
+                            <button class="icon-btn delete-btn" onclick="phoneApp.deleteSequence('${this.escapeHtml(seq.id)}')" title="Delete">🗑️</button>
+                        </div>
                     </div>
                 </div>
             `;
@@ -442,6 +452,15 @@ class PhoneSequenceApp {
         this.updateSubmitButtonState();
         
         this.showModal();
+    }
+
+    showEditModalById(id) {
+        const seq = this.sequences.find(s => s.id === id);
+        if (!seq) {
+            console.warn('Sequence not found for edit dialog:', id);
+            return;
+        }
+        this.showEditModal(seq);
     }
 
     showEditModal(sequence, focusField = null) {
@@ -738,6 +757,35 @@ class PhoneSequenceApp {
         }
     }
 
+    formatTime(seconds) {
+        if (!isFinite(seconds) || seconds < 0) return '--:--';
+        const mins = Math.floor(seconds / 60).toString().padStart(2, '0');
+        const secs = Math.floor(seconds % 60).toString().padStart(2, '0');
+        return `${mins}:${secs}`;
+    }
+
+    resetListPlaybackUI() {
+        if (this.listAudioPlayer) {
+            try { this.listAudioPlayer.pause(); } catch {}
+        }
+        this.listAudioPlayer = null;
+        this.listPlayingId = null;
+
+        if (this.listPlaybackButton) {
+            this.listPlaybackButton.classList.remove('is-loading', 'is-playing');
+            this.listPlaybackButton.disabled = false;
+            this.listPlaybackButton.innerHTML = '▶ Play';
+        }
+
+        if (this.listPlaybackTimer) {
+            this.listPlaybackTimer.textContent = '00:00 / --:--';
+            this.listPlaybackTimer.style.display = 'none';
+        }
+
+        this.listPlaybackButton = null;
+        this.listPlaybackTimer = null;
+    }
+
     async playSequenceLink(sequenceId, event = null) {
         if (event) {
             event.stopPropagation();
@@ -749,12 +797,25 @@ class PhoneSequenceApp {
             return;
         }
 
+        // If clicking the currently playing sequence, stop it
+        if (this.listPlayingId === sequenceId && this.listAudioPlayer && !this.listAudioPlayer.paused) {
+            this.resetListPlaybackUI();
+            return;
+        }
+
+        // Reset any existing playback UI
+        this.resetListPlaybackUI();
+
         const button = event?.currentTarget;
-        const originalLabel = button?.innerHTML;
+        const timerEl = button?.closest('.sequence-item-content')?.querySelector('.play-timer');
         if (button) {
             button.disabled = true;
             button.classList.add('is-loading');
             button.innerHTML = '⏳';
+        }
+        if (timerEl) {
+            timerEl.textContent = '00:00 / --:--';
+            timerEl.style.display = 'none';
         }
 
         try {
@@ -770,22 +831,47 @@ class PhoneSequenceApp {
                 playbackUrl = await this.fetchAsBlobUrl(targetUrl) || targetUrl;
             }
 
-            if (this.listAudioPlayer && !this.listAudioPlayer.paused) {
-                this.listAudioPlayer.pause();
-            }
-
             this.listAudioPlayer = new Audio(playbackUrl);
+            this.listPlayingId = sequenceId;
+            this.listPlaybackButton = button || null;
+            this.listPlaybackTimer = timerEl || null;
+
+            this.listAudioPlayer.addEventListener('loadedmetadata', () => {
+                const total = this.formatTime(this.listAudioPlayer.duration);
+                if (this.listPlaybackTimer) {
+                    this.listPlaybackTimer.textContent = `00:00 / ${total}`;
+                    this.listPlaybackTimer.style.display = 'block';
+                }
+            });
+
+            this.listAudioPlayer.addEventListener('timeupdate', () => {
+                if (this.listPlaybackTimer) {
+                    const current = this.formatTime(this.listAudioPlayer.currentTime);
+                    const total = this.formatTime(this.listAudioPlayer.duration);
+                    this.listPlaybackTimer.textContent = `${current} / ${total}`;
+                }
+            });
+
+            this.listAudioPlayer.addEventListener('ended', () => {
+                this.resetListPlaybackUI();
+            });
+
             await this.listAudioPlayer.play();
             this.updateSyncStatus('▶️ Playing audio');
-        } catch (error) {
-            console.warn('Playback failed:', error);
-            this.showError('Could not play audio. Check the link or proxy access.');
-        } finally {
+
             if (button) {
                 button.disabled = false;
                 button.classList.remove('is-loading');
-                button.innerHTML = originalLabel || '▶ Play';
+                button.classList.add('is-playing');
+                button.innerHTML = '⏹ Stop';
             }
+            if (timerEl) {
+                timerEl.style.display = 'block';
+            }
+        } catch (error) {
+            console.warn('Playback failed:', error);
+            this.showError('Could not play audio. Check the link or proxy access.');
+            this.resetListPlaybackUI();
         }
     }
 
