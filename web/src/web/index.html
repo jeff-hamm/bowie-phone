@@ -1,0 +1,176 @@
+a<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bowie Phone - Sequence Manager</title>
+    <link rel="stylesheet" href="styles/styles.css">
+</head>
+<body>
+    <div id="app">
+        <div class="app-container">
+            <!-- Header -->
+            <div class="header-section">
+                <div class="header-title">
+                    <span style="font-size: 2rem;">📞</span>
+                    <h1>Bowie Phone Sequences</h1>
+                </div>
+                <button id="add-sequence-btn" class="floating-add-btn">
+                    <span>➕</span>
+                    <span class="btn-text">Add Sequence</span>
+                </button>
+            </div>
+            
+            <!-- Controls bar -->
+            <div class="controls-bar">
+                <input type="text" id="search-input" class="search-input" placeholder="🔍 Search sequences...">
+                <a href="#" id="sheets-link" target="_blank" class="sheet-link" style="display: none;">📝 Edit in Google Sheets</a>
+            </div>
+            
+            <!-- Sync status -->
+            <div id="sync-status" class="sync-status">
+                <span id="sync-status-text">Loading...</span>
+            </div>
+            
+            <!-- Sequence list -->
+            <div id="sequence-list" class="sequence-list">
+                <div class="loading">Loading sequences...</div>
+            </div>
+            
+            <!-- Error display -->
+            <div id="error-display" class="error" style="display: none;"></div>
+            
+            <!-- Offline notice -->
+            <div id="offline-notice" class="offline-notice" style="display: none;">
+                🔌 You're working offline. Changes will sync when connection is restored.
+            </div>
+        </div>
+    </div>
+    
+    <!-- Add/Edit Sequence Modal -->
+    <div id="modal-backdrop" class="modal-backdrop" onclick="phoneApp.hideModal()"></div>
+    <form id="sequence-form" class="modal-form">
+        <h3 id="form-title">➕ Add New Sequence</h3>
+        
+        <!-- Loading overlay -->
+        <div id="form-loading-overlay" class="loading-overlay" style="display: none;">
+            <div class="spinner"></div>
+            <div class="spinner-text">Saving...</div>
+        </div>
+        
+        <!-- Name field -->
+        <div class="form-row">
+            <div class="form-group full-width">
+                <label for="sequence-name">
+                    <span>📛</span> Name / Description *
+                </label>
+                <input type="text" id="sequence-name" name="name" required 
+                       placeholder="e.g., Emergency Services, Weather Line...">
+            </div>
+        </div>
+        
+        <!-- Number field -->
+        <div class="form-row">
+            <div class="form-group full-width">
+                <label for="sequence-number">
+                    <span>📞</span> Number *
+                </label>
+                <input type="text" id="sequence-number" name="number" required 
+                       placeholder="e.g., 911, *123#, or dialtone">
+                <div id="number-validation" class="validation-error" style="display: none;"></div>
+                <div class="form-help">
+                    Enter digits (0-9), *, #, or special names: 
+                    <code>dialtone</code>, <code>busy</code>, <code>ringback</code>, 
+                    <code>disconnect</code>, <code>error</code>, <code>silence</code>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Link/Audio field -->
+        <div class="form-row">
+            <div class="form-group full-width">
+                <label for="sequence-link">
+                    <span>🔗</span> Audio / Link
+                </label>
+                
+                <!-- Audio recording section -->
+                <div class="audio-section" id="audio-section">
+                    <div class="audio-controls" id="audio-controls">
+                        <button type="button" id="record-btn" class="record-btn" title="Click to record">
+                        </button>
+                        <span id="recording-timer" class="recording-timer" style="display: none;">00:00</span>
+                        <div id="audio-playback" class="audio-playback" style="display: none;">
+                            <audio id="audio-player" class="audio-player" controls></audio>
+                            <div class="audio-actions">
+                                <button type="button" id="accept-audio-btn" class="audio-accept-btn">✓ Use</button>
+                                <button type="button" id="retry-audio-btn" class="audio-retry-btn">↺ Re-record</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div id="upload-status" class="upload-status" style="display: none;">
+                        <span class="status-text"></span>
+                    </div>
+                    
+                    <!-- URL input alternative -->
+                    <div class="url-input-section">
+                        <span class="url-toggle" id="url-toggle">Or enter a URL directly...</span>
+                        <div id="url-input-container" style="display: none; margin-top: var(--spacing-sm);">
+                            <input type="url" id="sequence-link-url" name="linkUrl" 
+                                   placeholder="https://example.com/audio.mp3">
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Hidden input to store final link value -->
+                <input type="hidden" id="sequence-link" name="link">
+            </div>
+        </div>
+        
+        <!-- Form actions -->
+        <div class="form-actions">
+            <button type="button" class="btn btn-secondary" onclick="phoneApp.hideModal()">Cancel</button>
+            <button type="submit" class="btn btn-primary" id="submit-btn">Add Sequence</button>
+        </div>
+    </form>
+    
+    <!-- Configuration -->
+    <script src="config.js"></script>
+    
+    <!-- Core app -->
+    <script src="app.js"></script>
+    
+    <!-- Initialize -->
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('DOM loaded');
+            
+            // Wait for config to be ready
+            window.addEventListener('configReady', function(e) {
+                console.log('✅ Config ready, initializing app...');
+                
+                if (typeof PhoneSequenceApp === 'undefined') {
+                    console.error('PhoneSequenceApp is undefined - app.js may have failed to load');
+                    return;
+                }
+                
+                // Initialize the app
+                window.phoneApp = new PhoneSequenceApp(e.detail);
+                phoneApp.init();
+                
+                // Set up Google Sheets link
+                const config = e.detail;
+                if (config.googleSheets?.spreadsheetId && 
+                    config.googleSheets.spreadsheetId !== 'YOUR_GOOGLE_SHEETS_ID_HERE') {
+                    const sheetsLink = document.getElementById('sheets-link');
+                    if (sheetsLink) {
+                        const gid = config.googleSheets.gid || '0';
+                        sheetsLink.href = `https://docs.google.com/spreadsheets/d/${config.googleSheets.spreadsheetId}/edit#gid=${gid}`;
+                        sheetsLink.style.display = 'inline';
+                    }
+                }
+            });
+        });
+    </script>
+</body>
+</html>

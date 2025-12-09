@@ -249,6 +249,19 @@ bool processAudio()
     // Check if playback finished
     if (!audioPlayer->isActive())
     {
+        // If dial tone was playing, loop it
+        if (currentAudioKey[0] != '\0' && strcmp(currentAudioKey, "dialtone") == 0)
+        {
+            Logger.println("🔄 Looping dial tone...");
+            // Re-get the file path and restart playback
+            const char* filePath = processAudioKey("dialtone");
+            if (filePath && audioPlayer->setPath(filePath))
+            {
+                audioStartTime = millis();
+                return true;
+            }
+        }
+        
         stopAudio();
         return false;
     }

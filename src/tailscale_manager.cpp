@@ -10,13 +10,13 @@ static bool vpnInitialized = false;
 static char tailscaleIp[20] = {0};
 static char statusBuffer[64] = "Not initialized";
 static unsigned long lastReconnectAttempt = 0;
-static const unsigned long RECONNECT_INTERVAL = 30000; // 30 seconds
+static const unsigned long RECONNECT_INTERVAL = 600000; // 10 minutes
 
 // Stored config for reconnection
 static char storedPrivateKey[64] = {0};
 static char storedPeerEndpoint[128] = {0};
 static char storedPeerPublicKey[64] = {0};
-static uint16_t storedPeerPort = 41641;
+static uint16_t storedPeerPort = 51820;
 
 bool initTailscale(const char* localIp, 
                    const char* privateKey,
@@ -71,6 +71,15 @@ bool initTailscale(const char* localIp,
         return false;
     }
     
+    // Try to resolve the endpoint hostname first to check DNS
+    IPAddress peerAddr;
+    if (!WiFi.hostByName(peerEndpoint, peerAddr)) {
+        Logger.printf("⚠️ Tailscale: DNS lookup failed for %s\n", peerEndpoint);
+        Logger.println("   Will let WireGuard try anyway...");
+    } else {
+        Logger.printf("✅ Tailscale: Resolved %s -> %s\n", peerEndpoint, peerAddr.toString().c_str());
+    }
+    
     // Start WireGuard
     bool result = wg.begin(
         localAddr,
@@ -86,8 +95,10 @@ bool initTailscale(const char* localIp,
         Logger.printf("✅ Tailscale: Connected! Local IP: %s\n", localIp);
         snprintf(statusBuffer, sizeof(statusBuffer), "Connected: %s", localIp);
     } else {
-        Logger.println("❌ Tailscale: Failed to establish tunnel");
-        strcpy(statusBuffer, "Connection failed");
+        vpnInitialized = true;  // Mark as initialized so handleTailscaleLoop will retry
+        vpnConnected = false;
+        Logger.println("❌ Tailscale: Failed to establish tunnel - will retry");
+        strcpy(statusBuffer, "Connection failed - retrying");
     }
     
     return result;
@@ -135,12 +146,25 @@ void disconnectTailscale() {
     }
 }
 
+// Callback to check if reconnection should be skipped (e.g., phone is off hook)
+static bool (*shouldSkipReconnect)() = nullptr;
+
+void setTailscaleSkipCallback(bool (*callback)()) {
+    shouldSkipReconnect = callback;
+}
+
 void handleTailscaleLoop() {
     // Check if we need to reconnect
     if (vpnInitialized && !vpnConnected) {
         unsigned long now = millis();
         if (now - lastReconnectAttempt > RECONNECT_INTERVAL) {
             lastReconnectAttempt = now;
+            
+            // Skip reconnection if callback says so (e.g., phone is off hook for DTMF)
+            if (shouldSkipReconnect && shouldSkipReconnect()) {
+                Logger.println("🔐 Tailscale: Skipping reconnect (phone in use)");
+                return;
+            }
             
             if (WiFi.isConnected() && storedPrivateKey[0] != '\0') {
                 Logger.println("🔐 Tailscale: Attempting reconnection...");

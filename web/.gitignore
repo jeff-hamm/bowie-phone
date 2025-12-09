@@ -1,0 +1,21 @@
+# Ignore local config files with secrets
+config.local.js
+*local*.js
+*.local.js
+
+# Ignore recorded audio files
+*.webm
+*.mp3
+*.wav
+*.ogg
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Node (if you add build tools later)
+node_modules/

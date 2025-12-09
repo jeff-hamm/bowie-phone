@@ -28,7 +28,7 @@
 #endif
 
 #ifndef WIREGUARD_PEER_PORT
-#define WIREGUARD_PEER_PORT 41641  // Default Tailscale WireGuard port
+#define WIREGUARD_PEER_PORT 51820 // Default Tailscale WireGuard port
 #endif
 
 /**
@@ -76,6 +76,9 @@ void disconnectTailscale();
  * Handles reconnection, keepalives, etc.
  */
 void handleTailscaleLoop();
+
+// Set callback to check if reconnection should be skipped (e.g., during active call)
+void setTailscaleSkipCallback(bool (*callback)());
 
 /**
  * Get connection status string for debugging

@@ -113,6 +113,13 @@ bool downloadAudio();
 bool hasAudioKey(const char *key);
 
 /**
+ * @brief Check if any audio key starts with the given prefix
+ * @param prefix Prefix to check (e.g., "91" would match "911", "912", etc.)
+ * @return true if any key starts with prefix, false otherwise
+ */
+bool hasAudioKeyWithPrefix(const char *prefix);
+
+/**
  * @brief Process an audio key and get the local file path
  * @param key Audio key to process
  * @return Local file path for audio playback, or nullptr if not available

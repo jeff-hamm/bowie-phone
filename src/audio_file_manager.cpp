@@ -449,6 +449,7 @@ static bool processDownloadQueueInternal()
     HTTPClient http;
     http.begin(item->url);
     http.addHeader("User-Agent", USER_AGENT_HEADER);
+    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
     
     int httpCode = http.GET();
     
@@ -773,6 +774,7 @@ bool downloadAudio()
     http.begin(KNOWN_FILES_URL);
     http.addHeader("Content-Type", "application/json");
     http.addHeader("User-Agent", USER_AGENT_HEADER);
+    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
     
     Serial.printf("📡 Making GET request to: %s\n", KNOWN_FILES_URL);
     
@@ -871,6 +873,26 @@ bool hasAudioKey(const char *key)
     for (int i = 0; i < audioFileCount; i++)
     {
         if (strcmp(audioFiles[i].audioKey, key) == 0)
+        {
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+bool hasAudioKeyWithPrefix(const char *prefix)
+{
+    if (!prefix || audioFileCount == 0)
+    {
+        return false;
+    }
+    
+    size_t prefixLen = strlen(prefix);
+    for (int i = 0; i < audioFileCount; i++)
+    {
+        // Check if any audio key starts with this prefix
+        if (strncmp(audioFiles[i].audioKey, prefix, prefixLen) == 0)
         {
             return true;
         }

@@ -5,8 +5,7 @@
 #include "AudioTools/AudioLibs/AudioRealFFT.h" // or AudioKissFFT
 #include "AudioTools/Disk/AudioSourceSD.h" // SPI SD mode
 #include "AudioTools/AudioCodecs/CodecMP3Helix.h"
-#include "AudioTools/AudioCodecs/OggVorbisDecoder.h"
-
+#define DEBUG
 #include "sequence_processor.h"
 #include "special_command_processor.h"
 #include "audio_file_manager.h"
@@ -24,7 +23,7 @@ AudioSourceSD *source = nullptr;        // to be initialized in setup()
 AudioRealFFT fft;                       // or AudioKissFFT
 StreamCopy copier(fft, kit);            // copy mic to tfl
 MultiDecoder multi_decoder;
-CodecMP3Helix mp3_decoder;
+MP3DecoderHelix mp3_decoder;
 WAVDecoder wav_decoder;
 int channels = 2;
 int samples_per_second = 44100;
@@ -41,7 +40,6 @@ int bits_per_sample = 16;
 
 const char *startFilePath="/audio";
 // DTMF sequence configuration
-const unsigned long SEQUENCE_TIMEOUT = 2000; // 2 seconds timeout
 const int MAX_SEQUENCE_LENGTH = 20;          // Maximum digits in sequence
 char dtmfSequence[MAX_SEQUENCE_LENGTH + 1];  // +1 for null terminator
 int sequenceIndex = 0;
@@ -50,7 +48,7 @@ static bool audioKitInitialized = false;
 
 
 // Check for new DTMF digits and manage sequence collection
-// Returns true when a complete sequence is ready to process
+// Returns true when a complete sequence is ready to process (matches a known pattern)
 bool checkForDTMFSequence()
 {
     static unsigned long lastAnalysisTime = 0;
@@ -78,20 +76,32 @@ bool checkForDTMFSequence()
                 sequenceIndex++;
                 dtmfSequence[sequenceIndex] = '\0'; // Null terminate
                 lastDigitTime = currentTime;
-                Serial.printf("Added digit '%c' to sequence: '%s'\n", detectedChar, dtmfSequence);
+                Serial.printf("📞 Current sequence: '%s'\n", dtmfSequence);
+                
+                // Check all substrings of the current sequence for matches
+                // e.g., "9911" should find "911" (check suffixes: "9911", "911", "11", "1")
+                for (int start = 0; start < sequenceIndex; start++)
+                {
+                    const char* substring = &dtmfSequence[start];
+                    if (hasAudioKey(substring))
+                    {
+                        Serial.printf("✅ Found matching substring '%s' in sequence '%s'\n", substring, dtmfSequence);
+                        // Move the matched portion to the beginning for processing
+                        memmove(dtmfSequence, substring, strlen(substring) + 1);
+                        sequenceIndex = strlen(dtmfSequence);
+                        return true; // Process this match
+                    }
+                }
             }
         }
         lastAnalysisTime = currentTime;
     }
 
-    // Check if sequence is complete (timeout or buffer full)
-    if (sequenceIndex > 0 &&
-        ((sequenceIndex == MAX_SEQUENCE_LENGTH - 1) ||
-         (currentTime - lastDigitTime > SEQUENCE_TIMEOUT)))
+    // Only complete if buffer is full (no timeout - wait for hang up or match)
+    if (sequenceIndex >= MAX_SEQUENCE_LENGTH - 1)
     {
-
-        Serial.printf("Sequence complete: timeout or buffer full\n");
-        return true; // Sequence ready to process
+        Serial.printf("Sequence complete: buffer full\n");
+        return true;
     }
 
     return false; // No complete sequence yet
@@ -109,7 +119,7 @@ void setup()
     Logger.addLogger(Serial);
 
     Logger.printf("\n\n=== Bowie Phone Starting ===\n");
-    AudioToolsLogger.begin(Serial, AudioToolsLogLevel::Info);
+    AudioToolsLogger.begin(Serial, AudioToolsLogLevel::Warning);
 
     // Initialize AudioKit FIRST with sd_active=false
     // This prevents AudioKit from interfering with our SPI SD card pins
@@ -125,18 +135,7 @@ void setup()
     cfg.input_device = ADC_INPUT_ALL; // Default: both microphone and line in
 #endif
 
-    //    cfg.sd_active = false; // SD card initialized manually in setup()
-    kit.begin(cfg);
-
-    // Setup FFT
-    auto tcfg = fft.defaultConfig();
-    tcfg.length = 8192;
-    tcfg.channels = channels;
-    tcfg.sample_rate = samples_per_second;
-    tcfg.bits_per_sample = bits_per_sample;
-    tcfg.callback = &fftResult;
-    fft.begin(tcfg);
-
+    cfg.sd_active = false; // SD card initialized manually in setup()
     //    cfg.sd_active = false; // Don't let AudioKit touch SD pins - we'll handle SD ourselves
     if (!kit.begin(cfg))
     {
@@ -150,6 +149,10 @@ void setup()
         // Volume range is 0-100 (percentage)
         kit.setInputVolume(100);
         Logger.println("🔊 Input volume set to 100%");
+        
+        // Set output volume to maximum
+        kit.setVolume(100);
+        Logger.println("🔊 Output volume set to 100%");
     }
 
     // // Now initialize SD card in SPI mode AFTER AudioKit
@@ -157,48 +160,47 @@ void setup()
     // Logger.println("🔧 Initializing SD card (SPI mode)...");
     // Logger.printf("   Pins: CS=%d, CLK=%d, MOSI=%d, MISO=%d\n", SD_CS, SD_CLK, SD_MOSI, SD_MISO);
     
-    // SPI.begin(SD_CLK, SD_MISO, SD_MOSI, SD_CS);
+    SPI.begin(SD_CLK, SD_MISO, SD_MOSI, SD_CS);
     
-    // bool sdInitialized = false;
-    // for (int attempt = 1; attempt <= 3 && !sdInitialized; attempt++) {
-    //     Logger.printf("🔧 SD SPI initialization attempt %d/3...\n", attempt);
-    //     delay(attempt * 300);
+    bool sdInitialized = false;
+    for (int attempt = 1; attempt <= 3 && !sdInitialized; attempt++) {
+        Logger.printf("🔧 SD SPI initialization attempt %d/3...\n", attempt);
+        delay(attempt * 300);
         
-    //     if (SD.begin(SD_CS, SPI)) {
-    //         uint8_t cardType = SD.cardType();
-    //         if (cardType != CARD_NONE) {
-    //             uint64_t cardSize = SD.cardSize() / (1024 * 1024);
-    //             Logger.printf("✅ SD card initialized (SPI mode, %lluMB)\n", cardSize);
-    //             sdInitialized = true;
-    //         } else {
-    //             Logger.println("❌ No SD card detected");
-    //         }
-    //     } else {
-    //         Logger.println("❌ SD.begin() failed");
-    //     }
-    // }
+        if (SD.begin(SD_CS, SPI)) {
+            uint8_t cardType = SD.cardType();
+            if (cardType != CARD_NONE) {
+                uint64_t cardSize = SD.cardSize() / (1024 * 1024);
+                Logger.printf("✅ SD card initialized (SPI mode, %lluMB)\n", cardSize);
+                sdInitialized = true;
+            } else {
+                Logger.println("❌ No SD card detected");
+            }
+        } else {
+            Logger.println("❌ SD.begin() failed");
+        }
+    }
     
-    // if (!sdInitialized) {
-    //     Logger.println("⚠️ SD initialization failed - continuing without SD card");
-    // } else {
-        // Create AudioSourceSD now that SPI is initialized
-        // Pass custom SPI instance for ESP32-A1S AudioKit pins
+    if (!sdInitialized) {
+        Logger.println("⚠️ SD initialization failed - continuing without SD card");
+    } else {
+//        Create AudioSourceSD now that SPI is initialized
+//        Pass custom SPI instance for ESP32-A1S AudioKit pins
         source = new AudioSourceSD(startFilePath, "na", SD_CS, SPI);
         Logger.println("✅ AudioSourceSD created");
-//    }
+   }
 
     // Initialize audio file manager (SPI mode, SD already initialized)
     initializeAudioFileManager(SD_CS, false, true); // CS pin, false=use SPI (not SD_MMC), true=SD already init
 
     // Initialize Audio Player with event callback (only if SD initialized)
-    multi_decoder.addDecoder(ogg_decoder, "audio/ogg");
     multi_decoder.addDecoder(mp3_decoder, "audio/mpeg");
     multi_decoder.addDecoder(wav_decoder, "audio/wav");
     initAudioPlayer(*source, kit, multi_decoder);
     //        setAudioEventCallback(onAudioEvent);
     Logger.println("✅ Audio player initialized");
 
-    // Setup FFT for DTMF detection
+    // // Setup FFT for DTMF detection
     auto tcfg = fft.defaultConfig();
     tcfg.length = 8192;
     tcfg.channels = channels;
@@ -211,14 +213,20 @@ void setup()
 
     // Initialize WiFi with careful error handling
     Logger.println("🔧 Starting WiFi initialization...");
-    initWiFi();
+    // Pass callback to connect Tailscale after WiFi connects
+    initWiFi([]() {
+        // This is called when WiFi successfully connects
+        Logger.println("🔐 WiFi connected - initializing Tailscale...");
+        initTailscaleFromConfig();
+    });
+    
+    // Skip Tailscale reconnection when phone is off hook (blocking call interrupts DTMF)
+    setTailscaleSkipCallback([]() -> bool {
+        return Phone.isOffHook();
+    });
 
     // Initialize OTA updates (must be after WiFi)
     initOTA();
-
-    // Initialize Tailscale/WireGuard VPN (if configured)
-    // Configure in platformio.ini with WIREGUARD_* build flags
-    initTailscaleFromConfig();
 
     // Initialize special commands system
     initializeSpecialCommands();
@@ -241,6 +249,13 @@ void setup()
     });
     
     Logger.println("✅ Bowie Phone Ready!");
+    
+    // Check if phone is already off hook at boot - play dial tone
+    if (Phone.isOffHook())
+    {
+        Logger.println("📞 Phone is off hook at boot - playing dial tone");
+        playAudioBySequence("dialtone");
+    }
 }
 
 void loop()
