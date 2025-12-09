@@ -4,16 +4,16 @@
 :root {
     /* === COLOR PALETTE === */
     /* Background Colors */
-    --color-bg: #0d1117;
-    --color-bg-alt: #161b22;
-    --color-bg-secondary: #21262d;
-    --color-bg-elevated: #30363d;
+    --color-bg: #0b0c1c;
+    --color-bg-alt: #12142a;
+    --color-bg-secondary: #1a1c38;
+    --color-bg-elevated: #1f2145;
     
     /* Text Colors */
-    --color-text: #f0f6fc;
-    --color-text-light: #e6edf3;
-    --color-text-muted: #7d8590;
-    --color-text-inverse: #24292f;
+    --color-text: #f7f7ff;
+    --color-text-light: #eae9ff;
+    --color-text-muted: #9da4c6;
+    --color-text-inverse: #140c20;
     
     /* Semantic Colors */
     --color-white: #ffffff;
@@ -28,22 +28,22 @@
     --color-gray4: #30363d;
     
     /* Accent Colors - Green theme */
-    --color-primary: #00ff88;
-    --color-primary-light: #66ffb3;
-    --color-primary-dark: #00cc6a;
+    --color-primary: #ff4fd8;      /* neon magenta */
+    --color-primary-light: #ff86e7;
+    --color-primary-dark: #d63cae;
     --color-primary-hover: var(--color-primary-dark);
-    --color-accent: var(--color-primary);
+    --color-accent: #4dd0ff;       /* electric blue */
     
     /* Status Colors */
-    --color-success: #28a745;
-    --color-warning: #f7931e;
-    --color-error: #da3633;
-    --color-info: #0969da;
+    --color-success: #7cf29c;
+    --color-warning: #ffb347;
+    --color-error: #ff5f6d;
+    --color-info: #4dd0ff;
     
     /* Audio-specific colors */
-    --color-recording: #ff4444;
-    --color-recording-pulse: rgba(255, 68, 68, 0.3);
-    --color-playing: #00aaff;
+    --color-recording: #ff4fd8;
+    --color-recording-pulse: rgba(255, 79, 216, 0.35);
+    --color-playing: #4dd0ff;
     
     /* === TYPOGRAPHY === */
     --font-family-base: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
@@ -103,19 +103,26 @@
     --border-radius-full: 50%;
     
     /* Border Colors */
-    --border-color: var(--color-gray-darker);
-    --border-color-light: var(--color-gray-dark);
-    --border-color-focus: var(--color-primary);
+    --border-color: rgba(255, 255, 255, 0.08);
+    --border-color-light: rgba(255, 255, 255, 0.16);
+    --border-color-focus: var(--color-accent);
     --border-color-error: var(--color-error);
-    --color-border-primary: rgba(0, 255, 136, 0.3);
+    --color-border-primary: rgba(77, 208, 255, 0.35);
     
     /* === SHADOWS === */
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.1);
-    --shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-    --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.15);
-    --shadow-lg: 0 8px 16px rgba(0, 0, 0, 0.2);
-    --shadow-xl: 0 12px 24px rgba(0, 0, 0, 0.25);
-    --shadow-primary: 0 4px 12px rgba(0, 255, 136, 0.3);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
+    --shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
+    --shadow-md: 0 6px 16px rgba(0, 0, 0, 0.35);
+    --shadow-lg: 0 12px 28px rgba(0, 0, 0, 0.45);
+    --shadow-xl: 0 18px 40px rgba(0, 0, 0, 0.55);
+    --shadow-primary: 0 10px 30px rgba(255, 79, 216, 0.45);
+
+    /* Ziggy Stardust inspired gradients */
+    --bg-gradient: radial-gradient(circle at 20% 20%, rgba(77, 208, 255, 0.12), transparent 35%),
+                   radial-gradient(circle at 80% 0%, rgba(255, 79, 216, 0.16), transparent 38%),
+                   linear-gradient(135deg, #0b0c1c 0%, #12142a 40%, #1a1c38 100%);
+    --card-gradient: linear-gradient(135deg, rgba(255, 79, 216, 0.12), rgba(77, 208, 255, 0.10));
+    --accent-glow: 0 0 25px rgba(255, 79, 216, 0.35), 0 0 45px rgba(77, 208, 255, 0.25);
     
     /* === TRANSITIONS === */
     --transition-fast: 0.15s ease;

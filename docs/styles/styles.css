@@ -5,12 +5,13 @@
 * { box-sizing: border-box; }
 
 body {
-    background: var(--color-bg);
+    background: var(--bg-gradient);
     color: var(--color-text);
     margin: 0;
     font-family: var(--font-family-base);
     font-size: var(--font-size-base);
     line-height: var(--line-height-normal);
+    min-height: 100vh;
 }
 
 /* === CONTAINER === */
@@ -71,15 +72,19 @@ h2 {
 
 .sequence-item {
     background: var(--color-bg-alt);
+    background-image: var(--card-gradient);
     border: var(--border-width) solid var(--border-color);
     border-radius: var(--border-radius);
     padding: var(--item-padding);
     position: relative;
-    transition: border-color var(--transition-normal), transform var(--transition-fast);
+    box-shadow: var(--shadow-md);
+    transition: border-color var(--transition-normal), transform var(--transition-fast), box-shadow var(--transition-normal);
 }
 
 .sequence-item:hover {
     border-color: var(--color-primary);
+    box-shadow: var(--accent-glow);
+    transform: translateY(-1px);
 }
 
 .sequence-item-content {
@@ -469,8 +474,8 @@ h2 {
     width: 60px;
     height: 60px;
     border-radius: var(--border-radius-full);
-    border: 3px solid var(--color-text-muted);
-    background: transparent;
+    border: 3px solid var(--color-primary);
+    background: rgba(255, 79, 216, 0.08);
     cursor: pointer;
     transition: all var(--transition-normal);
     position: relative;
@@ -486,12 +491,14 @@ h2 {
 }
 
 .record-btn:hover {
-    border-color: var(--color-recording);
+    border-color: var(--color-primary-light);
+    box-shadow: var(--accent-glow);
 }
 
 .record-btn.recording {
     border-color: var(--color-recording);
     animation: pulse-recording 1.5s ease-in-out infinite;
+    box-shadow: var(--accent-glow);
 }
 
 .record-btn.recording::before {
