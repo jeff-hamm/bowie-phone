@@ -567,16 +567,20 @@ class PhoneSequenceApp {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             
-            // Prefer MP3, then WAV; disallow WebM fallback per requirement
+            // Prefer M4A (MP4 audio), then MP3, then WAV; allow WebM as capture fallback (converted before upload)
             const candidates = [
                 this.config.audio?.mimeType,
                 'audio/mp4',
+                'audio/m4a',
+                'audio/mpeg',
                 'audio/mp3',
-                'audio/wav'
+                'audio/wav',
+                'audio/webm;codecs=opus',
+                'audio/webm'
             ].filter(Boolean);
             const mimeType = candidates.find(type => MediaRecorder.isTypeSupported(type));
             if (!mimeType) {
-                throw new Error('Browser does not support MP3 or WAV recording.');
+                throw new Error('Browser does not support M4A/MP3/WAV/WebM recording.');
             }
             this.recordingMimeType = mimeType;
             
@@ -738,24 +742,33 @@ class PhoneSequenceApp {
             throw new Error('Apps Script URL not configured');
         }
         
+        // If recording is not m4a/mp3/wav, convert WebM (or other) to WAV before upload
+        let uploadBlob = blob;
+        let uploadMime = this.recordingMimeType || blob.type || 'audio/wav';
+        if (!uploadMime.includes('mp4') && !uploadMime.includes('m4a') && !uploadMime.includes('mpeg') && !uploadMime.includes('mp3') && !uploadMime.includes('wav')) {
+            uploadBlob = await this.convertBlobToWav(blob);
+            uploadMime = 'audio/wav';
+        }
+
         // Convert blob to base64
-        const base64 = await this.blobToBase64(blob);
+        const base64 = await this.blobToBase64(uploadBlob);
         
         // Generate filename with extension based on mime type (prefer mp3, else wav, else webm)
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
         const prefix = this.config.audio?.filePrefix || 'bowie-phone-recording';
-        const mime = this.recordingMimeType || blob.type || 'audio/wav';
+        const mime = uploadMime || 'audio/wav';
         let extension = '.wav';
-        if (mime.includes('mpeg') || mime.includes('mp3')) extension = '.mp3';
+        if (mime.includes('mp4') || mime.includes('m4a')) extension = '.m4a';
+        else if (mime.includes('mpeg') || mime.includes('mp3')) extension = '.mp3';
         else if (mime.includes('wav')) extension = '.wav';
         else {
-            throw new Error('Unsupported audio format. Only MP3 or WAV is allowed.');
+            throw new Error('Unsupported audio format. Only M4A/MP3/WAV are allowed.');
         }
         const fileName = `${prefix}_${timestamp}${extension}`;
         
         // Enforce allowed mime types
-        if (!mime.includes('mpeg') && !mime.includes('mp3') && !mime.includes('wav')) {
-            throw new Error('Upload blocked: only MP3 or WAV allowed.');
+        if (!mime.includes('mp4') && !mime.includes('m4a') && !mime.includes('mpeg') && !mime.includes('mp3') && !mime.includes('wav')) {
+            throw new Error('Upload blocked: only M4A/MP3/WAV allowed.');
         }
 
         // Send to Apps Script (includes config for universal backend)
@@ -802,6 +815,73 @@ class PhoneSequenceApp {
             reader.onerror = reject;
             reader.readAsDataURL(blob);
         });
+    }
+
+    // Convert an arbitrary audio blob to WAV for upload compatibility
+    async convertBlobToWav(blob) {
+        const arrayBuffer = await blob.arrayBuffer();
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+        const wavBuffer = this.audioBufferToWav(audioBuffer);
+        return new Blob([wavBuffer], { type: 'audio/wav' });
+    }
+
+    // Minimal PCM WAV encoder for an AudioBuffer
+    audioBufferToWav(buffer) {
+        const numChannels = buffer.numberOfChannels;
+        const sampleRate = buffer.sampleRate;
+        const samples = buffer.length;
+        const bytesPerSample = 2; // 16-bit PCM
+        const blockAlign = numChannels * bytesPerSample;
+        const dataSize = samples * blockAlign;
+        const bufferSize = 44 + dataSize;
+        const arrayBuffer = new ArrayBuffer(bufferSize);
+        const view = new DataView(arrayBuffer);
+
+        let offset = 0;
+
+        // RIFF header
+        this.writeString(view, offset, 'RIFF'); offset += 4;
+        view.setUint32(offset, 36 + dataSize, true); offset += 4; // file size - 8
+        this.writeString(view, offset, 'WAVE'); offset += 4;
+
+        // fmt chunk
+        this.writeString(view, offset, 'fmt '); offset += 4;
+        view.setUint32(offset, 16, true); offset += 4; // PCM chunk size
+        view.setUint16(offset, 1, true); offset += 2;  // audio format PCM
+        view.setUint16(offset, numChannels, true); offset += 2;
+        view.setUint32(offset, sampleRate, true); offset += 4;
+        view.setUint32(offset, sampleRate * blockAlign, true); offset += 4; // byte rate
+        view.setUint16(offset, blockAlign, true); offset += 2; // block align
+        view.setUint16(offset, bytesPerSample * 8, true); offset += 2; // bits per sample
+
+        // data chunk
+        this.writeString(view, offset, 'data'); offset += 4;
+        view.setUint32(offset, dataSize, true); offset += 4;
+
+        // Write interleaved PCM samples
+        const channelData = [];
+        for (let ch = 0; ch < numChannels; ch++) {
+            channelData.push(buffer.getChannelData(ch));
+        }
+
+        let sampleIndex = 0;
+        while (sampleIndex < samples) {
+            for (let ch = 0; ch < numChannels; ch++) {
+                const sample = Math.max(-1, Math.min(1, channelData[ch][sampleIndex]));
+                view.setInt16(offset, sample * 0x7fff, true);
+                offset += 2;
+            }
+            sampleIndex++;
+        }
+
+        return arrayBuffer;
+    }
+
+    writeString(view, offset, str) {
+        for (let i = 0; i < str.length; i++) {
+            view.setUint8(offset + i, str.charCodeAt(i));
+        }
     }
 
     // ==================== FORM SUBMISSION ====================
