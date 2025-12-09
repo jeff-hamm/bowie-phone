@@ -570,7 +570,7 @@ class PhoneSequenceApp {
             // Prefer MP3, then WAV; disallow WebM fallback per requirement
             const candidates = [
                 this.config.audio?.mimeType,
-                'audio/mpeg',
+                'audio/mp4',
                 'audio/mp3',
                 'audio/wav'
             ].filter(Boolean);
