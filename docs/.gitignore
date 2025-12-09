@@ -1,7 +1,3 @@
-# Ignore local config files with secrets
-config.local.js
-*local*.js
-*.local.js
 
 # Ignore recorded audio files
 *.webm

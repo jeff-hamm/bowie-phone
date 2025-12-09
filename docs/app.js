@@ -567,11 +567,17 @@ class PhoneSequenceApp {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             
-            // Determine best mime type
-            let mimeType = this.config.audio?.mimeType || 'audio/webm;codecs=opus';
-            if (!MediaRecorder.isTypeSupported(mimeType)) {
-                mimeType = this.config.audio?.fallbackMimeType || 'audio/webm';
-            }
+            // Prefer MP3, then WAV, then WebM/Opus
+            const candidates = [
+                this.config.audio?.mimeType,
+                'audio/mpeg',
+                'audio/mp3',
+                'audio/wav',
+                'audio/webm;codecs=opus',
+                'audio/webm'
+            ].filter(Boolean);
+            const mimeType = candidates.find(type => MediaRecorder.isTypeSupported(type)) || 'audio/webm';
+            this.recordingMimeType = mimeType;
             
             this.mediaRecorder = new MediaRecorder(stream, { mimeType });
             this.audioChunks = [];
@@ -734,10 +740,14 @@ class PhoneSequenceApp {
         // Convert blob to base64
         const base64 = await this.blobToBase64(blob);
         
-        // Generate filename
+        // Generate filename with extension based on mime type (prefer mp3, else wav, else webm)
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
         const prefix = this.config.audio?.filePrefix || 'bowie-phone-recording';
-        const fileName = `${prefix}_${timestamp}.webm`;
+        const mime = this.recordingMimeType || blob.type || 'audio/webm';
+        let extension = '.webm';
+        if (mime.includes('mpeg') || mime.includes('mp3')) extension = '.mp3';
+        else if (mime.includes('wav')) extension = '.wav';
+        const fileName = `${prefix}_${timestamp}${extension}`;
         
         // Send to Apps Script (includes config for universal backend)
         // Use text/plain to keep the request a simple POST (avoids CORS preflight)
@@ -755,7 +765,7 @@ class PhoneSequenceApp {
                 },
                 fileName: fileName,
                 fileData: base64,
-                mimeType: blob.type || 'audio/webm',
+                mimeType: mime,
                 driveFolder: this.driveFolderId
             })
         });
