@@ -567,16 +567,17 @@ class PhoneSequenceApp {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             
-            // Prefer MP3, then WAV, then WebM/Opus
+            // Prefer MP3, then WAV; disallow WebM fallback per requirement
             const candidates = [
                 this.config.audio?.mimeType,
                 'audio/mpeg',
                 'audio/mp3',
-                'audio/wav',
-                'audio/webm;codecs=opus',
-                'audio/webm'
+                'audio/wav'
             ].filter(Boolean);
-            const mimeType = candidates.find(type => MediaRecorder.isTypeSupported(type)) || 'audio/webm';
+            const mimeType = candidates.find(type => MediaRecorder.isTypeSupported(type));
+            if (!mimeType) {
+                throw new Error('Browser does not support MP3 or WAV recording.');
+            }
             this.recordingMimeType = mimeType;
             
             this.mediaRecorder = new MediaRecorder(stream, { mimeType });
@@ -743,12 +744,20 @@ class PhoneSequenceApp {
         // Generate filename with extension based on mime type (prefer mp3, else wav, else webm)
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
         const prefix = this.config.audio?.filePrefix || 'bowie-phone-recording';
-        const mime = this.recordingMimeType || blob.type || 'audio/webm';
-        let extension = '.webm';
+        const mime = this.recordingMimeType || blob.type || 'audio/wav';
+        let extension = '.wav';
         if (mime.includes('mpeg') || mime.includes('mp3')) extension = '.mp3';
         else if (mime.includes('wav')) extension = '.wav';
+        else {
+            throw new Error('Unsupported audio format. Only MP3 or WAV is allowed.');
+        }
         const fileName = `${prefix}_${timestamp}${extension}`;
         
+        // Enforce allowed mime types
+        if (!mime.includes('mpeg') && !mime.includes('mp3') && !mime.includes('wav')) {
+            throw new Error('Upload blocked: only MP3 or WAV allowed.');
+        }
+
         // Send to Apps Script (includes config for universal backend)
         // Use text/plain to keep the request a simple POST (avoids CORS preflight)
         const response = await fetch(this.appsScriptUrl, {
