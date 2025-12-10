@@ -29,8 +29,11 @@ jobs:
           echo "${{ secrets.BOWIE_CONFIG_LOCAL }}" > docs/config.local.js
           echo "✅ Created config.local.js"
           ls -la docs/config.local.js
-          echo "📄 First 2 lines:"
-          head -n 2 docs/config.local.js
+          # Verify it's not empty
+          if [ ! -s docs/config.local.js ]; then
+            echo "❌ config.local.js is empty!"
+            exit 1
+          fi
 
       - name: Cache-bust static assets
         run: |
