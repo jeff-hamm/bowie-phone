@@ -26,14 +26,7 @@ jobs:
       
       - name: Restore config.local.js from secret
         run: |
-          echo "${{ secrets.BOWIE_CONFIG_LOCAL }}" > docs/configlocal.js
-          echo "✅ Created configlocal.js"
-          ls -la docs/configlocal.js
-          # Verify it's not empty
-          if [ ! -s docs/configlocal.js ]; then
-            echo "❌ configlocal.js is empty!"
-            exit 1
-          fi
+          echo "${{ secrets.BOWIE_CONFIG_LOCAL }}" > docs/config.local.js
 
       - name: Cache-bust static assets
         run: |
@@ -41,8 +34,6 @@ jobs:
           perl -pi -e 's|styles/styles\.css(\?v=[^"'"'"'">]+)?|styles/styles.css?v='"${VERSION}"'|g' docs/index.html
           perl -pi -e 's|config\.js(\?v=[^"'"'"'">]+)?|config.js?v='"${VERSION}"'|g' docs/index.html
           perl -pi -e 's|app\.js(\?v=[^"'"'"'">]+)?|app.js?v='"${VERSION}"'|g' docs/index.html
-          # Also add version to config.js's loading of configlocal.js
-          perl -pi -e 's|configlocal\.js|configlocal.js?v='"${VERSION}"'|g' docs/config.js
       
       - name: Setup Pages
         uses: actions/configure-pages@v4

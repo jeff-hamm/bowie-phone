@@ -128,7 +128,7 @@ window.PHONE_CONFIG = PHONE_CONFIG;
 // Try to load local config overrides if available
 (function() {
     const script = document.createElement('script');
-    script.src = 'configlocal.js';
+    script.src = 'config.local.js';
     script.onload = function() {
         if (typeof LOCAL_PHONE_CONFIG !== 'undefined') {
             // Deep merge local config
@@ -144,16 +144,12 @@ window.PHONE_CONFIG = PHONE_CONFIG;
             }
             deepMerge(PHONE_CONFIG, LOCAL_PHONE_CONFIG);
             console.log('✅ Local config loaded and merged');
-            console.log('📋 Spreadsheet ID:', PHONE_CONFIG.googleSheets?.spreadsheetId || 'NOT SET');
-        } else {
-            console.warn('⚠️ config.local.js loaded but LOCAL_PHONE_CONFIG is undefined');
         }
         // Dispatch event when config is ready
         window.dispatchEvent(new CustomEvent('configReady', { detail: PHONE_CONFIG }));
     };
-    script.onerror = function(e) {
-        console.error('❌ Failed to load configlocal.js:', e);
-        console.log('📋 Spreadsheet ID:', PHONE_CONFIG.googleSheets?.spreadsheetId || 'NOT SET');
+    script.onerror = function() {
+        console.log('ℹ️ No local config found, using defaults');
         // Still dispatch event even without local config
         window.dispatchEvent(new CustomEvent('configReady', { detail: PHONE_CONFIG }));
     };
