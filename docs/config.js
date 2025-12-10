@@ -16,7 +16,7 @@ const PHONE_CONFIG = {
         enabled: true,
         gid: '0',
         csvUrl: null, // Auto-constructed
-        spreadsheetId: null, // Set in config.local.js
+        spreadsheetId: '1q1FOzSTg-5ATMSlVf_cuIaPvYgMv9yDec4Nd5ZaAlzY',
         // Use the universal backend (shared across all apps)
         // OR use a dedicated bowie-phone-apps-script.js deployment
         // Must include /exec at the end to hit the deployed web app
@@ -25,8 +25,8 @@ const PHONE_CONFIG = {
     
     // Google Drive folder for audio uploads
     googleDrive: {
-        folderId: null, // Set in config.local.js
-        folderUrl: null // Set in config.local.js
+        folderId: '1TGRbklQEoJpt1AbR3LOpW0t8unVnzkQ5',
+        folderUrl: 'https://drive.google.com/drive/folders/1TGRbklQEoJpt1AbR3LOpW0t8unVnzkQ5'
     },
     
     // Data source configuration
