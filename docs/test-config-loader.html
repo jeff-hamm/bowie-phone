@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Config Loader Test</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #0d1117;
+            color: #f0f6fc;
+        }
+        .test-result {
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+            border: 1px solid #30363d;
+        }
+        .success { background: #1a4d2e; border-color: #00ff88; }
+        .error { background: #4d1a1a; border-color: #ff4444; }
+        .info { background: #1a2b4d; border-color: #4183c4; }
+        pre {
+            background: #161b22;
+            padding: 10px;
+            border-radius: 3px;
+            overflow-x: auto;
+        }
+        h1 { color: #00ff88; }
+        h2 { color: #58a6ff; margin-top: 30px; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Config Loader Test</h1>
+    <p>Testing if config.secret.js can be loaded from GitHub Pages deployment...</p>
+    
+    <div id="results"></div>
+
+    <script>
+        const results = document.getElementById('results');
+        
+        function addResult(type, title, message, data = null) {
+            const div = document.createElement('div');
+            div.className = `test-result ${type}`;
+            div.innerHTML = `<strong>${title}</strong><br>${message}`;
+            if (data) {
+                div.innerHTML += `<pre>${JSON.stringify(data, null, 2)}</pre>`;
+            }
+            results.appendChild(div);
+        }
+
+        addResult('info', '⏳ Test 1: Loading config.secret.js', 'Attempting to load...');
+
+        // Test 1: Try to load config.secret.js
+        const secretScript = document.createElement('script');
+        secretScript.src = 'config.secret.js';
+        
+        secretScript.onload = function() {
+            if (typeof SECRET_PHONE_CONFIG !== 'undefined') {
+                addResult('success', '✅ Test 1: PASSED', 
+                    'config.secret.js loaded successfully!', 
+                    SECRET_PHONE_CONFIG);
+                
+                // Test 2: Verify it has the required fields
+                addResult('info', '⏳ Test 2: Validating structure', 'Checking config structure...');
+                
+                if (SECRET_PHONE_CONFIG.googleSheets?.spreadsheetId) {
+                    addResult('success', '✅ Test 2: PASSED', 
+                        'Config has spreadsheetId: ' + SECRET_PHONE_CONFIG.googleSheets.spreadsheetId);
+                } else {
+                    addResult('error', '❌ Test 2: FAILED', 
+                        'Config missing spreadsheetId');
+                }
+                
+                if (SECRET_PHONE_CONFIG.googleDrive?.folderId) {
+                    addResult('success', '✅ Test 3: PASSED', 
+                        'Config has folderId: ' + SECRET_PHONE_CONFIG.googleDrive.folderId);
+                } else {
+                    addResult('error', '❌ Test 3: FAILED', 
+                        'Config missing folderId');
+                }
+            } else {
+                addResult('error', '❌ Test 1: FAILED', 
+                    'config.secret.js loaded but SECRET_PHONE_CONFIG is undefined');
+            }
+        };
+        
+        secretScript.onerror = function(e) {
+            addResult('error', '❌ Test 1: FAILED', 
+                'Failed to load config.secret.js - got 404 or load error', 
+                { error: e.toString() });
+            
+            // Test fallback: Try debug.local.js to confirm loading works
+            addResult('info', '⏳ Test 4: Testing debug.local.js as control', 
+                'Verifying that .local files CAN load...');
+            
+            const debugScript = document.createElement('script');
+            debugScript.src = 'debug.local.js';
+            debugScript.onload = function() {
+                if (typeof DEBUG_CONFIG !== 'undefined') {
+                    addResult('success', '✅ Test 4: PASSED', 
+                        'debug.local.js loads successfully (so .local files work)', 
+                        DEBUG_CONFIG);
+                }
+            };
+            debugScript.onerror = function() {
+                addResult('error', '❌ Test 4: FAILED', 
+                    'debug.local.js also fails to load');
+            };
+            document.head.appendChild(debugScript);
+        };
+        
+        document.head.appendChild(secretScript);
+        
+        // Test 5: Check if config.secret.js exists via fetch
+        setTimeout(() => {
+            addResult('info', '⏳ Test 5: HTTP fetch test', 'Checking HTTP status...');
+            fetch('config.secret.js')
+                .then(response => {
+                    if (response.ok) {
+                        addResult('success', '✅ Test 5: PASSED', 
+                            `config.secret.js HTTP status: ${response.status}`);
+                        return response.text();
+                    } else {
+                        addResult('error', '❌ Test 5: FAILED', 
+                            `config.secret.js HTTP status: ${response.status}`);
+                    }
+                })
+                .then(text => {
+                    if (text) {
+                        addResult('info', '📄 File content preview', 
+                            text.substring(0, 200) + '...');
+                    }
+                })
+                .catch(err => {
+                    addResult('error', '❌ Test 5: ERROR', 
+                        'Fetch failed: ' + err.message);
+                });
+        }, 1000);
+    </script>
+</body>
+</html>
