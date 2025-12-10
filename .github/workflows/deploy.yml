@@ -27,6 +27,10 @@ jobs:
       - name: Restore config.local.js from secret
         run: |
           echo "${{ secrets.BOWIE_CONFIG_LOCAL }}" > docs/config.local.js
+          echo "✅ Created config.local.js"
+          ls -la docs/config.local.js
+          echo "📄 First 2 lines:"
+          head -n 2 docs/config.local.js
 
       - name: Cache-bust static assets
         run: |
