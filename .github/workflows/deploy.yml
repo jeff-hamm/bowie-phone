@@ -35,16 +35,6 @@ jobs:
           ls -la docs/debug.local.js
           echo "📄 Content preview:"
           head -n 3 docs/debug.local.js
-      
-      - name: Restore config.secret.js from secret
-        run: |
-          echo "${{ secrets.CONFIG_SECRET_JS }}" > docs/config.secret.js
-          echo "✅ Created config.secret.js"
-          ls -la docs/config.secret.js
-          if [ ! -s docs/config.secret.js ]; then
-            echo "❌ config.secret.js is empty!"
-            exit 1
-          fi
 
       - name: Cache-bust static assets
         run: |

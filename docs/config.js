@@ -16,7 +16,7 @@ const PHONE_CONFIG = {
         enabled: true,
         gid: '0',
         csvUrl: null, // Auto-constructed
-        spreadsheetId: null, // Set in config.secret.js
+        spreadsheetId: '1q1FOzSTg-5ATMSlVf_cuIaPvYgMv9yDec4Nd5ZaAlzY',
         // Use the universal backend (shared across all apps)
         // OR use a dedicated bowie-phone-apps-script.js deployment
         // Must include /exec at the end to hit the deployed web app
@@ -25,8 +25,8 @@ const PHONE_CONFIG = {
     
     // Google Drive folder for audio uploads
     googleDrive: {
-        folderId: null, // Set in config.secret.js
-        folderUrl: null // Set in config.secret.js
+        folderId: '1TGRbklQEoJpt1AbR3LOpW0t8unVnzkQ5',
+        folderUrl: 'https://drive.google.com/drive/folders/1TGRbklQEoJpt1AbR3LOpW0t8unVnzkQ5'
     },
     
     // Data source configuration
@@ -128,9 +128,9 @@ window.PHONE_CONFIG = PHONE_CONFIG;
 // Try to load local config overrides if available
 (function() {
     const script = document.createElement('script');
-    script.src = 'config.secret.js';
+    script.src = 'config.local.js';
     script.onload = function() {
-        if (typeof SECRET_PHONE_CONFIG !== 'undefined') {
+        if (typeof LOCAL_PHONE_CONFIG !== 'undefined') {
             // Deep merge local config
             function deepMerge(target, source) {
                 for (const key in source) {
@@ -142,14 +142,14 @@ window.PHONE_CONFIG = PHONE_CONFIG;
                     }
                 }
             }
-            deepMerge(PHONE_CONFIG, SECRET_PHONE_CONFIG);
-            console.log('✅ Secret config loaded and merged');
+            deepMerge(PHONE_CONFIG, LOCAL_PHONE_CONFIG);
+            console.log('✅ Local config loaded and merged');
         }
         // Dispatch event when config is ready
         window.dispatchEvent(new CustomEvent('configReady', { detail: PHONE_CONFIG }));
     };
     script.onerror = function() {
-        console.log('ℹ️ No secret config found, using defaults');
+        console.log('ℹ️ No local config found, using defaults');
         // Still dispatch event even without local config
         window.dispatchEvent(new CustomEvent('configReady', { detail: PHONE_CONFIG }));
     };
