@@ -35,6 +35,18 @@ jobs:
           ls -la docs/debug.local.js
           echo "📄 Content preview:"
           head -n 3 docs/debug.local.js
+      
+      - name: Create config.secret.js for testing (NOT used by main app yet)
+        run: |
+          echo "${{ secrets.CONFIG_SECRET_JS }}" > docs/config.secret.js
+          echo "✅ Created config.secret.js for testing"
+          ls -la docs/config.secret.js
+          if [ ! -s docs/config.secret.js ]; then
+            echo "❌ config.secret.js is empty!"
+            exit 1
+          fi
+          echo "📄 Content preview:"
+          head -n 3 docs/config.secret.js
 
       - name: Cache-bust static assets
         run: |
