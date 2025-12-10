@@ -4,6 +4,7 @@
 *.mp3
 *.wav
 *.ogg
+debug.local.js
 
 # OS files
 .DS_Store
