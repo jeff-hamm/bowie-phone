@@ -882,6 +882,11 @@ class PhoneSequenceApp {
         const recordBtn = document.getElementById('record-btn');
         const acceptBtn = document.getElementById('accept-audio-btn');
         const statusEl = document.getElementById('upload-status');
+        const setPlaybackLoading = (state) => {
+            if (playback) {
+                playback.classList[state ? 'add' : 'remove']('loading');
+            }
+        };
         
         // Hide record/timer; show playback
         if (recordBtn) recordBtn.style.display = 'none';
@@ -896,6 +901,8 @@ class PhoneSequenceApp {
         const finalUrl = playableUrl || audioUrl;
 
         if (player && finalUrl) {
+            setPlaybackLoading(true);
+            player.addEventListener('loadeddata', () => setPlaybackLoading(false), { once: true });
             // For proxied Drive audio, fetch base64 and convert to blob URL
             const isProxyDrive = finalUrl.includes('action=getDriveFile');
             if (isProxyDrive) {
@@ -905,6 +912,7 @@ class PhoneSequenceApp {
                 const blobUrl = await this.fetchAsBlobUrl(finalUrl);
                 player.src = blobUrl || finalUrl;
             }
+            setPlaybackLoading(false);
         }
     }
 

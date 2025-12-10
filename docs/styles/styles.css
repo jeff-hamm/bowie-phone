@@ -628,6 +628,32 @@ h2 {
     align-items: center;
     gap: var(--spacing-md);
     flex: 1;
+    position: relative;
+}
+
+.audio-playback.loading::after {
+    content: '';
+    position: absolute;
+    inset: -4px;
+    background: rgba(0, 0, 0, 0.35);
+    border-radius: var(--border-radius);
+    backdrop-filter: blur(2px);
+    z-index: 2;
+}
+
+.audio-playback.loading::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 28px;
+    height: 28px;
+    margin: -14px 0 0 -14px;
+    border: 3px solid var(--color-bg-secondary);
+    border-top: 3px solid var(--color-primary);
+    border-radius: var(--border-radius-full);
+    animation: spin 1s linear infinite;
+    z-index: 3;
 }
 
 .audio-player {
