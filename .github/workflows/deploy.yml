@@ -34,6 +34,8 @@ jobs:
           perl -pi -e 's|styles/styles\.css(\?v=[^"'"'"'">]+)?|styles/styles.css?v='"${VERSION}"'|g' docs/index.html
           perl -pi -e 's|config\.js(\?v=[^"'"'"'">]+)?|config.js?v='"${VERSION}"'|g' docs/index.html
           perl -pi -e 's|app\.js(\?v=[^"'"'"'">]+)?|app.js?v='"${VERSION}"'|g' docs/index.html
+          # Also add version to config.js's loading of config.local.js
+          perl -pi -e 's|config\.local\.js|config.local.js?v='"${VERSION}"'|g' docs/config.js
       
       - name: Setup Pages
         uses: actions/configure-pages@v4

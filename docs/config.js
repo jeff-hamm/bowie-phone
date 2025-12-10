@@ -144,12 +144,16 @@ window.PHONE_CONFIG = PHONE_CONFIG;
             }
             deepMerge(PHONE_CONFIG, LOCAL_PHONE_CONFIG);
             console.log('✅ Local config loaded and merged');
+            console.log('📋 Spreadsheet ID:', PHONE_CONFIG.googleSheets?.spreadsheetId || 'NOT SET');
+        } else {
+            console.warn('⚠️ config.local.js loaded but LOCAL_PHONE_CONFIG is undefined');
         }
         // Dispatch event when config is ready
         window.dispatchEvent(new CustomEvent('configReady', { detail: PHONE_CONFIG }));
     };
-    script.onerror = function() {
-        console.log('ℹ️ No local config found, using defaults');
+    script.onerror = function(e) {
+        console.error('❌ Failed to load config.local.js:', e);
+        console.log('📋 Spreadsheet ID:', PHONE_CONFIG.googleSheets?.spreadsheetId || 'NOT SET');
         // Still dispatch event even without local config
         window.dispatchEvent(new CustomEvent('configReady', { detail: PHONE_CONFIG }));
     };
