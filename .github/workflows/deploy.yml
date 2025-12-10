@@ -31,9 +31,9 @@ jobs:
       - name: Cache-bust static assets
         run: |
           VERSION=${GITHUB_RUN_NUMBER:-$GITHUB_SHA}
-          perl -pi -e "s|styles/styles.css(?:\?v=[^\"'">]+)?|styles/styles.css?v=${VERSION}|g" docs/index.html
-          perl -pi -e "s|config.js(?:\?v=[^\"'">]+)?|config.js?v=${VERSION}|g" docs/index.html
-          perl -pi -e "s|app.js(?:\?v=[^\"'">]+)?|app.js?v=${VERSION}|g" docs/index.html
+          perl -pi -e 's|styles/styles\.css(\?v=[^"'"'"'">]+)?|styles/styles.css?v='"${VERSION}"'|g' docs/index.html
+          perl -pi -e 's|config\.js(\?v=[^"'"'"'">]+)?|config.js?v='"${VERSION}"'|g' docs/index.html
+          perl -pi -e 's|app\.js(\?v=[^"'"'"'">]+)?|app.js?v='"${VERSION}"'|g' docs/index.html
       
       - name: Setup Pages
         uses: actions/configure-pages@v4
