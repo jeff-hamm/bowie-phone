@@ -4,7 +4,6 @@
 *.mp3
 *.wav
 *.ogg
-configlocal.js
 
 # OS files
 .DS_Store
