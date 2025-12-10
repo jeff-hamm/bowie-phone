@@ -36,17 +36,17 @@ jobs:
           echo "📄 Content preview:"
           head -n 3 docs/debug.local.js
       
-      - name: Create config.secret.js for testing (NOT used by main app yet)
+      - name: Create secretconfig.js for testing (NOT used by main app yet)
         run: |
-          echo "${{ secrets.CONFIG_SECRET_JS }}" > docs/config.secret.js
-          echo "✅ Created config.secret.js for testing"
-          ls -la docs/config.secret.js
-          if [ ! -s docs/config.secret.js ]; then
-            echo "❌ config.secret.js is empty!"
+          echo "${{ secrets.SECRET_CONFIG_JS }}" > docs/secretconfig.js
+          echo "✅ Created secretconfig.js for testing"
+          ls -la docs/secretconfig.js
+          if [ ! -s docs/secretconfig.js ]; then
+            echo "❌ secretconfig.js is empty!"
             exit 1
           fi
           echo "📄 Content preview:"
-          head -n 3 docs/config.secret.js
+          head -n 3 docs/secretconfig.js
 
       - name: Cache-bust static assets
         run: |

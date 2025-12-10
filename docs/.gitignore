@@ -5,6 +5,7 @@
 *.wav
 *.ogg
 debug.local.js
+secretconfig.js
 
 # OS files
 .DS_Store
