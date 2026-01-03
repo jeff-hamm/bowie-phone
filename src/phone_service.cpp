@@ -8,12 +8,14 @@ PhoneService::PhoneService()
 #ifdef CAN_RING
     : _pinFR(F_R), _pinRM(RM), _pinSHK(SHK),
       _isRinging(false), _isOffHook(false), _lastShkReading(false),
+      _debugOverride(false),
       _lastRingToggleTime(0), _ringState(false),
       _lastDebounceTime(0), _debounceDelay(50),
       _hookCallback(nullptr) {
 #else
     : _pinSHK(SHK),
       _isOffHook(false), _lastShkReading(false),
+      _debugOverride(false),
       _lastDebounceTime(0), _debounceDelay(50),
       _hookCallback(nullptr) {
 #endif
@@ -128,6 +130,10 @@ bool PhoneService::isRinging() const { return false; }
 #endif
 
 void PhoneService::checkHookState() {
+    // Skip physical hook checking when debug override is active
+    if (_debugOverride) {
+        return;
+    }
     
 #ifdef ASSUME_HOOK
     bool reading = false;
@@ -145,24 +151,8 @@ void PhoneService::checkHookState() {
         // delay, so take it as the actual current state:
         
         if (reading != _isOffHook) {
-            _isOffHook = reading;
-            
-            if (_isOffHook) {
-                Logger.println("📞 Phone picked up (OFF HOOK)");
-#ifdef CAN_RING
-                // Stop ringing if we were ringing
-                if (_isRinging) {
-                    stopRinging();
-                }
-#endif
-            } else {
-                Logger.println("📞 Phone hung up (ON HOOK)");
-            }
-            
-            // Notify callback if registered
-            if (_hookCallback) {
-                _hookCallback(_isOffHook);
-            }
+            // Use setOffHook to handle state change, ringing stop, and callback
+            setOffHook(reading, false); // false = not from debug
         }
     }
 }
@@ -171,19 +161,33 @@ void PhoneService::setHookCallback(HookStateCallback callback) {
     _hookCallback = callback;
 }
 
-void PhoneService::setOffHook(bool offHook) {
+void PhoneService::setOffHook(bool offHook, bool fromDebug) {
+    // When called from debug, enable override to ignore physical pin
+    if (fromDebug) {
+        _debugOverride = true;
+        Logger.println("🔧 [DEBUG] Hook override ENABLED - physical pin ignored");
+    }
+    
     if (offHook != _isOffHook) {
         _isOffHook = offHook;
         
         if (_isOffHook) {
-            Logger.println("📞 [DEBUG] Phone set to OFF HOOK");
+            if (fromDebug) {
+                Logger.println("📞 [DEBUG] Phone set to OFF HOOK");
+            } else {
+                Logger.println("📞 Phone picked up (OFF HOOK)");
+            }
 #ifdef CAN_RING
             if (_isRinging) {
                 stopRinging();
             }
 #endif
         } else {
-            Logger.println("📞 [DEBUG] Phone set to ON HOOK");
+            if (fromDebug) {
+                Logger.println("📞 [DEBUG] Phone set to ON HOOK");
+            } else {
+                Logger.println("📞 Phone hung up (ON HOOK)");
+            }
         }
         
         // Notify callback if registered

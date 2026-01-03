@@ -108,8 +108,8 @@ bool connectToWiFi()
         return false;
     }
 
-    String ssid = wifiPrefs.getString("ssid", FALLBACK_SSID);
-    String password = wifiPrefs.getString("password", FALLBACK_PASSWORD);
+    String ssid = wifiPrefs.getString("ssid", DEFAULT_SSID);
+    String password = wifiPrefs.getString("password", DEFAULT_PASSWORD);
     wifiPrefs.end();
     
     if (ssid.length() == 0)
@@ -289,10 +289,6 @@ void stopOTA()
     ArduinoOTA.end();
     Logger.println("🔄 OTA stopped due to WiFi change");
 }
-
-// Fallback WiFi credentials
-static const char* FALLBACK_SSID = "House Atreides";
-static const char* FALLBACK_PASSWORD = "desertpower";
 
 // Handle WiFi loop processing (call this in main loop)
 void handleWiFiLoop()

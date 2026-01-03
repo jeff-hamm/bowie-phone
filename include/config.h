@@ -56,6 +56,14 @@
 #define DNS_PRIMARY_IPADDRESS IPAddress(DNS_PRIMARY_1, DNS_PRIMARY_2, DNS_PRIMARY_3, DNS_PRIMARY_4)
 #define DNS_SECONDARY_IPADDRESS IPAddress(DNS_SECONDARY_1, DNS_SECONDARY_2, DNS_SECONDARY_3, DNS_SECONDARY_4)
 
+// Default WiFi credentials (used when no saved credentials exist)
+#ifndef DEFAULT_SSID
+#define DEFAULT_SSID "House Atreides"
+#endif
+#ifndef DEFAULT_PASSWORD
+#define DEFAULT_PASSWORD "desertpower"
+#endif
+
 // ============================================================================
 // PHONE HARDWARE CONFIGURATION
 // ============================================================================

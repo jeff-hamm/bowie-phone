@@ -12,6 +12,7 @@
 static char dtmfSequence[MAX_SEQUENCE_LENGTH + 1];  // +1 for null terminator
 static int sequenceIndex = 0;
 static unsigned long lastDigitTime = 0;
+static bool sequenceReady = false;  // Flag set when sequence is ready to process
 
 // ============================================================================
 // DTMF SEQUENCE READING
@@ -105,9 +106,13 @@ static bool checkForDTMFSequence()
 
 const char* readDTMFSequence()
 {
-    // Check for complete DTMF sequences
-    if (checkForDTMFSequence())
+    // Check for complete DTMF sequences from real audio or simulated input
+    bool ready = checkForDTMFSequence() || sequenceReady;
+    
+    if (ready && sequenceIndex > 0)
     {
+        sequenceReady = false;  // Clear the flag
+        
         // Process the complete sequence and check for audio playback
         const char* audioPath = processNumberSequence(dtmfSequence);
         
@@ -142,7 +147,10 @@ void simulateDTMFDigit(char digit)
     }
     
     // Use the same logic as real DTMF detection
-    addDigitToSequence(digit);
+    if (addDigitToSequence(digit)) {
+        sequenceReady = true;  // Mark sequence as ready for processing
+        Logger.debugln("🔧 [DEBUG] Sequence ready for processing");
+    }
 }
 
 // ============================================================================

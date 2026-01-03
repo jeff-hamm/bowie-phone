@@ -27,7 +27,7 @@ public:
     void setHookCallback(HookStateCallback callback);
     
     // Debug/simulation methods
-    void setOffHook(bool offHook);  // Simulate hook state change (for serial debug mode)
+    void setOffHook(bool offHook, bool fromDebug = true);  // Simulate hook state change
 
 private:
 #ifdef CAN_RING
@@ -44,6 +44,7 @@ private:
     // State variables
     bool _isOffHook;
     bool _lastShkReading;
+    bool _debugOverride;  // When true, ignore physical hook pin
     
     unsigned long _lastDebounceTime;
     unsigned long _debounceDelay;
