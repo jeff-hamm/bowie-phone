@@ -1,5 +1,6 @@
 #include "tailscale_manager.h"
 #include "logging.h"
+#include "config.h"
 #include <WireGuard-ESP32.h>
 #include <time.h>
 
@@ -94,6 +95,12 @@ bool initTailscale(const char* localIp,
         vpnInitialized = true;
         Logger.printf("✅ Tailscale: Connected! Local IP: %s\n", localIp);
         snprintf(statusBuffer, sizeof(statusBuffer), "Connected: %s", localIp);
+        
+        // Reconfigure DNS after WireGuard - it may have been overwritten
+        IPAddress dns1 = DNS_PRIMARY_IPADDRESS;
+        IPAddress dns2 = DNS_SECONDARY_IPADDRESS;
+        WiFi.config(WiFi.localIP(), WiFi.gatewayIP(), WiFi.subnetMask(), dns1, dns2);
+        Logger.printf("🌐 DNS reconfigured after VPN: %s, %s\n", dns1.toString().c_str(), dns2.toString().c_str());
     } else {
         vpnInitialized = true;  // Mark as initialized so handleTailscaleLoop will retry
         vpnConnected = false;

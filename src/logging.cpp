@@ -1,10 +1,11 @@
 #include "logging.h"
 #include <Arduino.h>
+#include <stdarg.h>
 
 // Global logger instance
 LoggerClass Logger;
 
-LoggerClass::LoggerClass() : serialPrint(nullptr), logIndex(0), logCount(0), bufferPos(0) {
+LoggerClass::LoggerClass() : serialPrint(nullptr), logIndex(0), logCount(0), bufferPos(0), currentLogLevel(DEFAULT_LOG_LEVEL) {
     messageBuffer[0] = '\0';
 }
 
@@ -13,6 +14,11 @@ void LoggerClass::addLogger(Print& print) {
 }
 
 size_t LoggerClass::write(uint8_t byte) {
+    // Don't write anything if log level is QUIET
+    if (currentLogLevel == LOG_QUIET) {
+        return 1; // Pretend we wrote it
+    }
+    
     // Write to serial/print object (if available)
     size_t result = 0;
     if (serialPrint) {
@@ -54,6 +60,11 @@ size_t LoggerClass::write(uint8_t byte) {
 }
 
 size_t LoggerClass::write(const uint8_t* buffer, size_t size) {
+    // Don't write anything if log level is QUIET
+    if (currentLogLevel == LOG_QUIET) {
+        return size; // Pretend we wrote it
+    }
+    
     size_t result = 0;
     if (serialPrint) {
         result = serialPrint->write(buffer, size);
@@ -96,6 +107,39 @@ size_t LoggerClass::write(const uint8_t* buffer, size_t size) {
     }
     
     return result;
+}
+
+// ============================================================================
+// DEBUG-LEVEL LOGGING
+// ============================================================================
+
+void LoggerClass::debug(const char* message) {
+    if (currentLogLevel >= LOG_DEBUG) {
+        print(message);
+    }
+}
+
+void LoggerClass::debugln(const char* message) {
+    if (currentLogLevel >= LOG_DEBUG) {
+        println(message);
+    }
+}
+
+void LoggerClass::debugln() {
+    if (currentLogLevel >= LOG_DEBUG) {
+        println();
+    }
+}
+
+void LoggerClass::debugf(const char* format, ...) {
+    if (currentLogLevel >= LOG_DEBUG) {
+        char buf[MAX_LOG_MESSAGE_LENGTH];
+        va_list args;
+        va_start(args, format);
+        vsnprintf(buf, sizeof(buf), format, args);
+        va_end(args);
+        print(buf);
+    }
 }
 
 void LoggerClass::addMessageToBuffer(const String& message) {

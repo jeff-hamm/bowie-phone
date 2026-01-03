@@ -21,6 +21,7 @@
 
 // Now include additional headers that depend on AudioTools types
 #include "AudioTools/AudioLibs/AudioBoardStream.h"
+#include "AudioTools/Communication/HTTP/URLStream.h"
 
 // ============================================================================
 // CONSTANTS AND CONFIGURATION
@@ -28,6 +29,17 @@
 
 #ifndef DEFAULT_AUDIO_VOLUME
 #define DEFAULT_AUDIO_VOLUME 0.7f  ///< Default audio volume (0.0 to 1.0)
+#endif
+
+// URL Streaming Configuration
+// Define FORCE_URL_STREAMING=1 in build flags to always use URL streaming
+// even when SD card is present
+#ifndef FORCE_URL_STREAMING
+#define FORCE_URL_STREAMING 0
+#endif
+
+#ifndef URL_STREAM_BUFFER_SIZE
+#define URL_STREAM_BUFFER_SIZE 2048  ///< Buffer size for URL streaming
 #endif
 
 // ============================================================================
@@ -43,6 +55,28 @@
  * Sets up the audio player with the provided source and decoder.
  */
 void initAudioPlayer(AudioSource &source, AudioStream &output, AudioDecoder &decoder);
+
+/**
+ * @brief Initialize audio player for URL streaming mode (no SD card)
+ * @param output Reference to the audio output stream
+ * @param decoder Reference to the audio decoder
+ * 
+ * Sets up URL-based streaming when SD card is unavailable.
+ */
+void initAudioPlayerURLMode(AudioStream &output, AudioDecoder &decoder);
+
+/**
+ * @brief Check if audio player is in URL streaming mode
+ * @return true if using URL streaming, false if using SD card
+ */
+bool isURLStreamingMode();
+
+/**
+ * @brief Play audio directly from a URL
+ * @param url HTTP/HTTPS URL to stream audio from
+ * @return true if streaming started, false otherwise
+ */
+bool playAudioFromURL(const char* url);
 
 /**
  * @brief Start playing an audio file by path

@@ -33,6 +33,46 @@
 // ============================================================================
 
 /**
+ * @brief Read and process DTMF input, returning audio path when ready
+ * @return Audio file path to play, or nullptr if no sequence ready or no audio
+ *
+ * This function:
+ * - Analyzes DTMF input every 50ms
+ * - Builds up a sequence buffer
+ * - Stops dial tone on first digit
+ * - Checks for matching audio keys in real-time
+ * - '*' key completes the current sequence (excluding the '*')
+ * - Processes complete sequences
+ * - Resets internal state after processing
+ * - Returns audio path ready for playback (may be URL or SD path)
+ *
+ * Usage in main loop:
+ *   const char* audioPath = readDTMFSequence();
+ *   if (audioPath) {
+ *     playAudioPath(audioPath);
+ *   }
+ */
+const char* readDTMFSequence();
+
+/**
+ * @brief Reset the DTMF sequence buffer
+ *
+ * Clears the current DTMF sequence. Should be called when the phone
+ * goes on-hook or when you need to discard the current sequence.
+ */
+void resetDTMFSequence();
+
+/**
+ * @brief Simulate a DTMF digit for debug/testing purposes
+ * @param digit The DTMF digit to simulate (0-9, *, #)
+ *
+ * This function injects a digit directly into the sequence buffer
+ * as if it were detected from audio input. Useful for testing
+ * sequence processing without actual DTMF audio.
+ */
+void simulateDTMFDigit(char digit);
+
+/**
  * @brief Process a complete DTMF sequence
  * @param sequence Null-terminated string containing DTMF digits
  * @return File path for audio playback, or nullptr if not an audio sequence

@@ -10,6 +10,8 @@
  */
 
 #include "audio_file_manager.h"
+#include "audio_player.h"  // For isURLStreamingMode()
+#include "logging.h"
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
@@ -46,7 +48,7 @@ struct AudioDownloadItem
 static AudioFile audioFiles[MAX_KNOWN_SEQUENCES];
 static int audioFileCount = 0;
 static unsigned long lastCacheTime = 0;
-static bool sdCardInitialized = false;
+static bool sdCardAvailable = false;  // True if SD card is mounted and accessible
 static int sdCardCsPin = 13; // SD card chip select pin
 static bool sdMmmcSupport = false; // MMC support flag
 
@@ -65,12 +67,12 @@ static int downloadQueueIndex = 0; // Current processing index
  */
 static bool initializeSDCard()
 {
-    if (sdCardInitialized)
+    if (sdCardAvailable)
     {
         return true;
     }
     
-    Serial.println("🔧 Initializing SD card...");
+    Logger.println("🔧 Initializing SD card...");
     
     if (sdMmmcSupport)
     {
@@ -78,13 +80,13 @@ static bool initializeSDCard()
         uint8_t cardType = SD_MMC.cardType();
         if (cardType == CARD_NONE)
         {
-            Serial.println("❌ No SD_MMC card detected");
+            Logger.println("❌ No SD_MMC card detected");
             return false;
         }
         
         uint64_t cardSize = SD_MMC.cardSize() / (1024 * 1024);
-        Serial.printf("✅ SD_MMC Card Size: %lluMB\n", cardSize);
-        sdCardInitialized = true;
+        Logger.printf("✅ SD_MMC Card Size: %lluMB\n", cardSize);
+        sdCardAvailable = true;
         return true;
     }
     else
@@ -92,20 +94,20 @@ static bool initializeSDCard()
         // Using SD mode (SPI interface)
         if (!SD.begin(sdCardCsPin))
         {
-            Serial.println("❌ SD card initialization failed");
+            Logger.println("❌ SD card initialization failed");
             return false;
         }
         delay(1000);
         uint8_t cardType = SD.cardType();
         if (cardType == CARD_NONE)
         {
-            Serial.println("❌ No SD card attached");
+            Logger.println("❌ No SD card attached");
             return false;
         }
         
         uint64_t cardSize = SD.cardSize() / (1024 * 1024);
-        Serial.printf("✅ SD Card Size: %lluMB\n", cardSize);
-        sdCardInitialized = true;
+        Logger.printf("✅ SD Card Size: %lluMB\n", cardSize);
+        sdCardAvailable = true;
         return true;
     }
 }
@@ -187,7 +189,7 @@ static bool urlToFilename(const char* url, char* filename)
             }
             
             // Too many collisions, just use the base name and overwrite
-            Serial.println("⚠️ Too many hash collisions, using base filename");
+            Logger.println("⚠️ Too many hash collisions, using base filename");
         }
     }
     
@@ -254,7 +256,7 @@ static bool ensureAudioDirExists()
     size_t len = strlen(AUDIO_FILES_DIR);
     if (len == 0 || len >= sizeof(path))
     {
-        Serial.println("❌ Invalid audio directory path");
+        Logger.println("❌ Invalid audio directory path");
         return false;
     }
 
@@ -270,7 +272,7 @@ static bool ensureAudioDirExists()
         // Append next segment
         if (strlen(partial) + strlen(token) + 1 >= sizeof(partial))
         {
-            Serial.println("❌ Audio directory path too long");
+            Logger.println("❌ Audio directory path too long");
             return false;
         }
         strcat(partial, token);
@@ -279,7 +281,7 @@ static bool ensureAudioDirExists()
         {
             if (!SD_MKDIR(partial))
             {
-                Serial.printf("❌ Failed to create directory: %s\n", partial);
+                Logger.printf("❌ Failed to create directory: %s\n", partial);
                 return false;
             }
         }
@@ -306,7 +308,7 @@ static bool addToDownloadQueue(const char *url, const char *description)
 {
     if (downloadQueueCount >= MAX_DOWNLOAD_QUEUE)
     {
-        Serial.println("⚠️ Download queue is full, cannot add more items");
+        Logger.println("⚠️ Download queue is full, cannot add more items");
         return false;
     }
 
@@ -315,7 +317,7 @@ static bool addToDownloadQueue(const char *url, const char *description)
     {
         if (strcmp(downloadQueue[i].url, url) == 0)
         {
-            Serial.printf("ℹ️ URL already in download queue: %s\n", url);
+            Logger.printf("ℹ️ URL already in download queue: %s\n", url);
             return true; // Already queued, consider it success
         }
     }
@@ -327,7 +329,7 @@ static bool addToDownloadQueue(const char *url, const char *description)
 
     if (!getLocalAudioPath(url, item->localPath))
     {
-        Serial.printf("❌ Failed to generate local path for: %s\n", url);
+        Logger.printf("❌ Failed to generate local path for: %s\n", url);
         return false;
     }
 
@@ -337,7 +339,7 @@ static bool addToDownloadQueue(const char *url, const char *description)
     item->inProgress = false;
     downloadQueueCount++;
 
-    Serial.printf("📥 Added to download queue: %s -> %s\n", item->description, item->localPath);
+    Logger.printf("📥 Added to download queue: %s -> %s\n", item->description, item->localPath);
     return true;
 }
 
@@ -354,7 +356,7 @@ static void enqueueMissingAudioFiles()
     // If we cannot read the SD card, skip to avoid noisy logging
     if (!initializeSDCard())
     {
-        Serial.println("⚠️ SD card not available, skipping download pre-queue");
+        Logger.println("⚠️ SD card not available, skipping download pre-queue");
         return;
     }
 
@@ -396,7 +398,7 @@ static void enqueueMissingAudioFiles()
 
     if (queued > 0)
     {
-        Serial.printf("📥 Queued %d missing audio file(s) for download\n", queued);
+        Logger.printf("📥 Queued %d missing audio file(s) for download\n", queued);
     }
 }
 
@@ -413,13 +415,13 @@ static bool processDownloadQueueInternal()
     
     if (WiFi.status() != WL_CONNECTED)
     {
-        Serial.println("⚠️ WiFi not connected, skipping download queue processing");
+        Logger.println("⚠️ WiFi not connected, skipping download queue processing");
         return false;
     }
     
     if (!initializeSDCard())
     {
-        Serial.println("⚠️ SD card not available, skipping download queue processing");
+        Logger.println("⚠️ SD card not available, skipping download queue processing");
         return false;
     }
     
@@ -430,16 +432,16 @@ static bool processDownloadQueueInternal()
         return false; // Already processing this item
     }
     
-    Serial.printf("📥 Downloading audio file: %s\n", item->description);
-    Serial.printf("    URL: %s\n", item->url);
-    Serial.printf("    Local: %s\n", item->localPath);
+    Logger.printf("📥 Downloading audio file: %s\n", item->description);
+    Logger.printf("    URL: %s\n", item->url);
+    Logger.printf("    Local: %s\n", item->localPath);
     
     item->inProgress = true;
     
     // Ensure audio directory exists (handles nested paths like /sdcard/audio)
     if (!ensureAudioDirExists())
     {
-        Serial.println("❌ Failed to ensure audio directory exists");
+        Logger.println("❌ Failed to ensure audio directory exists");
         item->inProgress = false;
         downloadQueueIndex++; // Skip this item
         return false;
@@ -462,7 +464,7 @@ static bool processDownloadQueueInternal()
         File audioFile = SD_OPEN(item->localPath, FILE_WRITE);
         if (!audioFile)
         {
-            Serial.printf("❌ Failed to create file: %s\n", item->localPath);
+            Logger.printf("❌ Failed to create file: %s\n", item->localPath);
             http.end();
             item->inProgress = false;
             downloadQueueIndex++;
@@ -500,11 +502,11 @@ static bool processDownloadQueueInternal()
         }
         
         audioFile.close();
-        Serial.printf("✅ Downloaded %d bytes to: %s\n", totalBytes, item->localPath);
+        Logger.printf("✅ Downloaded %d bytes to: %s\n", totalBytes, item->localPath);
     }
     else
     {
-        Serial.printf("❌ HTTP download failed: %d for %s\n", httpCode, item->url);
+        Logger.printf("❌ HTTP download failed: %d for %s\n", httpCode, item->url);
     }
     
     http.end();
@@ -525,17 +527,23 @@ static bool isCacheStale()
         return true;
     }
     
+    // No SD card means no persistent cache - always fetch fresh data
+    if (!sdCardAvailable)
+    {
+        return true;
+    }
+    
     if (!initializeSDCard())
     {
-        Serial.println("⚠️ Cannot check cache age without SD card");
-        return false; // Assume cache is valid if we can't check
+        Logger.println("⚠️ Cannot check cache age without SD card");
+        return true; // No cache available, needs refresh
     }
     
     // Read cache timestamp from file
     File timestampFile = SD_OPEN(CACHE_TIMESTAMP_FILE, FILE_READ);
     if (!timestampFile)
     {
-        Serial.println("ℹ️ No cache timestamp file found");
+        Logger.println("ℹ️ No cache timestamp file found");
         return true; // No timestamp file means stale cache
     }
     
@@ -567,11 +575,11 @@ static bool isCacheStale()
  */
 static bool saveAudioFilesToSDCard()
 {
-    Serial.println("💾 Saving audio files to SD card...");
+    Logger.println("💾 Saving audio files to SD card...");
     
     if (!initializeSDCard())
     {
-        Serial.println("❌ SD card not available for writing");
+        Logger.println("❌ SD card not available for writing");
         return false;
     }
     
@@ -591,7 +599,7 @@ static bool saveAudioFilesToSDCard()
     File audioJsonFile = SD_OPEN(AUDIO_JSON_FILE, FILE_WRITE);
     if (!audioJsonFile)
     {
-        Serial.println("❌ Failed to open audio files JSON for writing");
+        Logger.println("❌ Failed to open audio files JSON for writing");
         return false;
     }
     
@@ -601,7 +609,7 @@ static bool saveAudioFilesToSDCard()
     
     if (bytesWritten == 0)
     {
-        Serial.println("❌ Failed to write audio files to JSON");
+        Logger.println("❌ Failed to write audio files to JSON");
         return false;
     }
     
@@ -615,10 +623,10 @@ static bool saveAudioFilesToSDCard()
     }
     else
     {
-        Serial.println("⚠️ Failed to save cache timestamp");
+        Logger.println("⚠️ Failed to save cache timestamp");
     }
     
-    Serial.printf("✅ Saved %d audio files to SD card (%d bytes)\n", 
+    Logger.printf("✅ Saved %d audio files to SD card (%d bytes)\n", 
                  audioFileCount, bytesWritten);
     
     return true;
@@ -630,18 +638,18 @@ static bool saveAudioFilesToSDCard()
  */
 static bool loadAudioFilesFromSDCard()
 {
-    Serial.println("📖 Loading audio files from SD card...");
+    Logger.println("📖 Loading audio files from SD card...");
     
     if (!initializeSDCard())
     {
-        Serial.println("❌ SD card not available for reading");
+        Logger.println("❌ SD card not available for reading");
         return false;
     }
     
     // Check if audio files JSON exists
     if (!SD_EXISTS(AUDIO_JSON_FILE))
     {
-        Serial.println("ℹ️ No cached audio files found on SD card");
+        Logger.println("ℹ️ No cached audio files found on SD card");
         return false;
     }
     
@@ -649,7 +657,7 @@ static bool loadAudioFilesFromSDCard()
     File audioJsonFile = SD_OPEN(AUDIO_JSON_FILE, FILE_READ);
     if (!audioJsonFile)
     {
-        Serial.println("❌ Failed to open audio files JSON for reading");
+        Logger.println("❌ Failed to open audio files JSON for reading");
         return false;
     }
     
@@ -659,7 +667,7 @@ static bool loadAudioFilesFromSDCard()
     
     if (jsonString.length() == 0)
     {
-        Serial.println("❌ Empty audio files JSON on SD card");
+        Logger.println("❌ Empty audio files JSON on SD card");
         return false;
     }
     
@@ -674,7 +682,7 @@ static bool loadAudioFilesFromSDCard()
     else
     {
         lastCacheTime = 0;
-        Serial.println("⚠️ No cache timestamp found");
+        Logger.println("⚠️ No cache timestamp found");
     }
     
     // Parse JSON
@@ -683,7 +691,7 @@ static bool loadAudioFilesFromSDCard()
     
     if (error)
     {
-        Serial.printf("❌ JSON parse error: %s\n", error.c_str());
+        Logger.printf("❌ JSON parse error: %s\n", error.c_str());
         return false;
     }
     
@@ -696,7 +704,7 @@ static bool loadAudioFilesFromSDCard()
     {
         if (audioFileCount >= MAX_KNOWN_SEQUENCES)
         {
-            Serial.println("⚠️ Maximum audio files limit reached");
+            Logger.println("⚠️ Maximum audio files limit reached");
             break;
         }
         
@@ -712,7 +720,7 @@ static bool loadAudioFilesFromSDCard()
         audioFileCount++;
     }
     
-    Serial.printf("✅ Loaded %d audio files from SD card\n", audioFileCount);
+    Logger.printf("✅ Loaded %d audio files from SD card\n", audioFileCount);
     return true;
 }
 
@@ -720,26 +728,34 @@ static bool loadAudioFilesFromSDCard()
 // PUBLIC FUNCTIONS
 // ============================================================================
 
-void initializeAudioFileManager(int sdCsPin, bool mmcSupport, bool sdAlreadyInitialized)
+void initializeAudioFileManager(int sdCsPin, bool mmcSupport, bool sdAvailable)
 {
-    Serial.println("🔧 Initializing Audio File Manager...");
+    Logger.println("🔧 Initializing Audio File Manager...");
     
     // Initialize variables
     sdMmmcSupport = mmcSupport;
     sdCardCsPin = sdCsPin;
     audioFileCount = 0;
     lastCacheTime = 0;
-    sdCardInitialized = sdAlreadyInitialized;  // Use passed value instead of forcing false
+    sdCardAvailable = sdAvailable;  // Track SD card availability
+    
+    // Skip SD card operations if not available
+    if (!sdCardAvailable)
+    {
+        Logger.println("⚠️ SD card not available - running in memory-only mode");
+        Logger.println("ℹ️ Audio catalog will be downloaded when WiFi is available");
+        return;
+    }
     
     // Try to load from SD card first
     if (loadAudioFilesFromSDCard())
     {
-        Serial.println("✅ Audio files loaded from SD card cache");
+        Logger.println("✅ Audio files loaded from SD card cache");
         
         // Check if cache is stale
         if (isCacheStale())
         {
-            Serial.println("⏰ Cache is stale, will refresh when WiFi is available");
+            Logger.println("⏰ Cache is stale, will refresh when WiFi is available");
         }
         listAudioKeys();
         
@@ -748,41 +764,41 @@ void initializeAudioFileManager(int sdCsPin, bool mmcSupport, bool sdAlreadyInit
     }
     else
     {
-        Serial.println("ℹ️ No cached audio files found, will download when WiFi is available");
+        Logger.println("ℹ️ No cached audio files found, will download when WiFi is available");
     }
 }
 
 bool downloadAudio()
 {
-    Serial.println("🌐 Downloading list from server...");
+    Logger.println("🌐 Downloading list from server...");
     
     // Check WiFi connection
     if (WiFi.status() != WL_CONNECTED)
     {
-        Serial.println("❌ WiFi not connected, cannot download audio files");
+        Logger.println("❌ WiFi not connected, cannot download audio files");
         return false;
     }
     
     // Check if cache is still valid
     if (!isCacheStale())
     {
-        Serial.println("✅ Cache is still valid, skipping download");
+        Logger.println("✅ Cache is still valid, skipping download");
         return true;
     }
     
     HTTPClient http;
-    http.begin(KNOWN_FILES_URL);
+    http.begin(KNOWN_SEQUENCES_URL);
     http.addHeader("Content-Type", "application/json");
     http.addHeader("User-Agent", USER_AGENT_HEADER);
     http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
     
-    Serial.printf("📡 Making GET request to: %s\n", KNOWN_FILES_URL);
+    Logger.printf("📡 Making GET request to: %s\n", KNOWN_SEQUENCES_URL);
     
     int httpResponseCode = http.GET();
     
     if (httpResponseCode != 200)
     {
-        Serial.printf("❌ HTTP request failed: %d\n", httpResponseCode);
+        Logger.printf("❌ HTTP request failed: %d\n", httpResponseCode);
         http.end();
         return false;
     }
@@ -790,11 +806,11 @@ bool downloadAudio()
     String payload = http.getString();
     http.end();
     
-    Serial.printf("✅ Received response (%d bytes)\n", payload.length());
+    Logger.printf("✅ Received response (%d bytes)\n", payload.length());
     
     if (payload.length() > MAX_HTTP_RESPONSE_SIZE)
     {
-        Serial.println("❌ Response too large");
+        Logger.println("❌ Response too large");
         return false;
     }
     
@@ -804,7 +820,7 @@ bool downloadAudio()
     
     if (error)
     {
-        Serial.printf("❌ JSON parse error: %s\n", error.c_str());
+        Logger.printf("❌ JSON parse error: %s\n", error.c_str());
         return false;
     }
     
@@ -824,7 +840,7 @@ bool downloadAudio()
     {
         if (audioFileCount >= MAX_KNOWN_SEQUENCES)
         {
-            Serial.println("⚠️ Maximum audio files limit reached");
+            Logger.println("⚠️ Maximum audio files limit reached");
             break;
         }
         
@@ -837,7 +853,7 @@ bool downloadAudio()
         audioFiles[audioFileCount].type = strdup(entryData["type"] | "unknown");
         audioFiles[audioFileCount].path = strdup(entryData["path"] | "");
         
-        Serial.printf("📝 Added: %s -> %s (%s)\n", 
+        Logger.printf("📝 Added: %s -> %s (%s)\n", 
                      audioFiles[audioFileCount].audioKey,
                      audioFiles[audioFileCount].description,
                      audioFiles[audioFileCount].type);
@@ -845,20 +861,28 @@ bool downloadAudio()
         audioFileCount++;
     }
     
-    Serial.printf("✅ Downloaded and parsed %d file list entries\n", audioFileCount);
+    Logger.printf("✅ Downloaded and parsed %d file list entries\n", audioFileCount);
     
-    // Save to SD card for caching
-    if (saveAudioFilesToSDCard())
+    // Only save to SD card and queue downloads if SD is available
+    if (sdCardAvailable)
     {
-        Serial.println("💾 Files list cached to SD card");
+        // Save to SD card for caching
+        if (saveAudioFilesToSDCard())
+        {
+            Logger.println("💾 Files list cached to SD card");
+        }
+        else
+        {
+            Logger.println("⚠️ Failed to cache files list to SD card");
+        }
+
+        // Queue any missing remote audio files now that the list is refreshed
+        enqueueMissingAudioFiles();
     }
     else
     {
-        Serial.println("⚠️ Failed to cache files list to SD card");
+        Logger.println("ℹ️ No SD card - audio catalog held in memory only");
     }
-
-    // Queue any missing remote audio files now that the list is refreshed
-    enqueueMissingAudioFiles();
     
     return true;
 }
@@ -905,11 +929,11 @@ const char* processAudioKey(const char *key)
 {
     if (!key)
     {
-        Serial.println("❌ Invalid audio key pointer");
+        Logger.println("❌ Invalid audio key pointer");
         return nullptr;
     }
     
-    Serial.printf("🔍 Processing audio key: %s\n", key);
+    Logger.printf("🔍 Processing audio key: %s\n", key);
     
     // Find the audio file entry
     AudioFile *found = nullptr;
@@ -924,124 +948,131 @@ const char* processAudioKey(const char *key)
     
     if (!found)
     {
-        Serial.printf("❌ Audio key not found: %s\n", key);
+        Logger.printf("❌ Audio key not found: %s\n", key);
         return nullptr;
     }
     
     // Log entry info
-    Serial.printf("📋 Audio Entry:\n");
-    Serial.printf("   Key: %s\n", found->audioKey);
-    Serial.printf("   Description: %s\n", found->description);
-    Serial.printf("   Type: %s\n", found->type);
-    Serial.printf("   Path: %s\n", found->path);
+    Logger.printf("📋 Audio Entry:\n");
+    Logger.printf("   Key: %s\n", found->audioKey);
+    Logger.printf("   Description: %s\n", found->description);
+    Logger.printf("   Type: %s\n", found->type);
+    Logger.printf("   Path: %s\n", found->path);
     
     // Handle different entry types
     if (!found->type)
     {
-        Serial.println("❌ Entry type is NULL");
+        Logger.println("❌ Entry type is NULL");
         return nullptr;
     }
     
     if (strcmp(found->type, "audio") == 0)
     {
-        Serial.printf("🔊 Processing audio: %s\n", found->description);
+        Logger.printf("🔊 Processing audio: %s\n", found->description);
         
         if (!found->path || strlen(found->path) == 0)
         {
-            Serial.println("❌ No audio path specified");
+            Logger.println("❌ No audio path specified");
             return nullptr;
         }
         
         // Check if path is a URL
         if (strncmp(found->path, "http://", 7) == 0 || strncmp(found->path, "https://", 8) == 0)
         {
-            // It's a web URL - check for local cached version
+            // In URL streaming mode, return the URL directly for streaming
+            if (isURLStreamingMode())
+            {
+                Logger.printf("🌐 URL streaming mode - returning URL directly: %s\n", found->path);
+                return found->path;
+            }
+            
+            // SD card mode - check for local cached version
             if (audioFileExists(found->path))
             {
                 // File exists locally - return path for playback
                 static char localPath[128];
                 if (getLocalAudioPath(found->path, localPath))
                 {
-                    Serial.printf("🎵 Audio file found locally: %s\n", localPath);
+                    Logger.printf("🎵 Audio file found locally: %s\n", localPath);
                     return localPath;
                 }
                 else
                 {
-                    Serial.println("❌ Failed to generate local path");
+                    Logger.println("❌ Failed to generate local path");
                     return nullptr;
                 }
             }
             else
             {
                 // File doesn't exist - add to download queue
-                Serial.printf("📥 Audio file not cached, adding to download queue\n");
+                Logger.printf("📥 Audio file not cached, adding to download queue\n");
                 if (addToDownloadQueue(found->path, found->description))
                 {
-                    Serial.printf("✅ Added to download queue: %s\n", found->description);
+                    Logger.printf("✅ Added to download queue: %s\n", found->description);
                 }
                 else
                 {
-                    Serial.printf("❌ Failed to add to download queue: %s\n", found->description);
+                    Logger.printf("❌ Failed to add to download queue: %s\n", found->description);
                 }
                 
-                Serial.printf("ℹ️ Audio will be available after download\n");
+                Logger.printf("ℹ️ Audio will be available after download\n");
                 return nullptr;
             }
         }
         else
         {
             // It's a local path - return for direct playback
-            Serial.printf("🎵 Local audio path: %s\n", found->path);
+            Logger.printf("🎵 Local audio path: %s\n", found->path);
             return found->path;
         }
     }
     else if (strcmp(found->type, "service") == 0)
     {
-        Serial.printf("🔧 Service: %s\n", found->description);
+        Logger.printf("🔧 Service: %s\n", found->description);
         // TODO: Implement service access logic
         return nullptr;
     }
     else if (strcmp(found->type, "shortcut") == 0)
     {
-        Serial.printf("⚡ Shortcut: %s\n", found->description);
+        Logger.printf("⚡ Shortcut: %s\n", found->description);
         // TODO: Implement shortcut execution logic
         return nullptr;
     }
     else if (strcmp(found->type, "url") == 0)
     {
-        Serial.printf("🌐 URL: %s\n", found->path ? found->path : "NULL");
+        Logger.printf("🌐 URL: %s\n", found->path ? found->path : "NULL");
         // TODO: Implement URL opening logic
         return nullptr;
     }
     else
     {
-        Serial.printf("❓ Unknown type: %s\n", found->type);
+        Logger.printf("❓ Unknown type: %s\n", found->type);
         return nullptr;
     }
 }
 
 void listAudioKeys()
 {
-    Serial.printf("📋 Audio Files (%d total):\n", audioFileCount);
-    Serial.println("============================================================");
+    Logger.printf("📋 Audio Files (%d total):\n", audioFileCount);
+    Logger.println("============================================================");
     
     if (audioFileCount == 0)
     {
-        Serial.println("   No audio files loaded.");
-        Serial.println("   Try downloading with downloadAudio()");
+        Logger.println("   No audio files loaded.");
+        Logger.println("   Try downloading with downloadAudio()");
         return;
     }
     
     for (int i = 0; i < audioFileCount; i++)
     {
-        Serial.printf("%2d. %s\n", i + 1, audioFiles[i].audioKey);
-        Serial.printf("    Description: %s\n", audioFiles[i].description);
-        Serial.printf("    Type: %s\n", audioFiles[i].type);
+        Logger.printf("%2d. %s\n", i + 1, audioFiles[i].audioKey);
+        Logger.printf("    Description: %s\n", audioFiles[i].description);
+        Logger.printf("    Type: %s\n", audioFiles[i].type);
         if (strlen(audioFiles[i].path) > 0)
         {
-            Serial.printf("    Path: %s\n", audioFiles[i].path);
+            Logger.printf("    Path: %s\n", audioFiles[i].path);
         }
-        Serial.println();
+        Logger.println();
     }
 }
 
@@ -1052,7 +1083,7 @@ int getAudioKeyCount()
 
 void clearAudioKeys()
 {
-    Serial.println("🗑️ Clearing audio files...");
+    Logger.println("🗑️ Clearing audio files...");
     
     // Free allocated memory
     for (int i = 0; i < audioFileCount; i++)
@@ -1067,8 +1098,8 @@ void clearAudioKeys()
     audioFileCount = 0;
     lastCacheTime = 0;
     
-    // Clear SD card cache files
-    if (initializeSDCard())
+    // Clear SD card cache files (only if SD is available)
+    if (sdCardAvailable && initializeSDCard())
     {
         bool jsonRemoved = false;
         bool timestampRemoved = false;
@@ -1093,19 +1124,19 @@ void clearAudioKeys()
         
         if (jsonRemoved && timestampRemoved)
         {
-            Serial.println("✅ Cleared SD card cache files");
+            Logger.println("✅ Cleared SD card cache files");
         }
         else
         {
-            Serial.println("⚠️ Some SD card files could not be removed");
+            Logger.println("⚠️ Some SD card files could not be removed");
         }
     }
     else
     {
-        Serial.println("⚠️ SD card not available for cache cleanup");
+        Logger.println("⚠️ SD card not available for cache cleanup");
     }
     
-    Serial.printf("✅ Cleared %d audio files from memory\n", clearedCount);
+    Logger.printf("✅ Cleared %d audio files from memory\n", clearedCount);
 }
 
 // ============================================================================
@@ -1114,6 +1145,12 @@ void clearAudioKeys()
 
 bool processAudioDownloadQueue()
 {
+    // Skip if SD card is not available - audio files need SD storage
+    if (!sdCardAvailable)
+    {
+        return false;
+    }
+    
     static unsigned long lastDownloadCheck = 0;
     
     // Rate limit: only process if enough time has passed
@@ -1138,13 +1175,13 @@ int getTotalDownloadQueueSize()
 
 void listDownloadQueue()
 {
-    Serial.printf("📥 Audio Download Queue (%d items, %d processed):\n", 
+    Logger.printf("📥 Audio Download Queue (%d items, %d processed):\n", 
                  downloadQueueCount, downloadQueueIndex);
-    Serial.println("========================================================");
+    Logger.println("========================================================");
     
     if (downloadQueueCount == 0)
     {
-        Serial.println("   No items in download queue.");
+        Logger.println("   No items in download queue.");
         return;
     }
     
@@ -1154,19 +1191,19 @@ void listDownloadQueue()
         const char* status = i < downloadQueueIndex ? "✅ Downloaded" : 
                            item->inProgress ? "🔄 In Progress" : "⏳ Pending";
         
-        Serial.printf("%2d. %s %s\n", i + 1, status, item->description);
-        Serial.printf("    URL: %s\n", item->url);
-        Serial.printf("    Local: %s\n", item->localPath);
-        Serial.println();
+        Logger.printf("%2d. %s %s\n", i + 1, status, item->description);
+        Logger.printf("    URL: %s\n", item->url);
+        Logger.printf("    Local: %s\n", item->localPath);
+        Logger.println();
     }
 }
 
 void clearDownloadQueue()
 {
-    Serial.println("🗑️ Clearing download queue...");
+    Logger.println("🗑️ Clearing download queue...");
     downloadQueueCount = 0;
     downloadQueueIndex = 0;
-    Serial.println("✅ Download queue cleared");
+    Logger.println("✅ Download queue cleared");
 }
 
 bool isDownloadQueueEmpty()

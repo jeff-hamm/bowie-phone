@@ -170,3 +170,25 @@ void PhoneService::checkHookState() {
 void PhoneService::setHookCallback(HookStateCallback callback) {
     _hookCallback = callback;
 }
+
+void PhoneService::setOffHook(bool offHook) {
+    if (offHook != _isOffHook) {
+        _isOffHook = offHook;
+        
+        if (_isOffHook) {
+            Logger.println("📞 [DEBUG] Phone set to OFF HOOK");
+#ifdef CAN_RING
+            if (_isRinging) {
+                stopRinging();
+            }
+#endif
+        } else {
+            Logger.println("📞 [DEBUG] Phone set to ON HOOK");
+        }
+        
+        // Notify callback if registered
+        if (_hookCallback) {
+            _hookCallback(_isOffHook);
+        }
+    }
+}

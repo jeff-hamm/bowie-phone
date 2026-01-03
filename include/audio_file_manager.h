@@ -45,8 +45,8 @@
 #ifndef MAX_FILENAME_LENGTH
 #define MAX_FILENAME_LENGTH 64      ///< Maximum length for generated filenames
 #endif
-#ifndef KNOWN_FILES_URL
-#define KNOWN_FILES_URL "https://raw.githubusercontent.com/jeff-hamm/bowie-phone/main/sample-sequence.json"
+#ifndef KNOWN_SEQUENCES_URL
+#define KNOWN_SEQUENCES_URL "https://raw.githubusercontent.com/jeff-hamm/bowie-phone/main/sample-sequence.json"
 #endif
 #ifndef USER_AGENT_HEADER
 #define USER_AGENT_HEADER "BowiePhone/1.0"
@@ -82,9 +82,9 @@ struct AudioFile
  * 
  * @param sdCsPin CS pin for SPI SD mode (ignored if mmcSupport is true)
  * @param mmcSupport If true, use SD_MMC interface (already initialized). If false, use SPI SD.
- * @param sdAlreadyInitialized If true, skip SD.begin() call (SD already initialized in main)
+ * @param sdAvailable If true, SD card is mounted and available. If false, runs in memory-only mode.
  */
-void initializeAudioFileManager(int sdCsPin = 13, bool mmcSupport = true, bool sdAlreadyInitialized = false);
+void initializeAudioFileManager(int sdCsPin = 13, bool mmcSupport = true, bool sdAvailable = false);
 
 /**
  * @brief Download audio file list from remote server

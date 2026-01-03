@@ -25,6 +25,9 @@ public:
     // Hook state
     bool isOffHook() const { return _isOffHook; }
     void setHookCallback(HookStateCallback callback);
+    
+    // Debug/simulation methods
+    void setOffHook(bool offHook);  // Simulate hook state change (for serial debug mode)
 
 private:
 #ifdef CAN_RING

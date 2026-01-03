@@ -13,6 +13,7 @@
 #include "logging.h"
 #include <Preferences.h>
 #include <SD.h>
+#include <WiFi.h>
 
 // ============================================================================
 // GLOBAL VARIABLES
@@ -25,6 +26,15 @@ static float currentVolume = DEFAULT_AUDIO_VOLUME;
 static Preferences volumePrefs;
 static AudioEventCallback eventCallback = nullptr;
 static char currentAudioKey[32] = {0};  // Track what audio is currently playing
+
+// URL Streaming support
+static bool urlStreamingMode = false;
+static URLStream* urlStream = nullptr;
+static AudioStream* urlOutput = nullptr;
+static AudioDecoder* urlDecoder = nullptr;
+static StreamCopy* urlCopier = nullptr;
+static EncodedAudioStream* urlEncodedStream = nullptr;
+static char currentStreamURL[256] = {0};
 
 // ============================================================================
 // HELPER FUNCTIONS
@@ -96,7 +106,10 @@ void initAudioPlayer(AudioSource &source, AudioStream &output, AudioDecoder &dec
     // We want to play only the requested file, not iterate through all files
     audioPlayer->setAutoNext(false);
     
-    // Load volume from storage
+    // Initialize the audio player first
+    audioPlayer->begin();
+    
+    // Load volume from storage (after player is initialized)
     currentVolume = loadVolumeFromStorage();
     
     // Set the volume on the player
@@ -106,12 +119,120 @@ void initAudioPlayer(AudioSource &source, AudioStream &output, AudioDecoder &dec
         Logger.printf("🔊 Initial volume set to %.2f\n", currentVolume);
     }
     
-    audioPlayer->begin();
     Logger.println("✅ Audio player initialized");
+}
+
+void initAudioPlayerURLMode(AudioStream &output, AudioDecoder &decoder)
+{
+    Logger.println("🔧 Initializing audio player in URL streaming mode...");
+    
+    urlStreamingMode = true;
+    urlOutput = &output;
+    urlDecoder = &decoder;
+    
+    // Create URLStream for HTTP fetching
+    urlStream = new URLStream(URL_STREAM_BUFFER_SIZE);
+    
+    // Create encoded stream for decoding (takes pointers)
+    urlEncodedStream = new EncodedAudioStream(&output, &decoder);
+    
+    // Create stream copier
+    urlCopier = new StreamCopy(*urlEncodedStream, *urlStream);
+    urlCopier->setRetry(10);  // Retry on network hiccups
+    
+    // Load volume from storage
+    currentVolume = loadVolumeFromStorage();
+    Logger.printf("🔊 Initial volume set to %.2f\n", currentVolume);
+    
+    Logger.println("✅ Audio player initialized (URL streaming mode)");
+}
+
+bool isURLStreamingMode()
+{
+    return urlStreamingMode;
+}
+
+bool playAudioFromURL(const char* url)
+{
+    if (!url || strlen(url) == 0)
+    {
+        Logger.println("❌ Cannot play: no URL provided");
+        return false;
+    }
+    
+    if (!urlStreamingMode || !urlStream || !urlEncodedStream)
+    {
+        Logger.println("❌ Cannot play URL: URL streaming mode not initialized");
+        return false;
+    }
+    
+    // Check WiFi connection
+    if (WiFi.status() != WL_CONNECTED)
+    {
+        Logger.println("❌ Cannot stream: WiFi not connected");
+        return false;
+    }
+    
+    // Stop any current playback
+    if (isPlaying)
+    {
+        Logger.println("⏹️ Stopping current audio to play new URL");
+        stopAudio();
+    }
+    
+    Logger.printf("🌐 Starting URL stream: %s\n", url);
+    
+    // Store the URL
+    strncpy(currentStreamURL, url, sizeof(currentStreamURL) - 1);
+    currentStreamURL[sizeof(currentStreamURL) - 1] = '\0';
+    
+    // Determine MIME type from URL extension
+    const char* mimeType = "audio/mpeg";  // Default to MP3
+    if (strstr(url, ".wav") != nullptr)
+    {
+        mimeType = "audio/wav";
+    }
+    else if (strstr(url, ".mp3") != nullptr)
+    {
+        mimeType = "audio/mpeg";
+    }
+    
+    // Begin URL stream
+    if (!urlStream->begin(url, mimeType))
+    {
+        Logger.printf("❌ Failed to open URL stream: %s\n", url);
+        return false;
+    }
+    
+    // Begin the encoded stream
+    urlEncodedStream->begin();
+    
+    isPlaying = true;
+    audioStartTime = millis();
+    
+    // Notify callback
+    if (eventCallback)
+    {
+        eventCallback(true);
+    }
+    
+    Logger.println("🎵 URL streaming started");
+    return true;
 }
 
 bool playAudioPath(const char* filePath)
 {
+    // In URL streaming mode, check if this is actually a URL
+    if (urlStreamingMode)
+    {
+        if (strncmp(filePath, "http://", 7) == 0 || strncmp(filePath, "https://", 8) == 0)
+        {
+            return playAudioFromURL(filePath);
+        }
+        Logger.printf("❌ URL streaming mode but path is not a URL: %s\n", filePath);
+        return false;
+    }
+    
     if (!audioPlayer || !filePath)
     {
         Logger.println("❌ Cannot play: player not initialized or no path");
@@ -192,17 +313,28 @@ bool playAudioBySequence(const char* sequence)
 
 void stopAudio()
 {
-    if (!audioPlayer)
+    // Handle URL streaming mode
+    if (urlStreamingMode)
     {
-        return;
+        if (urlStream)
+        {
+            urlStream->end();
+        }
+        if (urlEncodedStream)
+        {
+            urlEncodedStream->end();
+        }
+        currentStreamURL[0] = '\0';
     }
-    
-    // Stop playback but don't end/close the player
-    // Using stop() instead of end() to keep the player ready for next file
-    if (audioPlayer->isActive())
+    else if (audioPlayer)
     {
-        audioPlayer->stop();
-        Logger.println("⏹️ Audio player stopped");
+        // Stop playback but don't end/close the player
+        // Using stop() instead of end() to keep the player ready for next file
+        if (audioPlayer->isActive())
+        {
+            audioPlayer->stop();
+            Logger.println("⏹️ Audio player stopped");
+        }
     }
     
     if (!isPlaying)
@@ -239,7 +371,51 @@ const char* getCurrentAudioKey()
 
 bool processAudio()
 {
-    if (!audioPlayer || !isPlaying)
+    if (!isPlaying)
+    {
+        return false;
+    }
+    
+    // Handle URL streaming mode
+    if (urlStreamingMode)
+    {
+        if (!urlCopier || !urlStream)
+        {
+            return false;
+        }
+        
+        // Copy data from URL stream to output
+        size_t copied = urlCopier->copy();
+        
+        // Check if stream ended
+        if (copied == 0 && !urlStream->available())
+        {
+            // If dial tone was playing, loop it
+            if (currentAudioKey[0] != '\0' && strcmp(currentAudioKey, "dialtone") == 0)
+            {
+                Logger.println("🔄 Looping dial tone (URL mode)...");
+                // Restart the URL stream
+                if (currentStreamURL[0] != '\0')
+                {
+                    urlStream->end();
+                    if (urlStream->begin(currentStreamURL, "audio/mpeg"))
+                    {
+                        urlEncodedStream->begin();
+                        audioStartTime = millis();
+                        return true;
+                    }
+                }
+            }
+            
+            stopAudio();
+            return false;
+        }
+        
+        return true;
+    }
+    
+    // SD card mode
+    if (!audioPlayer)
     {
         return false;
     }

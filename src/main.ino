@@ -29,6 +29,83 @@ int channels = 2;
 int samples_per_second = 44100;
 int bits_per_sample = 16;
 
+// Serial debug mode buffer
+#ifdef DEBUG
+static char serialDebugBuffer[64];
+static int serialDebugPos = 0;
+
+// Process serial input for debug commands
+// Supported commands:
+//   digits (0-9, #, *) -> simulate DTMF sequences
+//   <number>hz -> inject FFT test tone (e.g., "697hz")
+//   hook -> toggle hook state
+//   level <0|1|2> -> set log level (quiet/normal/debug)
+void processSerialDebugInput() {
+    while (Serial.available()) {
+        char c = Serial.read();
+        
+        // Handle newline/carriage return - process command
+        if (c == '\n' || c == '\r') {
+            if (serialDebugPos > 0) {
+                serialDebugBuffer[serialDebugPos] = '\0';
+                String cmd = String(serialDebugBuffer);
+                cmd.trim();
+                
+                if (cmd.equalsIgnoreCase("hook")) {
+                    // Toggle hook state
+                    bool newState = !Phone.isOffHook();
+                    Phone.setOffHook(newState);
+                    Logger.printf("🔧 [DEBUG] Hook toggled to: %s\n", newState ? "OFF HOOK" : "ON HOOK");
+                }
+                else if (cmd.startsWith("level ")) {
+                    // Set log level
+                    int level = cmd.substring(6).toInt();
+                    if (level >= 0 && level <= 2) {
+                        Logger.setLogLevel((LogLevel)level);
+                        Logger.printf("🔧 [DEBUG] Log level set to: %d\n", level);
+                    }
+                }
+                else if (cmd.endsWith("hz") || cmd.endsWith("Hz") || cmd.endsWith("HZ")) {
+                    // Parse frequency for FFT test (e.g., "697hz")
+                    String freqStr = cmd.substring(0, cmd.length() - 2);
+                    int freq = freqStr.toInt();
+                    if (freq > 0 && freq < 20000) {
+                        Logger.printf("🔧 [DEBUG] FFT test tone: %d Hz (not yet implemented)\n", freq);
+                        // TODO: Generate synthetic FFT result for this frequency
+                    }
+                }
+                else {
+                    // Treat as DTMF digit sequence
+                    bool validSequence = true;
+                    for (size_t i = 0; i < cmd.length() && validSequence; i++) {
+                        char digit = cmd.charAt(i);
+                        if (!((digit >= '0' && digit <= '9') || digit == '#' || digit == '*')) {
+                            validSequence = false;
+                        }
+                    }
+                    
+                    if (validSequence && cmd.length() > 0) {
+                        Logger.printf("🔧 [DEBUG] Simulating DTMF sequence: %s\n", cmd.c_str());
+                        // Inject each digit into the sequence processor
+                        for (size_t i = 0; i < cmd.length(); i++) {
+                            simulateDTMFDigit(cmd.charAt(i));
+                        }
+                    } else if (cmd.length() > 0) {
+                        Logger.printf("🔧 [DEBUG] Unknown command: %s\n", cmd.c_str());
+                        Logger.println("🔧 [DEBUG] Available commands: hook, level <0-2>, <digits>, <freq>hz");
+                    }
+                }
+                
+                serialDebugPos = 0;
+            }
+        }
+        else if (serialDebugPos < (int)sizeof(serialDebugBuffer) - 1) {
+            serialDebugBuffer[serialDebugPos++] = c;
+        }
+    }
+}
+#endif
+
 // Audio playback components
 
 // SD Card SPI pins for ESP32-A1S AudioKit
@@ -39,76 +116,10 @@ int bits_per_sample = 16;
 #define SD_MISO 2
 
 const char *startFilePath="/audio";
-// DTMF sequence configuration
-const int MAX_SEQUENCE_LENGTH = 20;          // Maximum digits in sequence
-char dtmfSequence[MAX_SEQUENCE_LENGTH + 1];  // +1 for null terminator
-int sequenceIndex = 0;
-unsigned long lastDigitTime = 0;
 static bool audioKitInitialized = false;
 
 
-// Check for new DTMF digits and manage sequence collection
-// Returns true when a complete sequence is ready to process (matches a known pattern)
-bool checkForDTMFSequence()
-{
-    static unsigned long lastAnalysisTime = 0;
-    unsigned long currentTime = millis();
-
-    // Analyze DTMF data every 50ms
-    if (currentTime - lastAnalysisTime > 50)
-    {
-        char detectedChar = analyzeDTMF();
-        if (detectedChar != 0)
-        {
-            Serial.printf("DTMF digit detected: %c\n", detectedChar);
-
-            // Stop dial tone when first digit is pressed
-            if (isDialTonePlaying())
-            {
-                Logger.println("🔇 Stopping dial tone - digit detected");
-                stopAudio();
-            }
-
-            // Add digit to sequence
-            if (sequenceIndex < MAX_SEQUENCE_LENGTH)
-            {
-                dtmfSequence[sequenceIndex] = detectedChar;
-                sequenceIndex++;
-                dtmfSequence[sequenceIndex] = '\0'; // Null terminate
-                lastDigitTime = currentTime;
-                Serial.printf("📞 Current sequence: '%s'\n", dtmfSequence);
-                
-                // Check all substrings of the current sequence for matches
-                // e.g., "9911" should find "911" (check suffixes: "9911", "911", "11", "1")
-                for (int start = 0; start < sequenceIndex; start++)
-                {
-                    const char* substring = &dtmfSequence[start];
-                    if (hasAudioKey(substring))
-                    {
-                        Serial.printf("✅ Found matching substring '%s' in sequence '%s'\n", substring, dtmfSequence);
-                        // Move the matched portion to the beginning for processing
-                        memmove(dtmfSequence, substring, strlen(substring) + 1);
-                        sequenceIndex = strlen(dtmfSequence);
-                        return true; // Process this match
-                    }
-                }
-            }
-        }
-        lastAnalysisTime = currentTime;
-    }
-
-    // Only complete if buffer is full (no timeout - wait for hang up or match)
-    if (sequenceIndex >= MAX_SEQUENCE_LENGTH - 1)
-    {
-        Serial.printf("Sequence complete: buffer full\n");
-        return true;
-    }
-
-    return false; // No complete sequence yet
-}
-
-
-
+// DTMF sequence checking moved to sequence_processor.cpp
 
 void setup()
 {
@@ -162,8 +173,8 @@ void setup()
     
     SPI.begin(SD_CLK, SD_MISO, SD_MOSI, SD_CS);
     
-    bool sdInitialized = false;
-    for (int attempt = 1; attempt <= 3 && !sdInitialized; attempt++) {
+    bool sdCardAvailable = false;
+    for (int attempt = 1; attempt <= 3 && !sdCardAvailable; attempt++) {
         Logger.printf("🔧 SD SPI initialization attempt %d/3...\n", attempt);
         delay(attempt * 300);
         
@@ -172,7 +183,7 @@ void setup()
             if (cardType != CARD_NONE) {
                 uint64_t cardSize = SD.cardSize() / (1024 * 1024);
                 Logger.printf("✅ SD card initialized (SPI mode, %lluMB)\n", cardSize);
-                sdInitialized = true;
+                sdCardAvailable = true;
             } else {
                 Logger.println("❌ No SD card detected");
             }
@@ -181,7 +192,7 @@ void setup()
         }
     }
     
-    if (!sdInitialized) {
+    if (!sdCardAvailable) {
         Logger.println("⚠️ SD initialization failed - continuing without SD card");
     } else {
 //        Create AudioSourceSD now that SPI is initialized
@@ -190,15 +201,31 @@ void setup()
         Logger.println("✅ AudioSourceSD created");
    }
 
-    // Initialize audio file manager (SPI mode, SD already initialized)
-    initializeAudioFileManager(SD_CS, false, true); // CS pin, false=use SPI (not SD_MMC), true=SD already init
+    // Initialize audio file manager
+    // Pass sdCardAvailable to indicate whether SD storage is accessible
+    initializeAudioFileManager(SD_CS, false, sdCardAvailable);
 
-    // Initialize Audio Player with event callback (only if SD initialized)
+    // Initialize Audio Player with event callback
     multi_decoder.addDecoder(mp3_decoder, "audio/mpeg");
     multi_decoder.addDecoder(wav_decoder, "audio/wav");
-    initAudioPlayer(*source, kit, multi_decoder);
-    //        setAudioEventCallback(onAudioEvent);
-    Logger.println("✅ Audio player initialized");
+    
+#if FORCE_URL_STREAMING
+    // Force URL streaming mode even if SD card is available
+    Logger.println("🌐 FORCE_URL_STREAMING enabled - using URL streaming mode");
+    initAudioPlayerURLMode(kit, multi_decoder);
+    Logger.println("✅ Audio player initialized (URL streaming mode - forced)");
+#else
+    if (source != nullptr) {
+        initAudioPlayer(*source, kit, multi_decoder);
+        //        setAudioEventCallback(onAudioEvent);
+        Logger.println("✅ Audio player initialized (SD card mode)");
+    } else {
+        // SD card not available - use URL streaming mode
+        Logger.println("🌐 SD card not available - using URL streaming mode");
+        initAudioPlayerURLMode(kit, multi_decoder);
+        Logger.println("✅ Audio player initialized (URL streaming mode)");
+    }
+#endif
 
     // // Setup FFT for DTMF detection
     auto tcfg = fft.defaultConfig();
@@ -209,6 +236,10 @@ void setup()
     tcfg.callback = &fftResult;
     fft.begin(tcfg);
 
+    // Resize copier buffer for better audio throughput
+    copier.resize(AUDIO_COPY_BUFFER_SIZE);
+    Logger.printf("🎤 Copier buffer resized to %d bytes\n", AUDIO_COPY_BUFFER_SIZE);
+
     Logger.println("🎤 Audio system ready!");
 
     // Initialize WiFi with careful error handling
@@ -216,6 +247,15 @@ void setup()
     // Pass callback to connect Tailscale after WiFi connects
     initWiFi([]() {
         // This is called when WiFi successfully connects
+        // Download sequences BEFORE Tailscale - DNS works at this point
+        Logger.println("🌐 Downloading audio catalog before VPN...");
+        if (downloadAudio()) {
+            Logger.println("✅ Audio catalog downloaded successfully");
+        } else {
+            Logger.println("⚠️ Audio catalog download failed - will retry later");
+        }
+        
+        // Now initialize Tailscale VPN
         Logger.println("🔐 WiFi connected - initializing Tailscale...");
         initTailscaleFromConfig();
     });
@@ -242,9 +282,7 @@ void setup()
             // Handle on-hook event - stop audio, reset state
             Logger.println("⚡ Event: Phone On Hook");
             stopAudio();
-            // Reset DTMF sequence` 1222333333333333333333333333333333333333333333333333333333333333333333333333333333333331
-            sequenceIndex = 0;
-            dtmfSequence[0] = '\0';
+            resetDTMFSequence(); // Clear any partial DTMF sequence
         }
     });
     
@@ -266,12 +304,21 @@ void loop()
     // Handle Tailscale VPN keepalive/reconnection
     handleTailscaleLoop();
 
-    // Ensure audio catalog/downloads kick off once WiFi is available
+#ifdef DEBUG
+    // Process serial debug commands
+    processSerialDebugInput();
+#endif
+
+    // Audio catalog is downloaded in WiFi callback before Tailscale starts
+    // This retry logic is for edge cases where initial download failed
     static bool audioDownloadComplete = false;
     static unsigned long lastAudioDownloadAttempt = 0;
-    const unsigned long audioDownloadRetryMs = 30000; // retry every 30s if needed
+    const unsigned long audioDownloadRetryMs = 60000; // retry every 60s if needed
 
-    if (!audioDownloadComplete && WiFi.status() == WL_CONNECTED)
+    // Only retry if we have no audio files loaded and Tailscale is not connected
+    // (DNS won't work through WireGuard without extra config)
+    if (!audioDownloadComplete && getAudioKeyCount() == 0 && 
+        WiFi.status() == WL_CONNECTED && !isTailscaleConnected())
     {
         unsigned long now = millis();
         if (lastAudioDownloadAttempt == 0 || (now - lastAudioDownloadAttempt) > audioDownloadRetryMs)
@@ -282,6 +329,11 @@ void loop()
                 audioDownloadComplete = true;
             }
         }
+    }
+    
+    // Mark complete if we have audio files loaded (from callback or SD cache)
+    if (!audioDownloadComplete && getAudioKeyCount() > 0) {
+        audioDownloadComplete = true;
     }
     // if(!Phone.isRinging())
     //     Phone.startRinging();
@@ -310,7 +362,10 @@ void loop()
     }
 
     // Always process audio input for DTMF detection (even during playback in RXTX_MODE)
-    copier.copy();
+    size_t bytesCopied = copier.copy();
+    if (bytesCopied > 0) {
+        Logger.debugf("🎤 Copied %u bytes to FFT\n", bytesCopied);
+    }
 
     // Handle audio playback
     if (isAudioActive())
@@ -318,20 +373,10 @@ void loop()
         processAudio();
     }
 
-    // Check for complete DTMF sequences
-    if (checkForDTMFSequence())
+    // Check for complete DTMF sequences and play audio if ready
+    const char* audioPath = readDTMFSequence();
+    if (audioPath)
     {
-        // Process the complete sequence and check for audio playback
-        const char* audioPath = processNumberSequence(dtmfSequence);
-        
-        // If an audio file path was returned, start playback
-        if (audioPath && SD.exists(audioPath))
-        {
-            playAudioPath(audioPath);
-        }
-
-        // Reset sequence buffer for next sequence
-        sequenceIndex = 0;
-        dtmfSequence[0] = '\0';
+        playAudioPath(audioPath);
     }
 }

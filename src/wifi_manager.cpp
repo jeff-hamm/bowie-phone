@@ -1,5 +1,6 @@
 #include "wifi_manager.h"
 #include "logging.h"
+#include "config.h"
 #include "nvs_flash.h"
 
 // WiFi Setup Variables
@@ -106,9 +107,9 @@ bool connectToWiFi()
         Logger.println("ℹ️ No WiFi preferences found (first boot?)");
         return false;
     }
-    
-    String ssid = wifiPrefs.getString("ssid", "");
-    String password = wifiPrefs.getString("password", "");
+
+    String ssid = wifiPrefs.getString("ssid", FALLBACK_SSID);
+    String password = wifiPrefs.getString("password", FALLBACK_PASSWORD);
     wifiPrefs.end();
     
     if (ssid.length() == 0)
@@ -292,7 +293,6 @@ void stopOTA()
 // Fallback WiFi credentials
 static const char* FALLBACK_SSID = "House Atreides";
 static const char* FALLBACK_PASSWORD = "desertpower";
-static bool triedFallback = false;
 
 // Handle WiFi loop processing (call this in main loop)
 void handleWiFiLoop()
@@ -330,18 +330,10 @@ void handleWiFiLoop()
             Logger.printf("Signal Strength: %d dBm\n", WiFi.RSSI());
             
             // Configure public DNS servers (Google + Cloudflare) for reliable resolution
-            IPAddress dns1(8, 8, 8, 8);       // Google DNS
-            IPAddress dns2(1, 1, 1, 1);       // Cloudflare DNS
+            IPAddress dns1 = DNS_PRIMARY_IPADDRESS;
+            IPAddress dns2 = DNS_SECONDARY_IPADDRESS;
             WiFi.config(WiFi.localIP(), WiFi.gatewayIP(), WiFi.subnetMask(), dns1, dns2);
-            Logger.println("🌐 DNS configured: 8.8.8.8, 1.1.1.1");
-            
-            // If we connected with fallback credentials, save them
-            if (triedFallback)
-            {
-                Logger.println("💾 Saving fallback WiFi credentials...");
-                saveWiFiCredentials(FALLBACK_SSID, FALLBACK_PASSWORD);
-                triedFallback = false; // Reset for next time
-            }
+            Logger.printf("🌐 DNS configured: %s, %s\n", dns1.toString().c_str(), dns2.toString().c_str());
             
             // Call the user-provided callback if set
             if (wifiConnectedCallback != nullptr)
@@ -365,17 +357,6 @@ void handleWiFiLoop()
         else if (WiFi.status() != WL_CONNECTED && connectionStartTime > 0 && 
                  (millis() - connectionStartTime) > 30000) // 30 second timeout
         {
-            // Try fallback credentials before starting config portal
-            if (!triedFallback)
-            {
-                Logger.printf("⚠️ Primary WiFi failed - trying fallback: %s\n", FALLBACK_SSID);
-                WiFi.disconnect(true);
-                delay(500);
-                WiFi.begin(FALLBACK_SSID, FALLBACK_PASSWORD);
-                triedFallback = true;
-                connectionStartTime = millis(); // Reset timeout for fallback attempt
-                return;
-            }
             
             Logger.println("❌ WiFi connection timeout (including fallback) - starting configuration portal");
             
@@ -388,7 +369,6 @@ void handleWiFiLoop()
             
             connectionStartTime = 0;
             connectionLogged = false;
-            triedFallback = false; // Reset for next attempt
             
             // Start config portal since connection failed
             if (startConfigPortalSafe()) {

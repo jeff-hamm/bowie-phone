@@ -1,4 +1,5 @@
 #include "special_command_processor.h"
+#include "logging.h"
 #include "tailscale_manager.h"
 #include <WiFi.h>
 #include <EEPROM.h>
@@ -100,17 +101,17 @@ static const SpecialCommand DEFAULT_SPECIAL_COMMANDS[] = {
 
 void initializeSpecialCommands()
 {
-    Serial.printf("🔧 Initializing special commands system...\n");
+    Logger.printf("🔧 Initializing special commands system...\n");
     
     // Try to load from EEPROM first
     if (loadSpecialCommandsFromEEPROM())
     {
-        Serial.printf("📥 Using commands from EEPROM storage\n");
+        Logger.printf("📥 Using commands from EEPROM storage\n");
         return;
     }
     
     // If no EEPROM data or loading failed, initialize with defaults
-    Serial.printf("🔄 Initializing with default commands\n");
+    Logger.printf("🔄 Initializing with default commands\n");
     clearSpecialCommands();
 
     int defaultCount = sizeof(DEFAULT_SPECIAL_COMMANDS) / sizeof(DEFAULT_SPECIAL_COMMANDS[0]);
@@ -124,14 +125,14 @@ void initializeSpecialCommands()
         specialCommandCount++;
     }
 
-    Serial.printf("✅ Initialized %d default special commands\n", specialCommandCount);
+    Logger.printf("✅ Initialized %d default special commands\n", specialCommandCount);
 }
 
 bool addSpecialCommand(const char *sequence, const char *description, void (*handler)(void))
 {
     if (specialCommandCount >= MAX_SPECIAL_COMMANDS)
     {
-        Serial.printf("Error: Special command table is full\n");
+        Logger.printf("Error: Special command table is full\n");
         return false;
     }
 
@@ -141,7 +142,7 @@ bool addSpecialCommand(const char *sequence, const char *description, void (*han
     
     if (!seqCopy || !descCopy)
     {
-        Serial.printf("❌ Memory allocation failed for command\n");
+        Logger.printf("❌ Memory allocation failed for command\n");
         if (seqCopy) free(seqCopy);
         if (descCopy) free(descCopy);
         return false;
@@ -155,7 +156,7 @@ bool addSpecialCommand(const char *sequence, const char *description, void (*han
     specialCommands[specialCommandCount].handler = handler;
     specialCommandCount++;
 
-    Serial.printf("✅ Added special command: %s - %s\n", sequence, description);
+    Logger.printf("✅ Added special command: %s - %s\n", sequence, description);
     
     // Automatically save to EEPROM
     saveSpecialCommandsToEEPROM();
@@ -207,12 +208,12 @@ uint32_t calculateChecksum(const EEPROMCommandData* data, int count)
 
 void saveSpecialCommandsToEEPROM()
 {
-    Serial.printf("💾 Saving special commands to EEPROM...\n");
+    Logger.printf("💾 Saving special commands to EEPROM...\n");
     
     // Use ESP32 Preferences (NVS) for reliable storage
     if (!preferences.begin(PREFERENCES_NAMESPACE, false))
     {
-        Serial.printf("❌ Failed to initialize preferences\n");
+        Logger.printf("❌ Failed to initialize preferences\n");
         return;
     }
     
@@ -254,16 +255,16 @@ void saveSpecialCommandsToEEPROM()
     
     preferences.end();
     
-    Serial.printf("✅ Saved %d commands to EEPROM\n", validCommands);
+    Logger.printf("✅ Saved %d commands to EEPROM\n", validCommands);
 }
 
 bool loadSpecialCommandsFromEEPROM()
 {
-    Serial.printf("📖 Loading special commands from EEPROM...\n");
+    Logger.printf("📖 Loading special commands from EEPROM...\n");
     
     if (!preferences.begin(PREFERENCES_NAMESPACE, true)) // Read-only mode
     {
-        Serial.printf("❌ Failed to initialize preferences for reading\n");
+        Logger.printf("❌ Failed to initialize preferences for reading\n");
         return false;
     }
     
@@ -273,7 +274,7 @@ bool loadSpecialCommandsFromEEPROM()
     
     if (headerSize != sizeof(header))
     {
-        Serial.printf("📄 No valid EEPROM data found, using defaults\n");
+        Logger.printf("📄 No valid EEPROM data found, using defaults\n");
         preferences.end();
         return false;
     }
@@ -281,7 +282,7 @@ bool loadSpecialCommandsFromEEPROM()
     // Validate header
     if (header.magic != EEPROM_MAGIC)
     {
-        Serial.printf("❌ Invalid EEPROM magic number: 0x%04X (expected 0x%04X)\n", 
+        Logger.printf("❌ Invalid EEPROM magic number: 0x%04X (expected 0x%04X)\n", 
                      header.magic, EEPROM_MAGIC);
         preferences.end();
         return false;
@@ -289,7 +290,7 @@ bool loadSpecialCommandsFromEEPROM()
     
     if (header.version != EEPROM_VERSION)
     {
-        Serial.printf("⚠️  EEPROM version mismatch: %d (expected %d)\n", 
+        Logger.printf("⚠️  EEPROM version mismatch: %d (expected %d)\n", 
                      header.version, EEPROM_VERSION);
         preferences.end();
         return false;
@@ -297,7 +298,7 @@ bool loadSpecialCommandsFromEEPROM()
     
     if (header.commandCount > MAX_SPECIAL_COMMANDS)
     {
-        Serial.printf("❌ Too many commands in EEPROM: %d (max %d)\n", 
+        Logger.printf("❌ Too many commands in EEPROM: %d (max %d)\n", 
                      header.commandCount, MAX_SPECIAL_COMMANDS);
         preferences.end();
         return false;
@@ -312,7 +313,7 @@ bool loadSpecialCommandsFromEEPROM()
     
     if (dataSize != header.commandCount * sizeof(EEPROMCommandData))
     {
-        Serial.printf("❌ EEPROM data size mismatch\n");
+        Logger.printf("❌ EEPROM data size mismatch\n");
         return false;
     }
     
@@ -320,7 +321,7 @@ bool loadSpecialCommandsFromEEPROM()
     uint32_t calculatedChecksum = calculateChecksum(eepromData, header.commandCount);
     if (calculatedChecksum != header.checksum)
     {
-        Serial.printf("❌ EEPROM checksum mismatch: 0x%08X vs 0x%08X\n", 
+        Logger.printf("❌ EEPROM checksum mismatch: 0x%08X vs 0x%08X\n", 
                      calculatedChecksum, header.checksum);
         return false;
     }
@@ -349,18 +350,18 @@ bool loadSpecialCommandsFromEEPROM()
                 
                 specialCommandCount++;
                 
-                Serial.printf("📥 Loaded command: %s - %s\n", seqCopy, descCopy);
+                Logger.printf("📥 Loaded command: %s - %s\n", seqCopy, descCopy);
             }
             else
             {
-                Serial.printf("❌ Memory allocation failed for command %d\n", i);
+                Logger.printf("❌ Memory allocation failed for command %d\n", i);
                 if (seqCopy) free(seqCopy);
                 if (descCopy) free(descCopy);
             }
         }
     }
     
-    Serial.printf("✅ Loaded %d commands from EEPROM\n", specialCommandCount);
+    Logger.printf("✅ Loaded %d commands from EEPROM\n", specialCommandCount);
     return true;
 }
 
@@ -401,18 +402,18 @@ void assignDefaultHandler(int index, const char* sequence)
 
 void eraseSpecialCommandsFromEEPROM()
 {
-    Serial.printf("🗑️  Erasing special commands from EEPROM...\n");
+    Logger.printf("🗑️  Erasing special commands from EEPROM...\n");
     
     if (!preferences.begin(PREFERENCES_NAMESPACE, false))
     {
-        Serial.printf("❌ Failed to initialize preferences for clearing\n");
+        Logger.printf("❌ Failed to initialize preferences for clearing\n");
         return;
     }
     
     preferences.clear();
     preferences.end();
     
-    Serial.printf("✅ EEPROM data cleared\n");
+    Logger.printf("✅ EEPROM data cleared\n");
 }
 
 bool isSpecialCommand(const char *sequence)
@@ -429,14 +430,14 @@ bool isSpecialCommand(const char *sequence)
 
 void processSpecialCommand(const char *sequence)
 {
-    Serial.printf("⚙️  SPECIAL COMMAND DETECTED: %s\n", sequence);
+    Logger.printf("⚙️  SPECIAL COMMAND DETECTED: %s\n", sequence);
 
     // Find and execute the command
     for (int i = 0; i < specialCommandCount; i++)
     {
         if (strcmp(sequence, specialCommands[i].sequence) == 0)
         {
-            Serial.printf("🔧 Command: %s\n", specialCommands[i].description);
+            Logger.printf("🔧 Command: %s\n", specialCommands[i].description);
 
             // Execute command via function pointer if available
             if (specialCommands[i].handler != nullptr)
@@ -445,14 +446,14 @@ void processSpecialCommand(const char *sequence)
             }
             else
             {
-                Serial.printf("⚠️  No handler assigned for command: %s\n", sequence);
+                Logger.printf("⚠️  No handler assigned for command: %s\n", sequence);
             }
 
             return;
         }
     }
 
-    Serial.printf("❌ Command not found: %s\n", sequence);
+    Logger.printf("❌ Command not found: %s\n", sequence);
 }
 
 // ============================================================================
@@ -461,78 +462,78 @@ void processSpecialCommand(const char *sequence)
 
 void executeSystemStatus()
 {
-    Serial.printf("📊 System Status:\n");
-    Serial.printf("   WiFi: %s\n", WiFi.isConnected() ? "Connected" : "Disconnected");
-    Serial.printf("   IP: %s\n", WiFi.localIP().toString().c_str());
-    Serial.printf("   Free Heap: %d bytes\n", ESP.getFreeHeap());
-    Serial.printf("   Uptime: %lu seconds\n", millis() / 1000);
+    Logger.printf("📊 System Status:\n");
+    Logger.printf("   WiFi: %s\n", WiFi.isConnected() ? "Connected" : "Disconnected");
+    Logger.printf("   IP: %s\n", WiFi.localIP().toString().c_str());
+    Logger.printf("   Free Heap: %d bytes\n", ESP.getFreeHeap());
+    Logger.printf("   Uptime: %lu seconds\n", millis() / 1000);
 }
 
 void executeWiFiReset()
 {
-    Serial.printf("🔄 Resetting WiFi configuration...\n");
+    Logger.printf("🔄 Resetting WiFi configuration...\n");
     // WiFi reset logic here
     // wm.resetSettings();
-    Serial.printf("✅ WiFi settings cleared. Device will restart.\n");
+    Logger.printf("✅ WiFi settings cleared. Device will restart.\n");
 }
 
 void executeDeviceReset()
 {
-    Serial.printf("🔄 Restarting device in 3 seconds...\n");
+    Logger.printf("🔄 Restarting device in 3 seconds...\n");
     delay(3000);
     ESP.restart();
 }
 
 void executeFactoryReset()
 {
-    Serial.printf("⚠️  FACTORY RESET initiated!\n");
-    Serial.printf("🗑️  Clearing all settings...\n");
+    Logger.printf("⚠️  FACTORY RESET initiated!\n");
+    Logger.printf("🗑️  Clearing all settings...\n");
     // Factory reset logic here
-    Serial.printf("🔄 Restarting...\n");
+    Logger.printf("🔄 Restarting...\n");
     delay(2000);
     ESP.restart();
 }
 
 void executeDebugToggle()
 {
-    Serial.printf("🐛 Debug mode toggle (implementation needed)\n");
+    Logger.printf("🐛 Debug mode toggle (implementation needed)\n");
     // Toggle debug flags
 }
 
 void executeAudioTest()
 {
-    Serial.printf("🔊 Audio test (implementation needed)\n");
+    Logger.printf("🔊 Audio test (implementation needed)\n");
     // Audio system test
 }
 
 void executeDeviceInfo()
 {
-    Serial.printf("📱 Device Information:\n");
-    Serial.printf("   MAC: %s\n", WiFi.macAddress().c_str());
-    Serial.printf("   Chip Model: %s\n", ESP.getChipModel());
-    Serial.printf("   Chip Revision: %d\n", ESP.getChipRevision());
-    Serial.printf("   Flash Size: %d KB\n", ESP.getFlashChipSize() / 1024);
+    Logger.printf("📱 Device Information:\n");
+    Logger.printf("   MAC: %s\n", WiFi.macAddress().c_str());
+    Logger.printf("   Chip Model: %s\n", ESP.getChipModel());
+    Logger.printf("   Chip Revision: %d\n", ESP.getChipRevision());
+    Logger.printf("   Flash Size: %d KB\n", ESP.getFlashChipSize() / 1024);
 }
 
 void executeAdminMenu()
 {
-    Serial.printf("👑 Admin Menu:\n");
-    Serial.printf("   Commands loaded: %d / %d\n", specialCommandCount, MAX_SPECIAL_COMMANDS);
-    Serial.printf("   EEPROM functions available:\n");
-    Serial.printf("   - *#01# : Save commands to EEPROM\n");
-    Serial.printf("   - *#02# : Load commands from EEPROM\n"); 
-    Serial.printf("   - *#99# : Erase EEPROM data\n");
-    Serial.printf("   - *#00# : List all commands\n");
+    Logger.printf("👑 Admin Menu:\n");
+    Logger.printf("   Commands loaded: %d / %d\n", specialCommandCount, MAX_SPECIAL_COMMANDS);
+    Logger.printf("   EEPROM functions available:\n");
+    Logger.printf("   - *#01# : Save commands to EEPROM\n");
+    Logger.printf("   - *#02# : Load commands from EEPROM\n"); 
+    Logger.printf("   - *#99# : Erase EEPROM data\n");
+    Logger.printf("   - *#00# : List all commands\n");
 }
 
 void executeListCommands()
 {
-    Serial.printf("📋 Special Commands List:\n");
-    Serial.printf("   Total commands: %d / %d\n", specialCommandCount, MAX_SPECIAL_COMMANDS);
+    Logger.printf("📋 Special Commands List:\n");
+    Logger.printf("   Total commands: %d / %d\n", specialCommandCount, MAX_SPECIAL_COMMANDS);
     
     for (int i = 0; i < specialCommandCount; i++)
     {
-        Serial.printf("   %d: %s - %s %s\n", 
+        Logger.printf("   %d: %s - %s %s\n", 
                      i + 1, 
                      specialCommands[i].sequence,
                      specialCommands[i].description,
@@ -541,50 +542,50 @@ void executeListCommands()
     
     if (specialCommandCount == 0)
     {
-        Serial.printf("   No commands configured\n");
+        Logger.printf("   No commands configured\n");
     }
 }
 
 void executeSaveEEPROM()
 {
-    Serial.printf("💾 Manual EEPROM Save Command\n");
+    Logger.printf("💾 Manual EEPROM Save Command\n");
     saveSpecialCommandsToEEPROM();
 }
 
 void executeLoadEEPROM()
 {
-    Serial.printf("📥 Manual EEPROM Load Command\n");
+    Logger.printf("📥 Manual EEPROM Load Command\n");
     
     if (loadSpecialCommandsFromEEPROM())
     {
-        Serial.printf("✅ Commands reloaded from EEPROM\n");
+        Logger.printf("✅ Commands reloaded from EEPROM\n");
     }
     else
     {
-        Serial.printf("❌ Failed to load from EEPROM, keeping current commands\n");
+        Logger.printf("❌ Failed to load from EEPROM, keeping current commands\n");
     }
 }
 
 void executeEraseEEPROM()
 {
-    Serial.printf("🗑️  Manual EEPROM Erase Command\n");
+    Logger.printf("🗑️  Manual EEPROM Erase Command\n");
     eraseSpecialCommandsFromEEPROM();
     
     // Reload defaults after erasing
-    Serial.printf("🔄 Reinitializing with defaults...\n");
+    Logger.printf("🔄 Reinitializing with defaults...\n");
     initializeSpecialCommands();
 }
 
 void executeTailscaleStatus()
 {
-    Serial.printf("🔐 Tailscale/WireGuard Status:\n");
-    Serial.printf("   Status: %s\n", getTailscaleStatus());
+    Logger.printf("🔐 Tailscale/WireGuard Status:\n");
+    Logger.printf("   Status: %s\n", getTailscaleStatus());
     
     if (isTailscaleConnected()) {
-        Serial.printf("   Tailnet IP: %s\n", getTailscaleIP());
-        Serial.printf("   Connection: Active\n");
+        Logger.printf("   Tailnet IP: %s\n", getTailscaleIP());
+        Logger.printf("   Connection: Active\n");
     } else {
-        Serial.printf("   Connection: Inactive\n");
-        Serial.printf("   Configure via WIREGUARD_* build flags\n");
+        Logger.printf("   Connection: Inactive\n");
+        Logger.printf("   Configure via WIREGUARD_* build flags\n");
     }
 }
