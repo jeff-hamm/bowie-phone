@@ -48,7 +48,7 @@ const SITE_CONFIGS = {
     },
     
     // BroPhone configuration (cookie: brophone)
-    'brophone': {
+    'brophone.infinitebutts.com': {
         projectName: "BroPhone Sequences",
         projectId: "brophone-sequences",
         theme: "blue",
@@ -56,7 +56,7 @@ const SITE_CONFIGS = {
             enabled: true,
             gid: '0',
             spreadsheetId: '1lRFBYeUsTFvTeIVyCezVcGScwPJVZT5jfsVv7zJbQdo', // TODO: Replace with actual BroPhone sheet ID
-            appScriptUrl: 'YOUR_BROPHONE_APPS_SCRIPT_URL' // TODO: Replace with actual BroPhone script URL
+            appScriptUrl: 'https://script.google.com/macros/s/AKfycbwA9YLBm1Q4hrLwzlq8GF2kiQippL5_SkFB0shJA8U6REI2F6CYj4mD0XCRXd86SMps/exec'
         },
         googleDrive: {
             folderId: '1UFu18QqcmKmuNtBYLL6NtwPxlUBw6zYK', // TODO: Replace with actual BroPhone folder ID
@@ -68,23 +68,11 @@ const SITE_CONFIGS = {
         }
     },
     
-    // Hostname-based configurations (for direct access)
-    'phone.infinitebutts.com': {
-        // Will use cookie-based config if cookie is set
-        // Otherwise falls back to default
-        useCookie: true
-    },
     
     'bowie-phone.infinitebutts.com': {
         // This is a redirect-only site, handled by bowie-redirect.html
         redirectTo: 'phone.infinitebutts.com',
         setCookie: 'bowie'
-    },
-    
-    'friendzone.infinitebutts.com': {
-        // This is a redirect-only site, handled by brophone-redirect.html
-        redirectTo: 'phone.infinitebutts.com',
-        setCookie: 'brophone'
     },
     
     // You can also match by localhost ports for development
