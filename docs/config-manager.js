@@ -502,11 +502,22 @@ class ConfigManager {
             if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', () => {
                     this.updatePageTitle();
+                    this.dispatchConfigReady();
                 });
             } else {
                 this.updatePageTitle();
+                this.dispatchConfigReady();
             }
         }
+    }
+    
+    dispatchConfigReady() {
+        // Dispatch event to signal config is ready
+        const event = new CustomEvent('configReady', { 
+            detail: this.getPhoneConfig() 
+        });
+        window.dispatchEvent(event);
+        console.log('✅ ConfigManager: configReady event dispatched');
     }
 }
 
