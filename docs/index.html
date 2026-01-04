@@ -182,12 +182,13 @@
     
     <!-- Initialize -->
     <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            console.log('DOM loaded');
+        // Listen for config ready event IMMEDIATELY (before DOMContentLoaded)
+        // because config-manager may dispatch it during DOMContentLoaded
+        window.addEventListener('configReady', function(e) {
+            console.log('✅ Config ready event received');
             
-            // Wait for config to be ready
-            window.addEventListener('configReady', function(e) {
-                console.log('✅ Config ready, initializing app...');
+            function initApp() {
+                console.log('🚀 Initializing app...');
                 
                 if (typeof PhoneSequenceApp === 'undefined') {
                     console.error('PhoneSequenceApp is undefined - app.js may have failed to load');
@@ -209,8 +210,17 @@
                         sheetsLink.style.display = 'inline';
                     }
                 }
-            });
+            }
+            
+            // Wait for DOM if not ready yet
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', initApp);
+            } else {
+                initApp();
+            }
         });
+        
+        console.log('📋 Config ready listener registered');
     </script>
 </body>
 </html>
