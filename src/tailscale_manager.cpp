@@ -2,10 +2,22 @@
 #include "logging.h"
 #include "config.h"
 #include <WireGuard-ESP32.h>
+#include <Preferences.h>
+#include <WebServer.h>
 #include <time.h>
+
+// Tailscale enable pin configuration
+// Can be overridden via build flags: -DTAILSCALE_ENABLE_PIN=xx
+#ifndef TAILSCALE_ENABLE_PIN
+#define TAILSCALE_ENABLE_PIN 36  // Default: KEY1 on AudioKit board
+#endif
+
+// NVS namespace for VPN config
+#define VPN_NVS_NAMESPACE "vpn"
 
 // WireGuard instance
 static WireGuard wg;
+static Preferences vpnPrefs;
 static bool vpnConnected = false;
 static bool vpnInitialized = false;
 static char tailscaleIp[20] = {0};
@@ -18,6 +30,28 @@ static char storedPrivateKey[64] = {0};
 static char storedPeerEndpoint[128] = {0};
 static char storedPeerPublicKey[64] = {0};
 static uint16_t storedPeerPort = 51820;
+
+bool shouldEnableTailscale() {
+#ifdef TAILSCALE_ALWAYS_ENABLED
+    // Always enable Tailscale when TAILSCALE_ALWAYS_ENABLED is defined
+    Logger.println("🔐 Tailscale VPN ALWAYS ENABLED (compile-time flag)");
+    return true;
+#else
+    // Check if enable pin is held during boot to enable Tailscale VPN
+    // Default: KEY1 (GPIO36) on AudioKit board
+    pinMode(TAILSCALE_ENABLE_PIN, INPUT_PULLUP);
+    delay(50);  // Debounce
+    bool enabled = (digitalRead(TAILSCALE_ENABLE_PIN) == LOW);
+    
+    if (enabled) {
+        Logger.printf("🔐 GPIO%d held at boot - Tailscale VPN ENABLED\n", TAILSCALE_ENABLE_PIN);
+    } else {
+        Logger.printf("🌐 Tailscale VPN DISABLED (hold GPIO%d during boot to enable)\n", TAILSCALE_ENABLE_PIN);
+    }
+    
+    return enabled;
+#endif
+}
 
 bool initTailscale(const char* localIp, 
                    const char* privateKey,
@@ -112,6 +146,20 @@ bool initTailscale(const char* localIp,
 }
 
 bool initTailscaleFromConfig() {
+    // First try to load from NVS (runtime configuration)
+    VPNConfig config;
+    if (loadVPNConfig(&config) && config.configured) {
+        Logger.println("🔐 Tailscale: Initializing from NVS config...");
+        return initTailscale(
+            config.localIp,
+            config.privateKey,
+            config.peerEndpoint,
+            config.peerPublicKey,
+            config.peerPort
+        );
+    }
+    
+    // Fall back to compile-time defines
 #if defined(WIREGUARD_PRIVATE_KEY) && defined(WIREGUARD_PEER_PUBLIC_KEY) && \
     defined(WIREGUARD_PEER_ENDPOINT) && defined(WIREGUARD_LOCAL_IP)
     
@@ -125,8 +173,8 @@ bool initTailscaleFromConfig() {
     );
     
 #else
-    Logger.println("⚠️ Tailscale: No WireGuard config in build flags");
-    Logger.println("   Set WIREGUARD_* defines in platformio.ini");
+    Logger.println("⚠️ Tailscale: No WireGuard config in build flags or NVS");
+    Logger.println("   Configure via /vpn web page or set WIREGUARD_* defines");
     strcpy(statusBuffer, "Not configured");
     return false;
 #endif
@@ -201,4 +249,269 @@ void handleTailscaleLoop() {
 
 const char* getTailscaleStatus() {
     return statusBuffer;
+}
+
+// ============================================================================
+// VPN Configuration Storage (NVS)
+// ============================================================================
+
+bool loadVPNConfig(VPNConfig* config) {
+    if (!config) return false;
+    
+    memset(config, 0, sizeof(VPNConfig));
+    
+    if (!vpnPrefs.begin(VPN_NVS_NAMESPACE, true)) {  // Read-only
+        Logger.println("ℹ️ VPN: No NVS config found");
+        return false;
+    }
+    
+    config->configured = vpnPrefs.getBool("configured", false);
+    
+    if (config->configured) {
+        String localIp = vpnPrefs.getString("localIp", "");
+        String privateKey = vpnPrefs.getString("privateKey", "");
+        String peerEndpoint = vpnPrefs.getString("peerEndpoint", "");
+        String peerPublicKey = vpnPrefs.getString("peerPublicKey", "");
+        config->peerPort = vpnPrefs.getUShort("peerPort", 41641);
+        
+        strncpy(config->localIp, localIp.c_str(), sizeof(config->localIp) - 1);
+        strncpy(config->privateKey, privateKey.c_str(), sizeof(config->privateKey) - 1);
+        strncpy(config->peerEndpoint, peerEndpoint.c_str(), sizeof(config->peerEndpoint) - 1);
+        strncpy(config->peerPublicKey, peerPublicKey.c_str(), sizeof(config->peerPublicKey) - 1);
+        
+        Logger.printf("✅ VPN: Loaded config from NVS (endpoint: %s)\n", config->peerEndpoint);
+    }
+    
+    vpnPrefs.end();
+    return config->configured;
+}
+
+bool saveVPNConfig(const VPNConfig* config) {
+    if (!config) return false;
+    
+    if (!vpnPrefs.begin(VPN_NVS_NAMESPACE, false)) {  // Read-write
+        Logger.println("❌ VPN: Failed to open NVS for writing");
+        return false;
+    }
+    
+    vpnPrefs.putString("localIp", config->localIp);
+    vpnPrefs.putString("privateKey", config->privateKey);
+    vpnPrefs.putString("peerEndpoint", config->peerEndpoint);
+    vpnPrefs.putString("peerPublicKey", config->peerPublicKey);
+    vpnPrefs.putUShort("peerPort", config->peerPort);
+    vpnPrefs.putBool("configured", true);
+    
+    vpnPrefs.end();
+    
+    Logger.printf("✅ VPN: Config saved to NVS (endpoint: %s)\n", config->peerEndpoint);
+    return true;
+}
+
+void clearVPNConfig() {
+    if (!vpnPrefs.begin(VPN_NVS_NAMESPACE, false)) {
+        return;
+    }
+    vpnPrefs.clear();
+    vpnPrefs.end();
+    Logger.println("🗑️ VPN: NVS config cleared");
+}
+
+bool isVPNConfigured() {
+    VPNConfig config;
+    if (loadVPNConfig(&config) && config.configured) {
+        return true;
+    }
+    
+#if defined(WIREGUARD_PRIVATE_KEY) && defined(WIREGUARD_PEER_PUBLIC_KEY) && \
+    defined(WIREGUARD_PEER_ENDPOINT) && defined(WIREGUARD_LOCAL_IP)
+    return true;
+#else
+    return false;
+#endif
+}
+
+// ============================================================================
+// VPN Web Configuration Page
+// ============================================================================
+
+static const char VPN_CONFIG_PAGE[] PROGMEM = R"rawliteral(
+<!DOCTYPE html><html><head>
+<title>VPN Configuration</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+body{font-family:-apple-system,sans-serif;background:#1a1a2e;color:#eee;margin:0;padding:20px}
+.c{max-width:500px;margin:auto;background:#16213e;padding:20px;border-radius:12px;border:1px solid #0f3460}
+h2{margin:0 0 20px;color:#e94560}
+label{display:block;margin:15px 0 5px;color:#a0a0a0;font-size:14px}
+input,select{width:100%;padding:10px;margin:0;border:1px solid #0f3460;border-radius:6px;background:#0f0f23;color:#eee;font-family:monospace}
+input:focus{outline:none;border-color:#e94560}
+button{width:100%;background:#e94560;color:white;padding:12px;border:none;border-radius:25px;cursor:pointer;font-size:16px;margin-top:20px}
+button:hover{background:#ff6b6b}
+.status{padding:10px;border-radius:6px;margin-bottom:15px;font-size:14px}
+.connected{background:rgba(74,222,128,0.2);border-left:3px solid #4ade80}
+.disconnected{background:rgba(233,69,96,0.2);border-left:3px solid #e94560}
+.help{font-size:12px;color:#666;margin-top:5px}
+.btn-clear{background:#666;margin-top:10px}
+.back{display:block;text-align:center;margin-top:15px;color:#e94560}
+</style>
+</head><body>
+<div class="c">
+<h2>🔐 VPN Configuration</h2>
+<div class="status %STATUS_CLASS%">%STATUS%</div>
+<form action="/vpn/save" method="POST">
+<label>Local IP (your Tailscale IP)</label>
+<input type="text" name="localIp" value="%LOCAL_IP%" placeholder="10.0.0.x or 100.x.x.x" required>
+<div class="help">Your device's IP on the Tailscale/WireGuard network</div>
+
+<label>Private Key (base64)</label>
+<input type="password" name="privateKey" value="%PRIVATE_KEY%" placeholder="Your WireGuard private key" required>
+<div class="help">Generate with: wg genkey</div>
+
+<label>Peer Endpoint (hostname or IP)</label>
+<input type="text" name="peerEndpoint" value="%PEER_ENDPOINT%" placeholder="relay.tailscale.com" required>
+<div class="help">Your Tailscale relay or peer's public address</div>
+
+<label>Peer Public Key (base64)</label>
+<input type="text" name="peerPublicKey" value="%PEER_PUBLIC_KEY%" placeholder="Peer's WireGuard public key" required>
+
+<label>Peer Port</label>
+<input type="number" name="peerPort" value="%PEER_PORT%" placeholder="41641" min="1" max="65535">
+<div class="help">Default: 41641 for Tailscale, 51820 for WireGuard</div>
+
+<button type="submit">💾 Save & Connect</button>
+</form>
+<form action="/vpn/clear" method="POST">
+<button type="submit" class="btn-clear">🗑️ Clear Config (use defaults)</button>
+</form>
+<a href="/" class="back">← Back</a>
+</div>
+</body></html>
+)rawliteral";
+
+// Web server pointer (set by initVPNConfigRoutes)
+static WebServer* vpnWebServer = nullptr;
+
+void handleVPNConfigPage() {
+    if (!vpnWebServer) return;
+    
+    String html = FPSTR(VPN_CONFIG_PAGE);
+    
+    // Get current config
+    VPNConfig config;
+    bool hasNvsConfig = loadVPNConfig(&config);
+    
+    // Status
+    if (isTailscaleConnected()) {
+        html.replace("%STATUS_CLASS%", "connected");
+        html.replace("%STATUS%", String("✅ Connected: ") + getTailscaleIP());
+    } else if (vpnInitialized) {
+        html.replace("%STATUS_CLASS%", "disconnected");
+        html.replace("%STATUS%", "⚠️ Connecting or failed...");
+    } else {
+        html.replace("%STATUS_CLASS%", "disconnected");
+        html.replace("%STATUS%", hasNvsConfig ? "🔧 Configured (not started)" : "❌ Not configured");
+    }
+    
+    // Fill form values
+    if (hasNvsConfig) {
+        html.replace("%LOCAL_IP%", config.localIp);
+        html.replace("%PRIVATE_KEY%", ""); // Don't show private key
+        html.replace("%PEER_ENDPOINT%", config.peerEndpoint);
+        html.replace("%PEER_PUBLIC_KEY%", config.peerPublicKey);
+        html.replace("%PEER_PORT%", String(config.peerPort));
+    } else {
+        // Use compile-time defaults if available
+#ifdef WIREGUARD_LOCAL_IP
+        html.replace("%LOCAL_IP%", WIREGUARD_LOCAL_IP);
+#else
+        html.replace("%LOCAL_IP%", "");
+#endif
+        html.replace("%PRIVATE_KEY%", "");
+#ifdef WIREGUARD_PEER_ENDPOINT
+        html.replace("%PEER_ENDPOINT%", WIREGUARD_PEER_ENDPOINT);
+#else
+        html.replace("%PEER_ENDPOINT%", "");
+#endif
+#ifdef WIREGUARD_PEER_PUBLIC_KEY
+        html.replace("%PEER_PUBLIC_KEY%", WIREGUARD_PEER_PUBLIC_KEY);
+#else
+        html.replace("%PEER_PUBLIC_KEY%", "");
+#endif
+        html.replace("%PEER_PORT%", String(WIREGUARD_PEER_PORT));
+    }
+    
+    vpnWebServer->send(200, "text/html", html);
+}
+
+void handleVPNSave() {
+    if (!vpnWebServer) return;
+    
+    // Load existing config first to preserve private key if not provided
+    VPNConfig existingConfig;
+    bool hadExistingConfig = loadVPNConfig(&existingConfig);
+    
+    VPNConfig config;
+    strncpy(config.localIp, vpnWebServer->arg("localIp").c_str(), sizeof(config.localIp) - 1);
+    strncpy(config.peerEndpoint, vpnWebServer->arg("peerEndpoint").c_str(), sizeof(config.peerEndpoint) - 1);
+    strncpy(config.peerPublicKey, vpnWebServer->arg("peerPublicKey").c_str(), sizeof(config.peerPublicKey) - 1);
+    config.peerPort = vpnWebServer->arg("peerPort").toInt();
+    if (config.peerPort == 0) config.peerPort = 41641;
+    config.configured = true;
+    
+    // Handle private key - keep existing if not provided
+    String newPrivateKey = vpnWebServer->arg("privateKey");
+    if (newPrivateKey.length() > 0) {
+        strncpy(config.privateKey, newPrivateKey.c_str(), sizeof(config.privateKey) - 1);
+    } else if (hadExistingConfig && strlen(existingConfig.privateKey) > 0) {
+        strncpy(config.privateKey, existingConfig.privateKey, sizeof(config.privateKey) - 1);
+    } else {
+        vpnWebServer->send(400, "text/plain", "Private key is required");
+        return;
+    }
+    
+    // Validate required fields
+    if (strlen(config.localIp) == 0 || strlen(config.peerEndpoint) == 0 || strlen(config.peerPublicKey) == 0) {
+        vpnWebServer->send(400, "text/plain", "All fields are required");
+        return;
+    }
+    
+    if (saveVPNConfig(&config)) {
+        // Disconnect existing VPN and reconnect with new config
+        if (vpnInitialized) {
+            disconnectTailscale();
+        }
+        
+        vpnWebServer->sendHeader("Location", "/", true);
+        vpnWebServer->send(302, "text/plain", "Saved! Reconnecting...");
+        
+        // Try to connect with new config (after a short delay)
+        delay(500);
+        initTailscaleFromConfig();
+    } else {
+        vpnWebServer->send(500, "text/plain", "Failed to save configuration");
+    }
+}
+
+void handleVPNClear() {
+    if (!vpnWebServer) return;
+    
+    clearVPNConfig();
+    
+    if (vpnInitialized) {
+        disconnectTailscale();
+    }
+    
+    vpnWebServer->sendHeader("Location", "/", true);
+    vpnWebServer->send(302, "text/plain", "Config cleared");
+}
+
+void initVPNConfigRoutes(void* server) {
+    vpnWebServer = static_cast<WebServer*>(server);
+    if (!vpnWebServer) return;
+    
+    vpnWebServer->on("/vpn", HTTP_GET, handleVPNConfigPage);
+    vpnWebServer->on("/vpn/save", HTTP_POST, handleVPNSave);
+    vpnWebServer->on("/vpn/clear", HTTP_POST, handleVPNClear);
+    
+    Logger.println("🔐 VPN config routes registered (/vpn)");
 }

@@ -48,6 +48,14 @@ bool initTailscale(const char* localIp,
                    uint16_t peerPort = WIREGUARD_PEER_PORT);
 
 /**
+ * Check if Tailscale should be enabled based on boot key press
+ * Call this early in setup() before WiFi initialization
+ * Checks if KEY1 (GPIO36) is held during boot
+ * @return true if Tailscale should be enabled
+ */
+bool shouldEnableTailscale();
+
+/**
  * Initialize Tailscale using build flags from platformio.ini
  * Requires WIREGUARD_* defines to be set
  * @return true if connection initiated successfully
@@ -85,3 +93,51 @@ void setTailscaleSkipCallback(bool (*callback)());
  * @return Human-readable status string
  */
 const char* getTailscaleStatus();
+
+/**
+ * VPN Configuration Storage (NVS)
+ * These functions allow runtime configuration of VPN settings
+ * without recompiling firmware.
+ */
+
+// Structure to hold VPN configuration
+struct VPNConfig {
+    char localIp[20];
+    char privateKey[64];
+    char peerEndpoint[128];
+    char peerPublicKey[64];
+    uint16_t peerPort;
+    bool configured;  // true if NVS has valid config
+};
+
+/**
+ * Load VPN configuration from NVS
+ * @param config Pointer to VPNConfig struct to fill
+ * @return true if valid config was loaded from NVS
+ */
+bool loadVPNConfig(VPNConfig* config);
+
+/**
+ * Save VPN configuration to NVS
+ * @param config Pointer to VPNConfig struct to save
+ * @return true if saved successfully
+ */
+bool saveVPNConfig(const VPNConfig* config);
+
+/**
+ * Clear VPN configuration from NVS (reverts to compile-time defaults)
+ */
+void clearVPNConfig();
+
+/**
+ * Check if VPN is configured (either via NVS or compile-time)
+ * @return true if VPN can be initialized
+ */
+bool isVPNConfigured();
+
+/**
+ * Initialize VPN config web server routes
+ * Call this after WiFi/webserver is ready
+ * @param server Pointer to the WebServer instance
+ */
+void initVPNConfigRoutes(void* server);

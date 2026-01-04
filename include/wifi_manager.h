@@ -49,6 +49,8 @@ bool startConfigPortalSafe();
 void handleRoot();
 void handleSave();
 void handleWiFiLoop();
+void clearWiFiCredentials();
+String getSavedSSID();
 
 // Global variables
 extern WebServer server;

@@ -7,6 +7,10 @@
 debug.local.js
 testconfig.js
 
+# DO NOT ignore firmware binaries for web installer
+!firmware/*.bin
+!firmware/manifest.json
+
 # OS files
 .DS_Store
 Thumbs.db

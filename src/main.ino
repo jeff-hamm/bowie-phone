@@ -231,17 +231,8 @@ void setup()
 
     Logger.printf("\n\n=== Bowie Phone Starting ===\n");
     
-    // Check if KEY1 (GPIO36) is held during boot to enable Tailscale VPN
-    // KEY1 is the left-most button
-    pinMode(36, INPUT_PULLUP);
-    delay(50);  // Debounce
-    if (digitalRead(36) == LOW) {
-        tailscaleEnabled = true;
-        Logger.println("🔐 KEY1 held at boot - Tailscale VPN ENABLED");
-    } else {
-        tailscaleEnabled = false;
-        Logger.println("🌐 Tailscale VPN DISABLED (hold KEY1 during boot to enable)");
-    }
+    // Check if Tailscale should be enabled based on boot key press
+    tailscaleEnabled = shouldEnableTailscale();
     
     // Reduce AudioTools library logging to Warning level to minimize noise
     AudioToolsLogger.begin(Serial, AudioToolsLogLevel::Warning);

@@ -1,6 +1,7 @@
 #include "wifi_manager.h"
 #include "logging.h"
 #include "config.h"
+#include "tailscale_manager.h"
 #include "nvs_flash.h"
 
 // WiFi Setup Variables
@@ -37,6 +38,45 @@ void saveWiFiCredentials(const String& ssid, const String& password)
     Logger.printf("✅ WiFi credentials saved for SSID: %s\n", ssid.c_str());
 }
 
+// Clear WiFi credentials from preferences
+void clearWiFiCredentials()
+{
+    esp_err_t err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        nvs_flash_erase();
+        nvs_flash_init();
+    }
+    
+    if (!wifiPrefs.begin("wifi", false))
+    {
+        Logger.println("❌ Failed to open WiFi preferences for clearing");
+        return;
+    }
+    
+    wifiPrefs.clear();
+    wifiPrefs.end();
+    
+    Logger.println("🗑️ WiFi credentials cleared");
+}
+
+// Get saved SSID (returns empty string if not set)
+String getSavedSSID()
+{
+    esp_err_t err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        nvs_flash_erase();
+        nvs_flash_init();
+    }
+    
+    if (!wifiPrefs.begin("wifi", true)) {
+        return "";
+    }
+    
+    String ssid = wifiPrefs.getString("ssid", "");
+    wifiPrefs.end();
+    return ssid;
+}
+
 // Handle logs page request
 void handleLogs()
 {
@@ -44,27 +84,182 @@ void handleLogs()
     server.send(200, "text/html", html);
 }
 
-// Web server handlers for WiFi configuration - Minimal version
+// Handle WiFi credential reset
+void handleWiFiClear()
+{
+    clearWiFiCredentials();
+    server.sendHeader("Location", "/", true);
+    server.send(302, "text/plain", "WiFi credentials cleared");
+}
+
+// Build the combined configuration page
+String buildConfigPage()
+{
+    // Get current status info
+    String currentIP = WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : WiFi.softAPIP().toString();
+    String savedSSID = getSavedSSID();
+    String wifiMode = isConfigMode ? "AP Mode" : (WiFi.status() == WL_CONNECTED ? "Connected" : "Connecting...");
+    
+    // Get VPN status
+    bool vpnConnected = isTailscaleConnected();
+    const char* vpnIP = getTailscaleIP();
+    VPNConfig vpnConfig;
+    bool hasVpnConfig = loadVPNConfig(&vpnConfig);
+    bool hasPrivateKey = hasVpnConfig && strlen(vpnConfig.privateKey) > 0;
+    
+    String html = R"(
+<!DOCTYPE html><html><head><title>Bowie Phone Config</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+body{font-family:-apple-system,sans-serif;background:#1a1a2e;color:#eee;margin:0;padding:20px}
+.c{max-width:500px;margin:auto}
+.card{background:#16213e;padding:20px;border-radius:12px;border:1px solid #0f3460;margin-bottom:20px}
+h2{margin:0 0 15px;color:#e94560;font-size:1.3em}
+h3{margin:15px 0 10px;color:#4ade80;font-size:1.1em}
+label{display:block;margin:10px 0 5px;color:#a0a0a0;font-size:14px}
+input{width:100%;padding:10px;margin:0;border:1px solid #0f3460;border-radius:6px;background:#0f0f23;color:#eee;font-family:monospace;box-sizing:border-box}
+input:focus{outline:none;border-color:#e94560}
+button{width:100%;background:#e94560;color:white;padding:12px;border:none;border-radius:25px;cursor:pointer;font-size:16px;margin-top:15px}
+button:hover{background:#ff6b6b}
+.status{padding:10px;border-radius:6px;margin-bottom:15px;font-size:14px}
+.connected{background:rgba(74,222,128,0.2);border-left:3px solid #4ade80}
+.disconnected{background:rgba(233,69,96,0.2);border-left:3px solid #e94560}
+.info{background:rgba(59,130,246,0.2);border-left:3px solid #3b82f6}
+.help{font-size:12px;color:#666;margin-top:5px}
+.btn-clear{background:#666;margin-top:10px}
+.btn-logs{background:#28a745}
+.row{display:flex;gap:10px}
+.row>*{flex:1}
+.field{margin-bottom:10px}
+.key-status{color:#4ade80;font-size:12px}
+</style>
+</head><body>
+<div class="c">
+<h2>📱 Bowie Phone Configuration</h2>
+
+<!-- System Status -->
+<div class="card">
+<h3>📊 System Status</h3>
+<div class="status info">
+<strong>Current IP:</strong> )";
+    html += currentIP;
+    html += R"(<br>
+<strong>WiFi:</strong> )";
+    html += wifiMode;
+    if (savedSSID.length() > 0) {
+        html += " (";
+        html += savedSSID;
+        html += ")";
+    }
+    html += R"(<br>
+<strong>VPN:</strong> )";
+    if (vpnConnected) {
+        html += "Connected (";
+        html += vpnIP ? vpnIP : "?";
+        html += ")";
+    } else {
+        html += hasVpnConfig ? "Configured" : "Not configured";
+    }
+    html += R"(
+</div>
+</div>
+
+<!-- WiFi Configuration -->
+<div class="card">
+<h3>📶 WiFi Configuration</h3>
+<form action="/save" method="POST">
+<div class="field">
+<label>WiFi SSID</label>
+<input type="text" name="ssid" placeholder="WiFi Network Name" value=")";
+    html += savedSSID;
+    html += R"(" required>
+</div>
+<div class="field">
+<label>WiFi Password</label>
+<input type="password" name="password" placeholder="WiFi Password">
+</div>
+<button type="submit">💾 Save & Connect WiFi</button>
+</form>
+<form action="/wifi/clear" method="POST">
+<button type="submit" class="btn-clear">🗑️ Clear WiFi Settings</button>
+</form>
+</div>
+
+<!-- VPN Configuration -->
+<div class="card">
+<h3>🔐 VPN Configuration</h3>
+<div class="status )";
+    html += vpnConnected ? "connected" : "disconnected";
+    html += R"(">)";
+    if (vpnConnected) {
+        html += "✅ VPN Connected: ";
+        html += vpnIP ? vpnIP : "";
+    } else if (hasVpnConfig) {
+        html += "🔧 Configured (not connected)";
+    } else {
+        html += "❌ Not configured";
+    }
+    html += R"(</div>
+<form action="/vpn/save" method="POST">
+<div class="field">
+<label>Local IP (your Tailscale IP)</label>
+<input type="text" name="localIp" placeholder="10.x.x.x" value=")";
+    html += hasVpnConfig ? vpnConfig.localIp : "";
+    html += R"(" required>
+</div>
+<div class="field">
+<label>Private Key (base64)</label>)";
+    if (hasPrivateKey) {
+        html += R"(<span class="key-status">✓ Key is set</span>)";
+    }
+    html += R"(
+<input type="password" name="privateKey" placeholder=")";
+    html += hasPrivateKey ? "Enter new key to change" : "Your WireGuard private key";
+    html += R"(")";
+    html += hasPrivateKey ? "" : " required";
+    html += R"(>
+<div class="help">Leave blank to keep existing key</div>
+</div>
+<div class="field">
+<label>Peer Endpoint</label>
+<input type="text" name="peerEndpoint" placeholder="relay.tailscale.com" value=")";
+    html += hasVpnConfig ? vpnConfig.peerEndpoint : "";
+    html += R"(" required>
+</div>
+<div class="field">
+<label>Peer Public Key</label>
+<input type="text" name="peerPublicKey" placeholder="Peer's public key" value=")";
+    html += hasVpnConfig ? vpnConfig.peerPublicKey : "";
+    html += R"(" required>
+</div>
+<div class="field">
+<label>Peer Port</label>
+<input type="number" name="peerPort" placeholder="41641" value=")";
+    html += hasVpnConfig ? String(vpnConfig.peerPort) : "41641";
+    html += R"(">
+</div>
+<button type="submit">💾 Save VPN Config</button>
+</form>
+<form action="/vpn/clear" method="POST">
+<button type="submit" class="btn-clear">🗑️ Clear VPN Config</button>
+</form>
+</div>
+
+<!-- Logs -->
+<div class="card">
+<a href="/logs"><button class="btn-logs">📄 View System Logs</button></a>
+</div>
+
+</div>
+</body></html>
+)";
+    return html;
+}
+
+// Web server handlers for WiFi configuration
 void handleRoot()
 {
-    const char* html = R"(
-<!DOCTYPE html><html><head><title>WiFi Setup</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<style>body{font-family:Arial;margin:20px;background:#f0f0f0}
-.c{max-width:300px;margin:auto;background:white;padding:20px;border-radius:5px}
-input{width:100%;padding:8px;margin:5px 0;border:1px solid #ddd}
-button{width:100%;background:#007cba;color:white;padding:10px;border:none;cursor:pointer;margin:5px 0}
-.logs-btn{background:#28a745;text-decoration:none;display:block;text-align:center}
-</style></head><body><div class="c"><h2>📱 WiFi Config</h2>
-<form action="/save" method="POST">
-<input type="text" name="ssid" placeholder="WiFi SSID" required>
-<input type="password" name="password" placeholder="Password">
-<button type="submit">Connect to WiFi</button></form>
-<a href="/logs" class="logs-btn button">📄 View System Logs</a>
-</div></body></html>
-)";
-    
-    server.send(200, "text/html", html);
+    server.send(200, "text/html", buildConfigPage());
 }
 
 void handleSave()
@@ -190,7 +385,9 @@ bool startConfigPortalSafe()
     // Setup web server routes
     server.on("/", handleRoot);
     server.on("/save", HTTP_POST, handleSave);
+    server.on("/wifi/clear", HTTP_POST, handleWiFiClear);
     server.on("/logs", handleLogs);
+    initVPNConfigRoutes(&server);
     server.onNotFound([]() {
         server.sendHeader("Location", "/", true);
         server.send(302, "text/plain", "");
@@ -222,7 +419,9 @@ void startConfigPortal()
     // Setup web server routes
     server.on("/", handleRoot);
     server.on("/save", HTTP_POST, handleSave);
+    server.on("/wifi/clear", HTTP_POST, handleWiFiClear);
     server.on("/logs", handleLogs);
+    initVPNConfigRoutes(&server);
     server.onNotFound([]() {
         server.sendHeader("Location", "/", true);
         server.send(302, "text/plain", "");
@@ -236,6 +435,12 @@ void startConfigPortal()
 void initWiFi(WiFiConnectedCallback onConnected)
 {
     Logger.printf("🔧 Starting WiFi initialization (non-blocking)...\n");
+    
+    // Check for compile-time flag to clear WiFi credentials
+#ifdef CLEAR_WIFI_ON_BOOT
+    Logger.println("⚠️ CLEAR_WIFI_ON_BOOT flag set - clearing saved WiFi credentials");
+    clearWiFiCredentials();
+#endif
     
     // Store the callback for later use
     wifiConnectedCallback = onConnected;
