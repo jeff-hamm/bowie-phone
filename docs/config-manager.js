@@ -47,19 +47,19 @@ const SITE_CONFIGS = {
         }
     },
     
-    // BroPhone configuration (standalone site)
+    // BroPhone configuration (cookie: brophone)
     'brophone.infinitebutts.com': {
         projectName: "BroPhone Sequences",
         projectId: "brophone-sequences",
-        theme: "default",
+        theme: "blue",
         googleSheets: {
             enabled: true,
             gid: '0',
-            spreadsheetId: '1lRFBYeUsTFvTeIVyCezVcGScwPJVZT5jfsVv7zJbQdo',
+            spreadsheetId: '1lRFBYeUsTFvTeIVyCezVcGScwPJVZT5jfsVv7zJbQdo', // TODO: Replace with actual BroPhone sheet ID
             appScriptUrl: 'https://script.google.com/macros/s/AKfycbwA9YLBm1Q4hrLwzlq8GF2kiQippL5_SkFB0shJA8U6REI2F6CYj4mD0XCRXd86SMps/exec'
         },
         googleDrive: {
-            folderId: '1UFu18QqcmKmuNtBYLL6NtwPxlUBw6zYK',
+            folderId: '1UFu18QqcmKmuNtBYLL6NtwPxlUBw6zYK', // TODO: Replace with actual BroPhone folder ID
             folderUrl: 'https://drive.google.com/drive/folders/1UFu18QqcmKmuNtBYLL6NtwPxlUBw6zYK?usp=sharing'
         },
         customStyles: {
@@ -68,25 +68,11 @@ const SITE_CONFIGS = {
         }
     },
     
-    // Bowie Phone configuration (standalone site)
+    
     'bowie-phone.infinitebutts.com': {
-        projectName: "Bowie Phone Sequences",
-        projectId: "bowie-phone-sequences",
-        theme: "default",
-        googleSheets: {
-            enabled: true,
-            gid: '0',
-            spreadsheetId: '1q1FOzSTg-5ATMSlVf_cuIaPvYgMv9yDec4Nd5ZaAlzY',
-            appScriptUrl: 'https://script.google.com/macros/s/AKfycbwA9YLBm1Q4hrLwzlq8GF2kiQippL5_SkFB0shJA8U6REI2F6CYj4mD0XCRXd86SMps/exec'
-        },
-        googleDrive: {
-            folderId: '1TGRbklQEoJpt1AbR3LOpW0t8unVnzkQ5',
-            folderUrl: 'https://drive.google.com/drive/folders/1TGRbklQEoJpt1AbR3LOpW0t8unVnzkQ5'
-        },
-        customStyles: {
-            primaryColor: '#4CAF50',
-            accentColor: '#2196F3'
-        }
+        // This is a redirect-only site, handled by bowie-redirect.html
+        redirectTo: 'phone.infinitebutts.com',
+        setCookie: 'bowie'
     },
     
     // You can also match by localhost ports for development
@@ -502,22 +488,11 @@ class ConfigManager {
             if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', () => {
                     this.updatePageTitle();
-                    this.dispatchConfigReady();
                 });
             } else {
                 this.updatePageTitle();
-                this.dispatchConfigReady();
             }
         }
-    }
-    
-    dispatchConfigReady() {
-        // Dispatch event to signal config is ready
-        const event = new CustomEvent('configReady', { 
-            detail: this.getPhoneConfig() 
-        });
-        window.dispatchEvent(event);
-        console.log('✅ ConfigManager: configReady event dispatched');
     }
 }
 
