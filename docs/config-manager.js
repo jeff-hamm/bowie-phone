@@ -47,19 +47,19 @@ const SITE_CONFIGS = {
         }
     },
     
-    // BroPhone configuration (cookie: brophone)
+    // BroPhone configuration (standalone site)
     'brophone.infinitebutts.com': {
         projectName: "BroPhone Sequences",
         projectId: "brophone-sequences",
-        theme: "blue",
+        theme: "default",
         googleSheets: {
             enabled: true,
             gid: '0',
-            spreadsheetId: '1lRFBYeUsTFvTeIVyCezVcGScwPJVZT5jfsVv7zJbQdo', // TODO: Replace with actual BroPhone sheet ID
+            spreadsheetId: '1lRFBYeUsTFvTeIVyCezVcGScwPJVZT5jfsVv7zJbQdo',
             appScriptUrl: 'https://script.google.com/macros/s/AKfycbwA9YLBm1Q4hrLwzlq8GF2kiQippL5_SkFB0shJA8U6REI2F6CYj4mD0XCRXd86SMps/exec'
         },
         googleDrive: {
-            folderId: '1UFu18QqcmKmuNtBYLL6NtwPxlUBw6zYK', // TODO: Replace with actual BroPhone folder ID
+            folderId: '1UFu18QqcmKmuNtBYLL6NtwPxlUBw6zYK',
             folderUrl: 'https://drive.google.com/drive/folders/1UFu18QqcmKmuNtBYLL6NtwPxlUBw6zYK?usp=sharing'
         },
         customStyles: {
@@ -68,11 +68,25 @@ const SITE_CONFIGS = {
         }
     },
     
-    
+    // Bowie Phone configuration (standalone site)
     'bowie-phone.infinitebutts.com': {
-        // This is a redirect-only site, handled by bowie-redirect.html
-        redirectTo: 'phone.infinitebutts.com',
-        setCookie: 'bowie'
+        projectName: "Bowie Phone Sequences",
+        projectId: "bowie-phone-sequences",
+        theme: "default",
+        googleSheets: {
+            enabled: true,
+            gid: '0',
+            spreadsheetId: '1q1FOzSTg-5ATMSlVf_cuIaPvYgMv9yDec4Nd5ZaAlzY',
+            appScriptUrl: 'https://script.google.com/macros/s/AKfycbwA9YLBm1Q4hrLwzlq8GF2kiQippL5_SkFB0shJA8U6REI2F6CYj4mD0XCRXd86SMps/exec'
+        },
+        googleDrive: {
+            folderId: '1TGRbklQEoJpt1AbR3LOpW0t8unVnzkQ5',
+            folderUrl: 'https://drive.google.com/drive/folders/1TGRbklQEoJpt1AbR3LOpW0t8unVnzkQ5'
+        },
+        customStyles: {
+            primaryColor: '#4CAF50',
+            accentColor: '#2196F3'
+        }
     },
     
     // You can also match by localhost ports for development
