@@ -114,6 +114,43 @@ bool isAudioActive();
 bool isDialTonePlaying();
 
 /**
+ * @brief Initialize the synthesized dial tone generator
+ * @param output The audio output stream (AudioBoardStream)
+ */
+void initDialToneGenerator(AudioStream &output);
+
+/**
+ * @brief Start playing the synthesized dial tone (350 + 440 Hz)
+ * @return true if dial tone started successfully
+ */
+bool startDialTone();
+
+/**
+ * @brief Stop the synthesized dial tone
+ */
+void stopDialTone();
+
+/**
+ * @brief Check if synthesized dial tone is playing
+ * @return true if dial tone is active
+ */
+bool isSynthDialTonePlaying();
+
+/**
+ * @brief Process dial tone output (call in main loop)
+ * @return true if dial tone is still active
+ */
+bool processDialTone();
+
+/**
+ * @brief Sample mic for DTMF detection during dial tone
+ * @param fftInput The FFT stream to receive mic input
+ * @param micSource The mic input source (kit stream)
+ * @return true if dial tone is still active
+ */
+bool sampleDTMFDuringDialTone(AudioStream& fftInput, AudioStream& micSource);
+
+/**
  * @brief Get the current audio key being played
  * @return Current audio key string, or nullptr if nothing playing
  */

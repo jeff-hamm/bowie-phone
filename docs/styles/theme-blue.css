@@ -1,0 +1,55 @@
+/**
+ * Blue Theme for Phone Sequence Manager
+ * Override default colors with blue palette
+ */
+
+:root {
+    /* Primary blue color scheme */
+    --primary-color: #2196F3;
+    --primary-light: #64B5F6;
+    --primary-dark: #1976D2;
+    
+    /* Accent colors */
+    --accent-color: #03A9F4;
+    --accent-light: #4FC3F7;
+    --accent-dark: #0288D1;
+    
+    /* Background variations */
+    --bg-primary: #E3F2FD;
+    --bg-secondary: #BBDEFB;
+    --bg-hover: #90CAF9;
+    
+    /* Text colors for contrast */
+    --text-on-primary: #FFFFFF;
+    --text-primary: #0D47A1;
+    
+    /* Border colors */
+    --border-color: #90CAF9;
+    --border-focus: #2196F3;
+    
+    /* Custom icons (optional - override default icons) */
+    /* --icon-add: '⊕'; */     /* Circle plus */
+    /* --icon-edit: '✎'; */    /* Pencil variant */
+}
+
+/* Override specific components if needed */
+.header-section {
+    background: linear-gradient(135deg, var(--primary-color) 0%, var(--accent-color) 100%);
+}
+
+.floating-add-btn {
+    background: var(--accent-color);
+}
+
+.floating-add-btn:hover {
+    background: var(--accent-dark);
+}
+
+.sequence-card {
+    border-left: 4px solid var(--primary-color);
+}
+
+.sequence-card:hover {
+    border-left-color: var(--accent-color);
+    background: var(--bg-primary);
+}

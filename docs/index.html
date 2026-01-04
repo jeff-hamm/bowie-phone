@@ -7,6 +7,8 @@
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <link id="favicon-png" rel="alternate icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/6XK6cEAAAAASUVORK5CYII=" sizes="64x64">
     <link rel="stylesheet" href="styles/styles.css">
+    <!-- Load config manager first - it will apply theme and create PHONE_CONFIG -->
+    <script src="config-manager.js"></script>
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             const svgLink = document.querySelector('link[rel="icon"][type="image/svg+xml"]');
@@ -44,7 +46,7 @@
                     <h1>Bowie Phone Sequences</h1>
                 </div>
                 <button id="add-sequence-btn" class="floating-add-btn">
-                    <span>➕</span>
+                    <span class="add-icon"></span>
                     <span class="btn-text">Add Sequence</span>
                 </button>
             </div>
@@ -78,7 +80,7 @@
     <!-- Add/Edit Sequence Modal -->
     <div id="modal-backdrop" class="modal-backdrop" onclick="phoneApp.hideModal()"></div>
     <form id="sequence-form" class="modal-form">
-        <h3 id="form-title">➕ Add New Sequence</h3>
+        <h3 id="form-title" class="form-title-add">Add New Sequence</h3>
         
         <!-- Loading overlay -->
         <div id="form-loading-overlay" class="loading-overlay" style="display: none;">
@@ -136,6 +138,19 @@
                         </div>
                     </div>
                     
+                    <!-- File upload section -->
+                    <div class="file-upload-section">
+                        <label for="audio-file-input" class="file-upload-label">
+                            📁 Or upload audio file
+                        </label>
+                        <input type="file" id="audio-file-input" accept="audio/*,.m4a,.mp3,.wav,.ogg,.aac" 
+                               style="display: none;">
+                        <button type="button" id="upload-file-btn" class="upload-file-btn">
+                            Choose File
+                        </button>
+                        <span id="file-name-display" class="file-name-display"></span>
+                    </div>
+                    
                     <div id="upload-status" class="upload-status" style="display: none;">
                         <span class="status-text"></span>
                     </div>
@@ -161,9 +176,6 @@
             <button type="submit" class="btn btn-primary" id="submit-btn">Add Sequence</button>
         </div>
     </form>
-    
-    <!-- Configuration -->
-    <script src="config.js"></script>
     
     <!-- Core app -->
     <script src="app.js"></script>

@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Phone Configuration Switcher</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            padding: 2rem;
+            max-width: 500px;
+            width: 100%;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 0.5rem;
+            font-size: 1.8rem;
+        }
+        
+        .subtitle {
+            color: #666;
+            margin-bottom: 2rem;
+        }
+        
+        .current-config {
+            background: #f0f0f0;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 2rem;
+        }
+        
+        .current-config strong {
+            color: #667eea;
+            font-size: 1.1rem;
+        }
+        
+        .config-buttons {
+            display: grid;
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+        
+        .config-btn {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 1.2rem;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            background: white;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-size: 1rem;
+        }
+        
+        .config-btn:hover {
+            border-color: #667eea;
+            background: #f8f9ff;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
+        }
+        
+        .config-btn.active {
+            border-color: #667eea;
+            background: #f0f3ff;
+        }
+        
+        .config-info {
+            flex: 1;
+        }
+        
+        .config-name {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 0.25rem;
+        }
+        
+        .config-desc {
+            font-size: 0.85rem;
+            color: #666;
+        }
+        
+        .config-icon {
+            font-size: 2rem;
+            margin-right: 1rem;
+        }
+        
+        .action-buttons {
+            display: grid;
+            gap: 0.5rem;
+        }
+        
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 6px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: 500;
+        }
+        
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #5568d3;
+        }
+        
+        .btn-secondary {
+            background: #e0e0e0;
+            color: #333;
+        }
+        
+        .btn-secondary:hover {
+            background: #d0d0d0;
+        }
+        
+        .info-box {
+            background: #fff9e6;
+            border: 1px solid #ffe066;
+            border-radius: 6px;
+            padding: 1rem;
+            margin-top: 1rem;
+            font-size: 0.9rem;
+            color: #666;
+        }
+        
+        .status {
+            display: none;
+            padding: 0.75rem;
+            border-radius: 6px;
+            margin-top: 1rem;
+            text-align: center;
+        }
+        
+        .status.success {
+            display: block;
+            background: #d4edda;
+            color: #155724;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📞 Phone Configuration</h1>
+        <p class="subtitle">Select which phone system to use</p>
+        
+        <div class="current-config">
+            <div>Current Configuration:</div>
+            <strong id="current-config-name">Loading...</strong>
+        </div>
+        
+        <div class="config-buttons">
+            <button class="config-btn" onclick="selectConfig('bowie')" id="btn-bowie">
+                <span class="config-icon">📞</span>
+                <div class="config-info">
+                    <div class="config-name">Bowie Phone</div>
+                    <div class="config-desc">Green theme • Original sequences</div>
+                </div>
+            </button>
+            
+            <button class="config-btn" onclick="selectConfig('brophone')" id="btn-brophone">
+                <span class="config-icon">📱</span>
+                <div class="config-info">
+                    <div class="config-name">BroPhone</div>
+                    <div class="config-desc">Blue theme • Alternative sequences</div>
+                </div>
+            </button>
+        </div>
+        
+        <div class="action-buttons">
+            <button class="btn btn-primary" onclick="applyConfig()">Apply Configuration</button>
+            <button class="btn btn-secondary" onclick="clearConfig()">Clear Cookie</button>
+        </div>
+        
+        <div id="status" class="status"></div>
+        
+        <div class="info-box">
+            💡 Your selection is saved in a cookie and will persist across visits.
+        </div>
+    </div>
+    
+    <script>
+        let selectedConfig = null;
+        
+        function getCookie(name) {
+            const value = `; ${document.cookie}`;
+            const parts = value.split(`; ${name}=`);
+            if (parts.length === 2) {
+                return parts.pop().split(';').shift();
+            }
+            return null;
+        }
+        
+        function setCookie(name, value, days = 365) {
+            const expires = new Date();
+            expires.setTime(expires.getTime() + (days * 24 * 60 * 60 * 1000));
+            const domain = window.location.hostname.includes('infinitebutts.com') 
+                ? ';domain=.infinitebutts.com' 
+                : '';
+            document.cookie = `${name}=${value};expires=${expires.toUTCString()};path=/${domain};SameSite=Lax`;
+        }
+        
+        function deleteCookie(name) {
+            const domain = window.location.hostname.includes('infinitebutts.com') 
+                ? ';domain=.infinitebutts.com' 
+                : '';
+            document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 UTC;path=/${domain}`;
+        }
+        
+        function selectConfig(config) {
+            selectedConfig = config;
+            
+            // Update UI
+            document.querySelectorAll('.config-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            document.getElementById(`btn-${config}`).classList.add('active');
+            
+            // Hide status
+            document.getElementById('status').classList.remove('success');
+            document.getElementById('status').style.display = 'none';
+        }
+        
+        function applyConfig() {
+            if (!selectedConfig) {
+                alert('Please select a configuration first');
+                return;
+            }
+            
+            setCookie('phone-config', selectedConfig);
+            
+            // Show success message
+            const status = document.getElementById('status');
+            status.textContent = `✅ Configuration set to ${selectedConfig}. Redirecting...`;
+            status.classList.add('success');
+            
+            // Update current config display
+            updateCurrentConfig();
+            
+            // Redirect after a moment
+            setTimeout(() => {
+                window.location.href = window.location.hostname.includes('infinitebutts.com')
+                    ? 'https://phone.infinitebutts.com'
+                    : 'index.html';
+            }, 1500);
+        }
+        
+        function clearConfig() {
+            deleteCookie('phone-config');
+            selectedConfig = null;
+            
+            // Update UI
+            document.querySelectorAll('.config-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            
+            updateCurrentConfig();
+            
+            // Show message
+            const status = document.getElementById('status');
+            status.textContent = '🗑️ Cookie cleared. Default configuration will be used.';
+            status.classList.add('success');
+        }
+        
+        function updateCurrentConfig() {
+            const current = getCookie('phone-config');
+            const display = document.getElementById('current-config-name');
+            
+            if (current) {
+                display.textContent = current.charAt(0).toUpperCase() + current.slice(1);
+                // Highlight current button
+                const btn = document.getElementById(`btn-${current}`);
+                if (btn && !selectedConfig) {
+                    btn.classList.add('active');
+                }
+            } else {
+                display.textContent = 'None (using default)';
+            }
+        }
+        
+        // Initialize
+        updateCurrentConfig();
+    </script>
+</body>
+</html>

@@ -146,4 +146,9 @@
     --modal-backdrop-opacity: 0.7;
     --item-gap: var(--spacing-md);
     --item-padding: var(--spacing-md);
+    
+    /* === ICON CONTENT === */
+    /* These can be customized in theme overrides */
+    --icon-add: '+';           /* Default: plus sign */
+    --icon-edit: '✏';          /* Default: pencil */
 }

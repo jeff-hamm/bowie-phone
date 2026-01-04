@@ -272,8 +272,8 @@ class PhoneSequenceApp {
                 <div class="empty-state">
                     <div class="empty-state-icon">📞</div>
                     <div class="empty-state-text">No sequences yet</div>
-                    <button class="btn btn-primary" onclick="phoneApp.showAddModal()">
-                        ➕ Add Your First Sequence
+                    <button class="btn btn-primary add-first-btn" onclick="phoneApp.showAddModal()">
+                        Add Your First Sequence
                     </button>
                 </div>
             `;
@@ -446,7 +446,9 @@ class PhoneSequenceApp {
         this.editingSequenceId = null;
         this.resetForm();
         
-        document.getElementById('form-title').textContent = '➕ Add New Sequence';
+        const formTitle = document.getElementById('form-title');
+        formTitle.textContent = 'Add New Sequence';
+        formTitle.className = 'form-title-add';
         document.getElementById('submit-btn').textContent = 'Add Sequence';
 
         this.updateSubmitButtonState();
@@ -473,7 +475,9 @@ class PhoneSequenceApp {
             urlToggle.textContent = 'Show URL input';
         }
         
-        document.getElementById('form-title').textContent = '✏️ Edit Sequence';
+        const formTitle = document.getElementById('form-title');
+        formTitle.textContent = 'Edit Sequence';
+        formTitle.className = 'form-title-edit';
         document.getElementById('submit-btn').textContent = 'Save Changes';
         
         // Fill form
@@ -635,6 +639,8 @@ class PhoneSequenceApp {
         const recordBtn = document.getElementById('record-btn');
         const acceptBtn = document.getElementById('accept-audio-btn');
         const retryBtn = document.getElementById('retry-audio-btn');
+        const uploadBtn = document.getElementById('upload-file-btn');
+        const fileInput = document.getElementById('audio-file-input');
         
         if (recordBtn) {
             recordBtn.addEventListener('click', () => this.toggleRecording());
@@ -647,8 +653,60 @@ class PhoneSequenceApp {
         if (retryBtn) {
             retryBtn.addEventListener('click', () => this.retryRecording());
         }
+        
+        if (uploadBtn) {
+            uploadBtn.addEventListener('click', () => {
+                fileInput?.click();
+            });
+        }
+        
+        if (fileInput) {
+            fileInput.addEventListener('change', (e) => this.handleFileSelect(e));
+        }
     }
 
+    async handleFileSelect(event) {
+        const file = event.target.files?.[0];
+        if (!file) return;
+        
+        // Validate file type
+        const validTypes = ['audio/mpeg', 'audio/mp3', 'audio/mp4', 'audio/m4a', 'audio/wav', 'audio/ogg', 'audio/aac', 'audio/x-m4a'];
+        const validExtensions = ['.mp3', '.m4a', '.wav', '.ogg', '.aac'];
+        const hasValidType = validTypes.some(type => file.type.includes(type.split('/')[1]));
+        const hasValidExt = validExtensions.some(ext => file.name.toLowerCase().endsWith(ext));
+        
+        if (!hasValidType && !hasValidExt) {
+            this.showError('Invalid file type. Please select an audio file (MP3, M4A, WAV, OGG, or AAC).');
+            event.target.value = '';
+            return;
+        }
+        
+        // Check file size (50MB limit)
+        const maxSize = 50 * 1024 * 1024;
+        if (file.size > maxSize) {
+            this.showError('File is too large. Maximum size is 50MB.');
+            event.target.value = '';
+            return;
+        }
+        
+        // Store the file as a blob
+        this.recordedBlob = file;
+        this.recordingMimeType = file.type || 'audio/wav';
+        
+        // Update UI
+        const fileNameDisplay = document.getElementById('file-name-display');
+        if (fileNameDisplay) {
+            fileNameDisplay.textContent = `✓ ${file.name}`;
+            fileNameDisplay.style.color = 'var(--success-color, #4CAF50)';
+        }
+        
+        console.log(`📁 File selected: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)`);
+        
+        // Show playback preview
+        const fileUrl = URL.createObjectURL(file);
+        await this.showPlayback(fileUrl, { showAccept: true });
+    }
+    
     async toggleRecording() {
         if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
             this.stopRecording();
@@ -1035,6 +1093,8 @@ class PhoneSequenceApp {
         const timerEl = document.getElementById('recording-timer');
         const statusEl = document.getElementById('upload-status');
         const acceptBtn = document.getElementById('accept-audio-btn');
+        const fileInput = document.getElementById('audio-file-input');
+        const fileNameDisplay = document.getElementById('file-name-display');
         
         if (playback) playback.style.display = 'none';
         if (recordBtn) {
@@ -1047,6 +1107,8 @@ class PhoneSequenceApp {
         }
         if (statusEl) statusEl.style.display = 'none';
         if (acceptBtn) acceptBtn.style.display = '';
+        if (fileInput) fileInput.value = '';
+        if (fileNameDisplay) fileNameDisplay.textContent = '';
         
         this.recordedBlob = null;
         this.audioChunks = [];

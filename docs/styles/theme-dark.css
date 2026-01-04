@@ -1,0 +1,110 @@
+/**
+ * Dark Theme for Phone Sequence Manager
+ * Purple/dark color scheme
+ */
+
+:root {
+    /* Dark purple color scheme */
+    --primary-color: #9C27B0;
+    --primary-light: #BA68C8;
+    --primary-dark: #7B1FA2;
+    
+    /* Accent colors */
+    --accent-color: #E91E63;
+    --accent-light: #F06292;
+    --accent-dark: #C2185B;
+    
+    /* Dark backgrounds */
+    --bg-primary: #1a1a1a;
+    --bg-secondary: #2d2d2d;
+    --bg-tertiary: #3d3d3d;
+    --bg-hover: #4a4a4a;
+    
+    /* Text colors for dark theme */
+    --text-primary: #FFFFFF;
+    --text-secondary: #B0B0B0;
+    --text-on-primary: #FFFFFF;
+    
+    /* Border colors */
+    --border-color: #4a4a4a;
+    --border-focus: #9C27B0;
+}
+
+/* Dark theme overrides */
+body {
+    background: var(--bg-primary);
+    color: var(--text-primary);
+}
+
+.app-container {
+    background: var(--bg-secondary);
+}
+
+.header-section {
+    background: linear-gradient(135deg, var(--primary-dark) 0%, var(--accent-dark) 100%);
+}
+
+.floating-add-btn {
+    background: var(--accent-color);
+    color: var(--text-on-primary);
+}
+
+.floating-add-btn:hover {
+    background: var(--accent-light);
+}
+
+.sequence-card {
+    background: var(--bg-tertiary);
+    border-left: 4px solid var(--primary-color);
+    color: var(--text-primary);
+}
+
+.sequence-card:hover {
+    background: var(--bg-hover);
+    border-left-color: var(--accent-color);
+}
+
+.controls-bar {
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.search-input {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+}
+
+.search-input:focus {
+    border-color: var(--border-focus);
+    background: var(--bg-primary);
+}
+
+.modal-form {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+}
+
+.modal-backdrop {
+    background: rgba(0, 0, 0, 0.85);
+}
+
+input, select, textarea {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+}
+
+input:focus, select:focus, textarea:focus {
+    border-color: var(--border-focus);
+}
+
+button {
+    background: var(--primary-color);
+    color: var(--text-on-primary);
+}
+
+button:hover {
+    background: var(--primary-light);
+}

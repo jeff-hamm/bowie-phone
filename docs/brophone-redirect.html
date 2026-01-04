@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BroPhone - Redirecting...</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            color: white;
+        }
+        .container {
+            text-align: center;
+            padding: 2rem;
+        }
+        h1 {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+        p {
+            font-size: 1.2rem;
+            opacity: 0.9;
+        }
+        .spinner {
+            margin: 2rem auto;
+            width: 50px;
+            height: 50px;
+            border: 5px solid rgba(255, 255, 255, 0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📞 BroPhone</h1>
+        <div class="spinner"></div>
+        <p>Setting up BroPhone configuration...</p>
+        <p><small>Redirecting to phone.infinitebutts.com</small></p>
+    </div>
+    
+    <script>
+        // Set the cookie
+        function setCookie(name, value, days = 365) {
+            const expires = new Date();
+            expires.setTime(expires.getTime() + (days * 24 * 60 * 60 * 1000));
+            document.cookie = `${name}=${value};expires=${expires.toUTCString()};path=/;domain=.infinitebutts.com;SameSite=Lax`;
+        }
+        
+        console.log('🍪 Setting BroPhone cookie');
+        setCookie('phone-config', 'brophone');
+        
+        // Redirect after a brief delay
+        setTimeout(() => {
+            console.log('➡️ Redirecting to phone.infinitebutts.com');
+            window.location.href = 'https://phone.infinitebutts.com';
+        }, 1000);
+    </script>
+</body>
+</html>

@@ -38,6 +38,7 @@ struct AudioDownloadItem
     char url[256];          ///< Original URL to download
     char localPath[128];    ///< Local SD card path for the file
     char description[64];   ///< Description for logging
+    char ext[8];            ///< File extension (e.g., "wav", "mp3")
     bool inProgress;        ///< Whether download is currently in progress
 };
 
@@ -113,17 +114,81 @@ static bool initializeSDCard()
 }
 
 /**
- * @brief Convert URL to filesystem-safe filename
+ * @brief Convert URL to filesystem-safe filename (base hash only, no collision avoidance)
  * @param url Original URL
  * @param filename Output buffer for filename (should be at least MAX_FILENAME_LENGTH)
+ * @param ext File extension to use (e.g., "wav", "mp3") - can be NULL to use default
  * @return true if conversion successful, false otherwise
  */
-static bool urlToFilename(const char* url, char* filename)
+static bool urlToBaseFilename(const char* url, char* filename, const char* ext = nullptr)
 {
     if (!url || !filename)
     {
         return false;
     }
+    
+    // Determine extension to use (default to mp3 if not specified)
+    const char* extension = (ext && strlen(ext) > 0) ? ext : "mp3";
+    
+    // Extract filename from URL path or generate from URL hash
+    const char* lastSlash = strrchr(url, '/');
+    const char* urlFilename = lastSlash ? (lastSlash + 1) : url;
+    
+    // If we have a proper filename with extension, use it
+    if (strlen(urlFilename) > 0 && strchr(urlFilename, '.'))
+    {
+        // Clean the filename - replace invalid characters
+        int j = 0;
+        for (int i = 0; urlFilename[i] && j < MAX_FILENAME_LENGTH - 1; i++)
+        {
+            char c = urlFilename[i];
+            // Allow alphanumeric, dots, hyphens, underscores
+            if (isalnum(c) || c == '.' || c == '-' || c == '_')
+            {
+                filename[j++] = c;
+            }
+            else if (c == ' ')
+            {
+                filename[j++] = '_';
+            }
+            // Skip other invalid characters
+        }
+        filename[j] = '\0';
+        
+        if (strlen(filename) > 0)
+        {
+            return true;
+        }
+    }
+    
+    // Generate filename from URL hash if no suitable filename found
+    unsigned long hash = 5381;
+    for (int i = 0; url[i]; i++)
+    {
+        hash = ((hash << 5) + hash) + url[i];
+    }
+    
+    // Just use the base filename without collision avoidance
+    snprintf(filename, MAX_FILENAME_LENGTH, "audio_%08lx.%s", hash, extension);
+    return true;
+}
+
+/**
+ * @brief Convert URL to filesystem-safe filename (with collision avoidance for new downloads)
+ * @param url Original URL
+ * @param filename Output buffer for filename (should be at least MAX_FILENAME_LENGTH)
+ * @param ext File extension to use (e.g., "wav", "mp3") - can be NULL to use default
+ * @return true if conversion successful, false otherwise
+ */
+static bool urlToFilename(const char* url, char* filename, const char* ext = nullptr)
+{
+    if (!url || !filename)
+    {
+        return false;
+    }
+    
+    // Determine extension to use (default to mp3 if not specified)
+    const char* extension = (ext && strlen(ext) > 0) ? ext : "mp3";
     
     // Extract filename from URL path or generate from URL hash
     const char* lastSlash = strrchr(url, '/');
@@ -165,7 +230,7 @@ static bool urlToFilename(const char* url, char* filename)
     
     // Check if file with this hash already exists; if so, add counter
     char baseFilename[MAX_FILENAME_LENGTH];
-    snprintf(baseFilename, MAX_FILENAME_LENGTH, "audio_%08lx.mp3", hash);
+    snprintf(baseFilename, MAX_FILENAME_LENGTH, "audio_%08lx.%s", hash, extension);
     
     // Check for hash collision by testing if file exists
     if (initializeSDCard())
@@ -178,7 +243,7 @@ static bool urlToFilename(const char* url, char* filename)
             // File exists, add a counter suffix
             for (int counter = 1; counter < 1000; counter++)
             {
-                snprintf(filename, MAX_FILENAME_LENGTH, "audio_%08lx_%d.mp3", hash, counter);
+                snprintf(filename, MAX_FILENAME_LENGTH, "audio_%08lx_%d.%s", hash, counter, extension);
                 snprintf(testPath, sizeof(testPath), "%s/%s", AUDIO_FILES_DIR, filename);
                 
                 if (!SD_EXISTS(testPath))
@@ -198,12 +263,13 @@ static bool urlToFilename(const char* url, char* filename)
 }
 
 /**
- * @brief Get local audio file path for a URL
+ * @brief Get local audio file path for a URL (uses base filename for lookups)
  * @param url Original URL
  * @param localPath Output buffer for local path
+ * @param ext File extension to use (e.g., "wav", "mp3") - can be NULL
  * @return true if path generated successfully, false otherwise
  */
-static bool getLocalAudioPath(const char* url, char* localPath)
+static bool getLocalAudioPath(const char* url, char* localPath, const char* ext = nullptr)
 {
     if (!url || !localPath)
     {
@@ -211,7 +277,8 @@ static bool getLocalAudioPath(const char* url, char* localPath)
     }
     
     char filename[MAX_FILENAME_LENGTH];
-    if (!urlToFilename(url, filename))
+    // Use base filename (without collision avoidance) for path lookups
+    if (!urlToBaseFilename(url, filename, ext))
     {
         return false;
     }
@@ -223,9 +290,10 @@ static bool getLocalAudioPath(const char* url, char* localPath)
 /**
  * @brief Check if audio file exists locally on SD card
  * @param url Original URL
+ * @param ext File extension (e.g., "wav", "mp3") - can be NULL
  * @return true if file exists locally, false otherwise
  */
-static bool audioFileExists(const char* url)
+static bool audioFileExists(const char* url, const char* ext = nullptr)
 {
     if (!initializeSDCard())
     {
@@ -233,7 +301,7 @@ static bool audioFileExists(const char* url)
     }
     
     char localPath[128];
-    if (!getLocalAudioPath(url, localPath))
+    if (!getLocalAudioPath(url, localPath, ext))
     {
         return false;
     }
@@ -302,9 +370,10 @@ static bool ensureAudioDirExists()
  * @brief Add audio file to download queue
  * @param url URL to download
  * @param description Description for logging
+ * @param ext File extension (e.g., "wav", "mp3") - can be NULL
  * @return true if added successfully, false otherwise
  */
-static bool addToDownloadQueue(const char *url, const char *description)
+static bool addToDownloadQueue(const char *url, const char *description, const char *ext = nullptr)
 {
     if (downloadQueueCount >= MAX_DOWNLOAD_QUEUE)
     {
@@ -327,7 +396,18 @@ static bool addToDownloadQueue(const char *url, const char *description)
     strncpy(item->url, url, sizeof(item->url) - 1);
     item->url[sizeof(item->url) - 1] = '\0';
 
-    if (!getLocalAudioPath(url, item->localPath))
+    // Store extension in the queue item
+    if (ext && strlen(ext) > 0)
+    {
+        strncpy(item->ext, ext, sizeof(item->ext) - 1);
+        item->ext[sizeof(item->ext) - 1] = '\0';
+    }
+    else
+    {
+        item->ext[0] = '\0';
+    }
+
+    if (!getLocalAudioPath(url, item->localPath, ext))
     {
         Logger.printf("❌ Failed to generate local path for: %s\n", url);
         return false;
@@ -366,6 +446,7 @@ static void enqueueMissingAudioFiles()
     {
         const char* type = audioFiles[i].type;
         const char* path = audioFiles[i].path;
+        const char* ext = audioFiles[i].ext;
 
         if (!type || strcmp(type, "audio") != 0)
         {
@@ -385,12 +466,12 @@ static void enqueueMissingAudioFiles()
             continue; // Local paths are already available
         }
 
-        if (audioFileExists(path))
+        if (audioFileExists(path, ext))
         {
             continue; // Already cached
         }
 
-        if (addToDownloadQueue(path, audioFiles[i].description))
+        if (addToDownloadQueue(path, audioFiles[i].description, ext))
         {
             queued++;
         }
@@ -459,6 +540,26 @@ static bool processDownloadQueueInternal()
     {
         // Get content length for progress tracking
         int contentLength = http.getSize();
+        
+        // Clean up any old files with different extensions for the same URL
+        // This handles cases where a file was previously downloaded with .mp3 but should now be .wav
+        char filenameBase[64];
+        urlToFilename(item->url, filenameBase, nullptr);  // Get base filename without extension
+        // Remove the .mp3 that urlToFilename adds when ext is null
+        char* dot = strrchr(filenameBase, '.');
+        if (dot) *dot = '\0';
+        
+        const char* extensions[] = {".mp3", ".wav", ".ogg", ".flac", ".aac"};
+        for (int i = 0; i < 5; i++)
+        {
+            char oldPath[128];
+            snprintf(oldPath, sizeof(oldPath), "%s/%s%s", AUDIO_FILES_DIR, filenameBase, extensions[i]);
+            if (strcmp(oldPath, item->localPath) != 0 && SD_EXISTS(oldPath))
+            {
+                Logger.printf("🗑️ Removing old file with wrong extension: %s\n", oldPath);
+                SD_REMOVE(oldPath);
+            }
+        }
         
         // Create file for writing
         File audioFile = SD_OPEN(item->localPath, FILE_WRITE);
@@ -593,6 +694,10 @@ static bool saveAudioFilesToSDCard()
         entry["description"] = audioFiles[i].description;
         entry["type"] = audioFiles[i].type;
         entry["path"] = audioFiles[i].path;
+        if (audioFiles[i].ext && strlen(audioFiles[i].ext) > 0)
+        {
+            entry["ext"] = audioFiles[i].ext;
+        }
     }
     
     // Open file for writing
@@ -716,6 +821,7 @@ static bool loadAudioFilesFromSDCard()
         audioFiles[audioFileCount].description = strdup(entryData["description"] | "Unknown");
         audioFiles[audioFileCount].type = strdup(entryData["type"] | "unknown");
         audioFiles[audioFileCount].path = strdup(entryData["path"] | "");
+        audioFiles[audioFileCount].ext = strdup(entryData["ext"] | "");
         
         audioFileCount++;
     }
@@ -753,14 +859,24 @@ void initializeAudioFileManager(int sdCsPin, bool mmcSupport, bool sdAvailable)
         Logger.println("✅ Audio files loaded from SD card cache");
         
         // Check if cache is stale
-        if (isCacheStale())
+        bool stale = isCacheStale();
+        if (stale)
         {
             Logger.println("⏰ Cache is stale, will refresh when WiFi is available");
         }
         listAudioKeys();
         
-        // Queue any missing remote audio files so downloads can start immediately
-        enqueueMissingAudioFiles();
+        // Only queue downloads from cache if it's NOT stale
+        // If stale, we'll get a fresh catalog with correct extensions first
+        if (!stale)
+        {
+            // Queue any missing remote audio files so downloads can start immediately
+            enqueueMissingAudioFiles();
+        }
+        else
+        {
+            Logger.println("ℹ️ Deferring download queue until catalog is refreshed");
+        }
     }
     else
     {
@@ -786,13 +902,32 @@ bool downloadAudio()
         return true;
     }
     
+    // Build catalog URL with streaming parameter
+    // - SD card available: streaming=false -> direct Drive download URLs for caching
+    // - URL streaming mode: streaming=true -> authenticated URLs for real-time playback
+    String catalogUrl = KNOWN_SEQUENCES_URL;
+    
+    // Check if URL already has query parameters
+    if (catalogUrl.indexOf('?') >= 0) {
+        catalogUrl += "&streaming=";
+    } else {
+        catalogUrl += "?streaming=";
+    }
+    catalogUrl += sdCardAvailable ? "false" : "true";
+    
+    if (sdCardAvailable) {
+        Logger.println("💾 SD card available - requesting direct download URLs");
+    } else {
+        Logger.println("🌐 URL streaming mode - requesting authenticated URLs");
+    }
+    
     HTTPClient http;
-    http.begin(KNOWN_SEQUENCES_URL);
+    http.begin(catalogUrl);
     http.addHeader("Content-Type", "application/json");
     http.addHeader("User-Agent", USER_AGENT_HEADER);
     http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
     
-    Logger.printf("📡 Making GET request to: %s\n", KNOWN_SEQUENCES_URL);
+    Logger.printf("📡 Making GET request to: %s\n", catalogUrl.c_str());
     
     int httpResponseCode = http.GET();
     
@@ -831,6 +966,7 @@ bool downloadAudio()
         free((void*)audioFiles[i].description);
         free((void*)audioFiles[i].type);
         free((void*)audioFiles[i].path);
+        free((void*)audioFiles[i].ext);
     }
     audioFileCount = 0;
     
@@ -852,11 +988,15 @@ bool downloadAudio()
         audioFiles[audioFileCount].description = strdup(entryData["description"] | "Unknown");
         audioFiles[audioFileCount].type = strdup(entryData["type"] | "unknown");
         audioFiles[audioFileCount].path = strdup(entryData["path"] | "");
+        audioFiles[audioFileCount].ext = strdup(entryData["ext"] | "");
         
-        Logger.printf("📝 Added: %s -> %s (%s)\n", 
+        const char* extInfo = audioFiles[audioFileCount].ext;
+        Logger.printf("📝 Added: %s -> %s (%s%s%s)\n", 
                      audioFiles[audioFileCount].audioKey,
                      audioFiles[audioFileCount].description,
-                     audioFiles[audioFileCount].type);
+                     audioFiles[audioFileCount].type,
+                     (extInfo && strlen(extInfo) > 0) ? ", ." : "",
+                     (extInfo && strlen(extInfo) > 0) ? extInfo : "");
         
         audioFileCount++;
     }
@@ -876,6 +1016,10 @@ bool downloadAudio()
             Logger.println("⚠️ Failed to cache files list to SD card");
         }
 
+        // Clear old download queue before re-populating with new extensions
+        downloadQueueCount = 0;
+        downloadQueueIndex = 0;
+        
         // Queue any missing remote audio files now that the list is refreshed
         enqueueMissingAudioFiles();
     }
@@ -987,11 +1131,11 @@ const char* processAudioKey(const char *key)
             }
             
             // SD card mode - check for local cached version
-            if (audioFileExists(found->path))
+            if (audioFileExists(found->path, found->ext))
             {
                 // File exists locally - return path for playback
                 static char localPath[128];
-                if (getLocalAudioPath(found->path, localPath))
+                if (getLocalAudioPath(found->path, localPath, found->ext))
                 {
                     Logger.printf("🎵 Audio file found locally: %s\n", localPath);
                     return localPath;
@@ -1006,7 +1150,7 @@ const char* processAudioKey(const char *key)
             {
                 // File doesn't exist - add to download queue
                 Logger.printf("📥 Audio file not cached, adding to download queue\n");
-                if (addToDownloadQueue(found->path, found->description))
+                if (addToDownloadQueue(found->path, found->description, found->ext))
                 {
                     Logger.printf("✅ Added to download queue: %s\n", found->description);
                 }
@@ -1092,6 +1236,7 @@ void clearAudioKeys()
         free((void*)audioFiles[i].description);
         free((void*)audioFiles[i].type);
         free((void*)audioFiles[i].path);
+        free((void*)audioFiles[i].ext);
     }
     
     int clearedCount = audioFileCount;
@@ -1139,6 +1284,22 @@ void clearAudioKeys()
     Logger.printf("✅ Cleared %d audio files from memory\n", clearedCount);
 }
 
+void invalidateAudioCache()
+{
+    Logger.println("🔄 Invalidating audio cache...");
+    lastCacheTime = 0;  // Force cache to be considered stale
+    
+    // Also remove timestamp file from SD card
+    if (sdCardAvailable && initializeSDCard())
+    {
+        if (SD_EXISTS(CACHE_TIMESTAMP_FILE))
+        {
+            SD_REMOVE(CACHE_TIMESTAMP_FILE);
+        }
+    }
+    Logger.println("✅ Cache invalidated - next download will fetch fresh data");
+}
+
 // ============================================================================
 // DOWNLOAD QUEUE MANAGEMENT FUNCTIONS
 // ============================================================================
@@ -1146,7 +1307,7 @@ void clearAudioKeys()
 bool processAudioDownloadQueue()
 {
     // Skip if SD card is not available - audio files need SD storage
-    if (!sdCardAvailable)
+    if (!initializeSDCard())
     {
         return false;
     }

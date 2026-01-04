@@ -68,6 +68,7 @@ struct AudioFile
     const char *description; ///< Human-readable description
     const char *type;        ///< Entry type (e.g., "audio", "service", "shortcut", "url")
     const char *path;        ///< File path or URL
+    const char *ext;         ///< File extension (e.g., "wav", "mp3") - from server metadata
 };
 
 // ============================================================================
@@ -148,6 +149,13 @@ int getAudioKeyCount();
  * Frees allocated memory and clears cached data.
  */
 void clearAudioKeys();
+
+/**
+ * @brief Invalidate cache and force re-download on next call
+ * 
+ * Use this before downloadAudio() to force a fresh download.
+ */
+void invalidateAudioCache();
 
 // ============================================================================
 // DOWNLOAD QUEUE MANAGEMENT FUNCTIONS

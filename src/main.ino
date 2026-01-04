@@ -29,6 +29,42 @@ int channels = 2;
 int samples_per_second = 44100;
 int bits_per_sample = 16;
 
+// Key pins for AudioKit board (active LOW)
+// These may conflict with other functions depending on DIP switch settings
+const int KEY_PINS[] = {36, 13, 19, 23, 18, 5};  // KEY1-KEY6
+const int NUM_KEYS = 6;
+
+// Tailscale enable flag - set at boot based on key press
+static bool tailscaleEnabled = false;
+
+// Scan all keys and return a bitmask of pressed keys (active LOW)
+uint8_t scanKeys() {
+    uint8_t pressed = 0;
+    for (int i = 0; i < NUM_KEYS; i++) {
+        if (KEY_PINS[i] >= 0) {
+            pinMode(KEY_PINS[i], INPUT_PULLUP);
+            if (digitalRead(KEY_PINS[i]) == LOW) {
+                pressed |= (1 << i);
+            }
+        }
+    }
+    return pressed;
+}
+
+// Print which keys are pressed
+void printKeyState() {
+    Logger.println("🔧 [DEBUG] Scanning keys (active LOW):");
+    for (int i = 0; i < NUM_KEYS; i++) {
+        if (KEY_PINS[i] >= 0) {
+            pinMode(KEY_PINS[i], INPUT_PULLUP);
+            int state = digitalRead(KEY_PINS[i]);
+            Logger.printf("   KEY%d (GPIO%d): %s\n", i + 1, KEY_PINS[i], state == LOW ? "PRESSED" : "released");
+        } else {
+            Logger.printf("   KEY%d: not available\n", i + 1);
+        }
+    }
+}
+
 // Serial debug mode buffer
 #ifdef DEBUG
 static char serialDebugBuffer[64];
@@ -64,7 +100,57 @@ void processSerialDebugInput() {
                     Logger.println("   <digits>     - Simulate DTMF sequence (e.g., 6969, 888)");
                     Logger.println("   <freq>hz     - FFT test tone (e.g., 697hz)");
                     Logger.println("   state        - Show current state");
+                    Logger.println("   dns          - Test DNS resolution");
+                    Logger.println("   keys         - Scan hardware keys");
+                    Logger.println("   vpn          - Show VPN/Tailscale status");
+                    Logger.println("   refresh      - Re-download audio catalog");
                     Logger.println("   help         - Show this help");
+                }
+                else if (cmd.equalsIgnoreCase("refresh")) {
+                    // Force re-download of audio catalog
+                    Logger.println("🔧 [DEBUG] Refreshing audio catalog...");
+                    invalidateAudioCache();  // Force fresh download
+                    if (downloadAudio()) {
+                        Logger.println("✅ Audio catalog refreshed successfully");
+                        listAudioKeys();  // Show what was loaded
+                    } else {
+                        Logger.println("❌ Audio catalog refresh failed");
+                    }
+                }
+                else if (cmd.equalsIgnoreCase("dns")) {
+                    // Test DNS resolution
+                    Logger.println("🔧 [DEBUG] Testing DNS resolution...");
+                    Logger.printf("   WiFi status: %s\n", WiFi.status() == WL_CONNECTED ? "Connected" : "Disconnected");
+                    Logger.printf("   Local IP: %s\n", WiFi.localIP().toString().c_str());
+                    Logger.printf("   DNS1: %s\n", WiFi.dnsIP(0).toString().c_str());
+                    Logger.printf("   DNS2: %s\n", WiFi.dnsIP(1).toString().c_str());
+                    
+                    IPAddress resolved;
+                    Logger.print("   Resolving www.googleapis.com... ");
+                    if (WiFi.hostByName("www.googleapis.com", resolved)) {
+                        Logger.printf("OK -> %s\n", resolved.toString().c_str());
+                    } else {
+                        Logger.println("FAILED");
+                    }
+                    Logger.print("   Resolving google.com... ");
+                    if (WiFi.hostByName("google.com", resolved)) {
+                        Logger.printf("OK -> %s\n", resolved.toString().c_str());
+                    } else {
+                        Logger.println("FAILED");
+                    }
+                }
+                else if (cmd.equalsIgnoreCase("keys")) {
+                    // Scan and print key states
+                    printKeyState();
+                }
+                else if (cmd.equalsIgnoreCase("vpn")) {
+                    // Show VPN status and allow toggling
+                    Logger.printf("🔧 [DEBUG] Tailscale: enabled=%s, connected=%s\n",
+                        tailscaleEnabled ? "YES" : "NO",
+                        isTailscaleConnected() ? "YES" : "NO");
+                    if (isTailscaleConnected()) {
+                        Logger.printf("   Tailscale IP: %s\n", getTailscaleIP() ? getTailscaleIP() : "unknown");
+                    }
                 }
                 else if (cmd.equalsIgnoreCase("state")) {
                     Logger.printf("🔧 [DEBUG] State: Hook=%s, Audio=%s\n", 
@@ -144,6 +230,20 @@ void setup()
     Logger.addLogger(Serial);
 
     Logger.printf("\n\n=== Bowie Phone Starting ===\n");
+    
+    // Check if KEY1 (GPIO36) is held during boot to enable Tailscale VPN
+    // KEY1 is the left-most button
+    pinMode(36, INPUT_PULLUP);
+    delay(50);  // Debounce
+    if (digitalRead(36) == LOW) {
+        tailscaleEnabled = true;
+        Logger.println("🔐 KEY1 held at boot - Tailscale VPN ENABLED");
+    } else {
+        tailscaleEnabled = false;
+        Logger.println("🌐 Tailscale VPN DISABLED (hold KEY1 during boot to enable)");
+    }
+    
+    // Reduce AudioTools library logging to Warning level to minimize noise
     AudioToolsLogger.begin(Serial, AudioToolsLogLevel::Warning);
 
     // Initialize AudioKit FIRST with sd_active=false
@@ -211,7 +311,7 @@ void setup()
     } else {
 //        Create AudioSourceSD now that SPI is initialized
 //        Pass custom SPI instance for ESP32-A1S AudioKit pins
-        source = new AudioSourceSD(startFilePath, "na", SD_CS, SPI);
+        source = new AudioSourceSD(startFilePath, "wav", SD_CS, SPI);
         Logger.println("✅ AudioSourceSD created");
    }
 
@@ -220,8 +320,13 @@ void setup()
     initializeAudioFileManager(SD_CS, false, sdCardAvailable);
 
     // Initialize Audio Player with event callback
+    // Register MP3 decoder
     multi_decoder.addDecoder(mp3_decoder, "audio/mpeg");
+    // Register WAV decoder with all common MIME types
+    // WAV files can be detected as audio/wav, audio/wave, or audio/vnd.wave
     multi_decoder.addDecoder(wav_decoder, "audio/wav");
+    multi_decoder.addDecoder(wav_decoder, "audio/vnd.wave");
+    multi_decoder.addDecoder(wav_decoder, "audio/wave");
     
 #if FORCE_URL_STREAMING
     // Force URL streaming mode even if SD card is available
@@ -241,9 +346,15 @@ void setup()
     }
 #endif
 
-    // // Setup FFT for DTMF detection
+    // Initialize synthesized dial tone generator (350 + 440 Hz)
+    initDialToneGenerator(kit);
+
+    // Setup FFT for DTMF detection
+    // DTMF tones are 40-100ms, so we need fast time resolution
+    // 2048 samples @ 44100Hz = 46ms window with ~21.5 Hz bin width
+    // This is sufficient since DTMF frequencies are at least 70Hz apart
     auto tcfg = fft.defaultConfig();
-    tcfg.length = 8192;
+    tcfg.length = 2048;  // 46ms window - good for DTMF timing
     tcfg.channels = channels;
     tcfg.sample_rate = samples_per_second;
     tcfg.bits_per_sample = bits_per_sample;
@@ -269,9 +380,13 @@ void setup()
             Logger.println("⚠️ Audio catalog download failed - will retry later");
         }
         
-        // Now initialize Tailscale VPN
-        Logger.println("🔐 WiFi connected - initializing Tailscale...");
-        initTailscaleFromConfig();
+        // Now initialize Tailscale VPN (only if enabled at boot)
+        if (tailscaleEnabled) {
+            Logger.println("🔐 WiFi connected - initializing Tailscale...");
+            initTailscaleFromConfig();
+        } else {
+            Logger.println("🌐 Tailscale skipped (not enabled at boot)");
+        }
     });
     
     // Skip Tailscale reconnection when phone is off hook (blocking call interrupts DTMF)
@@ -319,8 +434,10 @@ void loop()
     // Handle WiFi management (config portal and OTA)
     handleWiFiLoop();
 
-    // Handle Tailscale VPN keepalive/reconnection
-    handleTailscaleLoop();
+    // Handle Tailscale VPN keepalive/reconnection (only if enabled)
+    if (tailscaleEnabled) {
+        handleTailscaleLoop();
+    }
 
 #ifdef DEBUG
     // Process serial debug commands
@@ -365,7 +482,51 @@ void loop()
     //     return;
     // }
 
-    // Process audio download queue (non-blocking)
+    // Handle audio playback FIRST - highest priority for smooth audio
+    if (isAudioActive())
+    {
+        // During synthesized dial tone, just output smoothly
+        // DTMF detection during dial tone is problematic because the speaker output
+        // feeds back into the mic, corrupting the FFT analysis
+        if (isSynthDialTonePlaying())
+        {
+            // Process dial tone output - use StreamCopy for smooth playback
+            processDialTone();
+            processDialTone();
+            processDialTone();
+            processDialTone();
+            
+            // For now, skip DTMF detection during dial tone
+            // The mic picks up the dial tone output, making detection unreliable
+            // TODO: Add acoustic echo cancellation or use hardware DTMF decoder
+            return;
+        }
+        
+        // For non-dial-tone audio, normal processing with DTMF detection
+        processAudio();
+        processAudio();
+        processAudio();
+        processAudio();
+        
+        // Periodically check for DTMF input during other audio playback
+        static unsigned long lastDTMFCheck = 0;
+        if (Phone.isOffHook() && millis() - lastDTMFCheck > 100)
+        {
+            lastDTMFCheck = millis();
+            copier.copy();
+            
+            const char* audioPath = readDTMFSequence();
+            if (audioPath)
+            {
+                playAudioPath(audioPath);
+            }
+        }
+        
+        // Skip download queue processing during audio playback
+        return;
+    }
+
+    // Process audio download queue (non-blocking) - only when not playing audio
     static unsigned long lastDownloadCheck = 0;
     if (millis() - lastDownloadCheck > 1000) // Check every second
     {
@@ -373,22 +534,16 @@ void loop()
         lastDownloadCheck = millis();
     }
 
-    // Only process if phone is off hook
+    // Only process DTMF if phone is off hook
     if (!Phone.isOffHook())
     {
         return; // Phone is on hook, nothing to do
     }
 
-    // Always process audio input for DTMF detection (even during playback in RXTX_MODE)
+    // Process audio input for DTMF detection (only when not playing audio)
     size_t bytesCopied = copier.copy();
     if (bytesCopied > 0) {
         Logger.debugf("🎤 Copied %u bytes to FFT\n", bytesCopied);
-    }
-
-    // Handle audio playback
-    if (isAudioActive())
-    {
-        processAudio();
     }
 
     // Check for complete DTMF sequences and play audio if ready

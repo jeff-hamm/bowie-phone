@@ -1,5 +1,4 @@
 #include "dtmf_decoder.h"
-#include "logging.h"
 #include "AudioTools/AudioLibs/AudioBoardStream.h"
 #include "AudioTools/AudioLibs/AudioRealFFT.h" // or AudioKissFFT
 
@@ -52,9 +51,10 @@ const int SUMMED_FREQ_TABLE_SIZE = sizeof(SUMMED_FREQ_TABLE) / sizeof(SummedFreq
 const float SUMMED_FREQ_TOLERANCE = 40.0;  // Hz tolerance for matching (reduced to differentiate adjacent buttons)
 
 // Detection parameters
-const float MAGNITUDE_THRESHOLD = 20.0;       // Minimum magnitude for detection (lowered significantly)
-const float FREQ_TOLERANCE = 25.0;            // Frequency tolerance in Hz (slightly increased)
-const unsigned long DETECTION_COOLDOWN = 200; // 200ms between detections (reduced for responsiveness)
+const float MAGNITUDE_THRESHOLD = 15.0;       // Minimum magnitude for detection (increased to reduce false positives)
+const float FREQ_TOLERANCE = 45.0;            // Frequency tolerance in Hz
+const unsigned long DETECTION_COOLDOWN = 120; // 120ms between detections (prevent double-detection)
+const unsigned long GAP_THRESHOLD = 80;       // 80ms silence = new button press
 
 // Global variables for DTMF detection
 FrequencyPeak detectedPeaks[10];
@@ -65,8 +65,10 @@ unsigned long lastDetectionTime = 0;
 static char lastDetectedButton = 0;
 static unsigned long lastButtonTime = 0;
 static int consecutiveDetections = 0;
-const int REQUIRED_CONSECUTIVE = 1;  // Require 2 consecutive detections to confirm
+const int REQUIRED_CONSECUTIVE = 2;  // Require 2 consecutive detections to confirm (reduces noise)
 static char confirmedButton = 0;     // Button that passed consecutive detection threshold
+static unsigned long lastSignalTime = 0;  // When we last saw a strong signal (for gap detection)
+static bool inGap = true;            // True when we haven't seen signal recently
 
 // Debug: track max magnitude seen for signal level monitoring
 #ifdef DEBUG_FFT_ALL
@@ -133,7 +135,7 @@ char analyzeDTMF()
   // Only show debug for meaningful peak counts to reduce spam
   if (peakCount >= 2)
   {
-    Logger.debugf("DEBUG: analyzeDTMF() called with %d peaks\n", peakCount);
+    Serial.printf("DEBUG: analyzeDTMF() called with %d peaks\n", peakCount);
   }
 #endif
 
@@ -145,10 +147,10 @@ char analyzeDTMF()
 
 #ifdef DEBUG
   // Debug: Print all detected peaks
-  Logger.debugf("DEBUG: Detected frequency peaks:\n");
+  Serial.printf("DEBUG: Detected frequency peaks:\n");
   for (int i = 0; i < peakCount; i++)
   {
-    Logger.debugf("  Peak %d: %.1fHz (mag: %.1f)\n",
+    Serial.printf("  Peak %d: %.1fHz (mag: %.1f)\n",
                   i, detectedPeaks[i].frequency, detectedPeaks[i].magnitude);
   }
 #endif
@@ -166,14 +168,14 @@ char analyzeDTMF()
     if (findClosestDTMFFreq(freq, DTMF_ROW_FREQS, 4) >= 0)
     {
 #ifdef DEBUG
-      Logger.debugf("DEBUG: Found row frequency candidate: %.1fHz (mag: %.1f)\n", freq, mag);
+      Serial.printf("DEBUG: Found row frequency candidate: %.1fHz (mag: %.1f)\n", freq, mag);
 #endif
       if (mag > maxRowMagnitude)
       {
         maxRowMagnitude = mag;
         strongestRowFreq = freq;
 #ifdef DEBUG
-        Logger.debugf("DEBUG: New strongest row frequency: %.1fHz\n", freq);
+        Serial.printf("DEBUG: New strongest row frequency: %.1fHz\n", freq);
 #endif
       }
     }
@@ -182,21 +184,21 @@ char analyzeDTMF()
     if (findClosestDTMFFreq(freq, DTMF_COL_FREQS, 4) >= 0)
     {
 #ifdef DEBUG
-      Logger.debugf("DEBUG: Found column frequency candidate: %.1fHz (mag: %.1f)\n", freq, mag);
+      Serial.printf("DEBUG: Found column frequency candidate: %.1fHz (mag: %.1f)\n", freq, mag);
 #endif
       if (mag > maxColMagnitude)
       {
         maxColMagnitude = mag;
         strongestColFreq = freq;
 #ifdef DEBUG
-        Logger.debugf("DEBUG: New strongest column frequency: %.1fHz\n", freq);
+        Serial.printf("DEBUG: New strongest column frequency: %.1fHz\n", freq);
 #endif
       }
     }
   }
 
 #ifdef DEBUG
-  Logger.debugf("DEBUG: Final strongest frequencies - Row: %.1fHz, Column: %.1fHz\n",
+  Serial.printf("DEBUG: Final strongest frequencies - Row: %.1fHz, Column: %.1fHz\n",
                 strongestRowFreq, strongestColFreq);
 #endif
 
@@ -206,7 +208,7 @@ char analyzeDTMF()
     char dtmfChar = decodeDTMF(strongestRowFreq, strongestColFreq);
 
 #ifdef DEBUG
-    Logger.debugf("DEBUG: decodeDTMF returned: %c\n", dtmfChar ? dtmfChar : '0');
+    Serial.printf("DEBUG: decodeDTMF returned: %c\n", dtmfChar ? dtmfChar : '0');
 #endif
 
     if (dtmfChar != 0)
@@ -214,7 +216,7 @@ char analyzeDTMF()
       unsigned long currentTime = millis();
       if (currentTime - lastDetectionTime > DETECTION_COOLDOWN)
       {
-        Logger.printf("DTMF Detected: %c (Row: %.1fHz, Col: %.1fHz)\n",
+        Serial.printf("DTMF Detected: %c (Row: %.1fHz, Col: %.1fHz)\n",
                       dtmfChar, strongestRowFreq, strongestColFreq);
         lastDetectionTime = currentTime;
 
@@ -225,21 +227,21 @@ char analyzeDTMF()
       else
       {
 #ifdef DEBUG
-        Logger.debugf("DEBUG: DTMF detection in cooldown period\n");
+        Serial.printf("DEBUG: DTMF detection in cooldown period\n");
 #endif
       }
     }
     else
     {
 #ifdef DEBUG
-      Logger.debugf("DEBUG: Invalid DTMF character decoded\n");
+      Serial.printf("DEBUG: Invalid DTMF character decoded\n");
 #endif
     }
   }
   else
   {
 #ifdef DEBUG
-    Logger.debugf("DEBUG: Missing row or column frequency for DTMF\n");
+    Serial.printf("DEBUG: Missing row or column frequency for DTMF\n");
 #endif
   }
 
@@ -256,39 +258,64 @@ void fftResult(AudioFFTBase &fft)
   
   // Get FFT parameters for frequency calculation
   float sample_rate = 44100.0;  // Must match main.ino
-  int fft_length = 8192;        // Must match main.ino
-  float bin_width = sample_rate / fft_length;  // ~5.4 Hz per bin
+  int fft_length = 2048;        // Must match main.ino - 46ms window
+  float bin_width = sample_rate / fft_length;  // ~21.5 Hz per bin
   int num_bins = fft_length / 2;  // Nyquist limit
 
-  // Find the top peaks in the DTMF frequency range (600-1700 Hz)
-  int min_bin = (int)(600.0 / bin_width);
-  int max_bin = (int)(1700.0 / bin_width);
+  // DTMF uses two separate frequency bands:
+  // Row frequencies: 697, 770, 852, 941 Hz (low band: 650-1000 Hz)
+  // Column frequencies: 1209, 1336, 1477, 1633 Hz (high band: 1150-1700 Hz)
+  // We must find the strongest peak in EACH band separately
   
-  // Find the two strongest peaks
-  float peak1_mag = 0, peak2_mag = 0;
-  int peak1_bin = 0, peak2_bin = 0;
+  int low_min_bin = (int)(650.0 / bin_width);
+  int low_max_bin = (int)(1000.0 / bin_width);
+  int high_min_bin = (int)(1150.0 / bin_width);
+  int high_max_bin = (int)(1700.0 / bin_width);
   
-  for (int bin = min_bin; bin <= max_bin && bin < num_bins; bin++)
+  // Find strongest peak in LOW band (row frequencies)
+  float row_mag = 0;
+  int row_bin = 0;
+  for (int bin = low_min_bin; bin <= low_max_bin && bin < num_bins; bin++)
   {
     float mag = fft.magnitude(bin);
-    if (mag > peak1_mag)
+    if (mag > row_mag)
     {
-      // Shift peak1 to peak2
-      peak2_mag = peak1_mag;
-      peak2_bin = peak1_bin;
-      // New peak1
-      peak1_mag = mag;
-      peak1_bin = bin;
-    }
-    else if (mag > peak2_mag && abs(bin - peak1_bin) > 10)  // Must be at least ~54 Hz apart
-    {
-      peak2_mag = mag;
-      peak2_bin = bin;
+      row_mag = mag;
+      row_bin = bin;
     }
   }
   
-  float peak1_freq = peak1_bin * bin_width;
-  float peak2_freq = peak2_bin * bin_width;
+  // Find strongest peak in HIGH band (column frequencies)
+  float col_mag = 0;
+  int col_bin = 0;
+  for (int bin = high_min_bin; bin <= high_max_bin && bin < num_bins; bin++)
+  {
+    float mag = fft.magnitude(bin);
+    if (mag > col_mag)
+    {
+      col_mag = mag;
+      col_bin = bin;
+    }
+  }
+  
+  // Parabolic interpolation for more accurate frequency estimation
+  // This compensates for bin width causing frequency rounding errors
+  auto interpolateFreq = [&fft, bin_width, num_bins](int bin, float peak_mag) -> float {
+    if (bin <= 0 || bin >= num_bins - 1) return bin * bin_width;
+    float left = fft.magnitude(bin - 1);
+    float right = fft.magnitude(bin + 1);
+    float delta = 0.5f * (right - left) / (2.0f * peak_mag - left - right);
+    return (bin + delta) * bin_width;
+  };
+  
+  float row_freq = (row_mag > 0) ? interpolateFreq(row_bin, row_mag) : row_bin * bin_width;
+  float col_freq = (col_mag > 0) ? interpolateFreq(col_bin, col_mag) : col_bin * bin_width;
+  
+  // For backward compatibility, set peak1/peak2 as row/col
+  float peak1_freq = row_freq;
+  float peak1_mag = row_mag;
+  float peak2_freq = col_freq;
+  float peak2_mag = col_mag;
 
 #ifdef DEBUG_FFT_ALL
   fftCallCount++;
@@ -308,7 +335,7 @@ void fftResult(AudioFFTBase &fft)
   unsigned long now = millis();
   if (now - lastDebugPrintTime > 2000)
   {
-    Logger.debugf("🎵 FFT: peak1=%.1fHz (%.1f), peak2=%.1fHz (%.1f), threshold=%.1f\n",
+    Serial.printf("🎵 FFT: peak1=%.1fHz (%.1f), peak2=%.1fHz (%.1f), threshold=%.1f\n",
                   peak1_freq, peak1_mag, peak2_freq, peak2_mag, MAGNITUDE_THRESHOLD);
     lastDebugPrintTime = now;
     fftCallCount = 0;
@@ -317,98 +344,101 @@ void fftResult(AudioFFTBase &fft)
   }
 #endif
 
-  // Check if we have two strong peaks (dual-tone DTMF)
-  if (peak1_mag > MAGNITUDE_THRESHOLD && peak2_mag > MAGNITUDE_THRESHOLD * 0.5)
+  // Gap detection: if no signal for GAP_THRESHOLD ms, reset for next button
+  unsigned long now2 = millis();
+  if (now2 - lastSignalTime > GAP_THRESHOLD && !inGap)
   {
-    // Ensure peak1 is the lower frequency (row) and peak2 is higher (column)
-    float rowFreq, colFreq;
-    if (peak1_freq < peak2_freq)
-    {
-      rowFreq = peak1_freq;
-      colFreq = peak2_freq;
-    }
-    else
-    {
-      rowFreq = peak2_freq;
-      colFreq = peak1_freq;
-    }
+    inGap = true;
+    lastDetectedButton = 0;  // Allow re-detection of same button after gap
+    consecutiveDetections = 0;
+  }
+
+  // Check if we have strong peaks in both bands (dual-tone DTMF)
+  // row_freq is already from low band, col_freq is already from high band
+  // Use lower threshold for row since it's often weaker than column
+  if (row_mag > MAGNITUDE_THRESHOLD && col_mag > MAGNITUDE_THRESHOLD)
+  {
+    lastSignalTime = now2;  // Update signal time
+    inGap = false;
     
-    // Try standard DTMF decoding first
-    int row = findClosestDTMFFreq(rowFreq, DTMF_ROW_FREQS, 4);
-    int col = findClosestDTMFFreq(colFreq, DTMF_COL_FREQS, 4);
+    // Try standard DTMF decoding - row_freq and col_freq are already separated by band
+    int row = findClosestDTMFFreq(row_freq, DTMF_ROW_FREQS, 4);
+    int col = findClosestDTMFFreq(col_freq, DTMF_COL_FREQS, 4);
     
     if (row >= 0 && col >= 0)
     {
       char dtmfChar = DTMF_KEYPAD[row][col];
-      unsigned long now = millis();
       
-      // Check consecutive detections
-      if (dtmfChar == lastDetectedButton && (now - lastButtonTime) < 500)
+      // Check if this is a new detection or continuation
+      if (dtmfChar == lastDetectedButton && (now2 - lastButtonTime) < 500)
       {
         consecutiveDetections++;
-        Logger.printf("🔢 DTMF %c: detection #%d (row=%.1fHz, col=%.1fHz)\n", 
-                      dtmfChar, consecutiveDetections, rowFreq, colFreq);
       }
       else if (dtmfChar != lastDetectedButton)
       {
         lastDetectedButton = dtmfChar;
         consecutiveDetections = 1;
-        Logger.printf("🔢 DTMF %c: detection #1 (NEW) (row=%.1fHz, col=%.1fHz)\n", 
-                      dtmfChar, rowFreq, colFreq);
+        Serial.printf("🔢 DTMF %c: NEW (row=%.1fHz/%.1f, col=%.1fHz/%.1f)\n", 
+                      dtmfChar, row_freq, row_mag, col_freq, col_mag);
       }
-      lastButtonTime = now;
+      lastButtonTime = now2;
       
-      if (consecutiveDetections >= REQUIRED_CONSECUTIVE && (now - lastDetectionTime) > DETECTION_COOLDOWN)
+      // Confirm detection - only if we haven't already confirmed this button press
+      // Must see a gap before detecting the same button again
+      if (consecutiveDetections >= REQUIRED_CONSECUTIVE && 
+          (now2 - lastDetectionTime) > DETECTION_COOLDOWN &&
+          (dtmfChar != confirmedButton || inGap))  // Only detect same button after gap
       {
-        Logger.printf("🎹 DTMF DETECTED: %c (row=%.1fHz, col=%.1fHz)\n", 
-                      dtmfChar, rowFreq, colFreq);
-        lastDetectionTime = now;
+        Serial.printf("🎹 DTMF DETECTED: %c (row=%.1fHz, col=%.1fHz)\n", 
+                      dtmfChar, row_freq, col_freq);
+        lastDetectionTime = now2;
         consecutiveDetections = 0;
         confirmedButton = dtmfChar;
+        inGap = false;  // We're now in an active button press
       }
       return;  // Standard DTMF worked!
     }
   }
   
   // Fallback: Try summed frequency detection (for non-standard phones)
-  if (result.magnitude > 500.0)  // Higher threshold for summed freq detection
-  {
-    char summedButton = decodeFromSummedFreq(result.frequency);
-    if (summedButton != 0)
-    {
-      unsigned long now = millis();
+  // if (result.magnitude > 500.0)  // Higher threshold for summed freq detection
+  // {
+  //   char summedButton = decodeFromSummedFreq(result.frequency);
+  //   if (summedButton != 0)
+  //   {
+  //     unsigned long now = millis();
       
-      if (summedButton == lastDetectedButton && (now - lastButtonTime) < 500)
-      {
-        consecutiveDetections++;
-        Logger.printf("🔢 SUM Button %c: detection #%d (freq=%.1fHz, mag=%.1f)\n", 
-                      summedButton, consecutiveDetections, result.frequency, result.magnitude);
-      }
-      else if (summedButton != lastDetectedButton)
-      {
-        lastDetectedButton = summedButton;
-        consecutiveDetections = 1;
-        Logger.printf("🔢 SUM Button %c: detection #1 (NEW) (freq=%.1fHz, mag=%.1f)\n", 
-                      summedButton, result.frequency, result.magnitude);
-      }
-      lastButtonTime = now;
+  //     if (summedButton == lastDetectedButton && (now - lastButtonTime) < 500)
+  //     {
+  //       consecutiveDetections++;
+  //       Serial.printf("🔢 SUM Button %c: detection #%d (freq=%.1fHz, mag=%.1f)\n", 
+  //                     summedButton, consecutiveDetections, result.frequency, result.magnitude);
+  //     }
+  //     else if (summedButton != lastDetectedButton)
+  //     {
+  //       lastDetectedButton = summedButton;
+  //       consecutiveDetections = 1;
+  //       Serial.printf("🔢 SUM Button %c: detection #1 (NEW) (freq=%.1fHz, mag=%.1f)\n", 
+  //                     summedButton, result.frequency, result.magnitude);
+  //     }
+  //     lastButtonTime = now;
       
-      if (consecutiveDetections >= REQUIRED_CONSECUTIVE && (now - lastDetectionTime) > DETECTION_COOLDOWN)
-      {
-        Logger.printf("🎹 SUM DETECTED: %c (freq=%.1fHz, mag=%.1f)\n", 
-                      summedButton, result.frequency, result.magnitude);
-        lastDetectionTime = now;
-        consecutiveDetections = 0;
-        confirmedButton = summedButton;
-      }
-    }
-  }
+  //     if (consecutiveDetections >= REQUIRED_CONSECUTIVE && (now - lastDetectionTime) > DETECTION_COOLDOWN)
+  //     {
+  //       Serial.printf("🎹 SUM DETECTED: %c (freq=%.1fHz, mag=%.1f)\n", 
+  //                     summedButton, result.frequency, result.magnitude);
+  //       lastDetectionTime = now;
+  //       consecutiveDetections = 0;
+  //       confirmedButton = summedButton;
+  //     }
+  //   }
+  // }
 
 #ifdef DEBUG_FFT_ALL
   // Print any strong signal
   if (result.magnitude > MAGNITUDE_THRESHOLD)
   {
-    Logger.debugf("📊 Signal: %.1fHz (mag=%.1f)\n", result.frequency, result.magnitude);
+    Serial.printf("📊 Signal: %.1fHz (mag=%.1f)\n", result.frequency, result.magnitude);
   }
 #endif
 }
