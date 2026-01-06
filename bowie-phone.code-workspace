@@ -1,9 +1,11 @@
 {
 	"folders": [
 		{
+			"name": "bowie-phone",
 			"path": "."
 		},
 		{
+			"name": "to-do",
 			"path": "../to-do"
 		}
 	],
