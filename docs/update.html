@@ -184,7 +184,7 @@
       <h2>📦 Current Release</h2>
       <div class="version-info">
         <span class="version-label">Version</span>
-        <span class="version-value" id="version">1.0.0</span>
+        <span class="version-value" id="version">1.0.1</span>
       </div>
       
       <div class="method-tabs">
@@ -279,7 +279,7 @@
     fetch('firmware/manifest.json')
       .then(r => r.json())
       .then(m => {
-        document.getElementById('version').textContent = m.version || '1.0.0';
+        document.getElementById('version').textContent = m.version || '1.0.1';
       })
       .catch(() => {});
   </script>
