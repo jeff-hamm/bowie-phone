@@ -130,11 +130,14 @@ bool initTailscale(const char* localIp,
         Logger.printf("✅ Tailscale: Connected! Local IP: %s\n", localIp);
         snprintf(statusBuffer, sizeof(statusBuffer), "Connected: %s", localIp);
         
-        // Reconfigure DNS after WireGuard - it may have been overwritten
-        IPAddress dns1 = DNS_PRIMARY_IPADDRESS;
-        IPAddress dns2 = DNS_SECONDARY_IPADDRESS;
-        WiFi.config(WiFi.localIP(), WiFi.gatewayIP(), WiFi.subnetMask(), dns1, dns2);
-        Logger.printf("🌐 DNS reconfigured after VPN: %s, %s\n", dns1.toString().c_str(), dns2.toString().c_str());
+        // Use WireGuard server's DNS forwarder (10.253.0.1) as primary
+        // This ensures DNS works through the VPN tunnel
+        // Fallback to public DNS in case WireGuard server DNS is down
+        IPAddress vpnDns(10, 253, 0, 1);  // WireGuard server running dnsmasq
+        IPAddress fallbackDns = DNS_PRIMARY_IPADDRESS;  // Public DNS fallback
+        WiFi.config(WiFi.localIP(), WiFi.gatewayIP(), WiFi.subnetMask(), vpnDns, fallbackDns);
+        Logger.printf("🌐 DNS configured for VPN: %s (primary), %s (fallback)\n", 
+                      vpnDns.toString().c_str(), fallbackDns.toString().c_str());
     } else {
         vpnInitialized = true;  // Mark as initialized so handleTailscaleLoop will retry
         vpnConnected = false;

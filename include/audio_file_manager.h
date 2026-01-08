@@ -202,4 +202,13 @@ void clearDownloadQueue();
  */
 bool isDownloadQueueEmpty();
 
+/**
+ * @brief Pre-cache DNS resolutions before VPN tunnel starts
+ * 
+ * Resolves hostnames used by audio file manager and caches the IP addresses.
+ * Call this BEFORE starting WireGuard/VPN, as the tunnel may break public DNS.
+ * Subsequent HTTP requests will use cached IPs if DNS fails.
+ */
+void preCacheDNS();
+
 #endif // AUDIO_FILE_MANAGER_H

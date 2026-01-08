@@ -3,6 +3,16 @@
 #include "config.h"
 #include "tailscale_manager.h"
 #include "nvs_flash.h"
+#include "audio_player.h"
+#include <SD.h>
+#include <SPI.h>
+#include "driver/spi_common.h"
+#include "soc/spi_reg.h"
+#include "driver/gpio.h"
+#include "esp_task_wdt.h"
+#include "esp_ota_ops.h"  // For ESP-IDF OTA info
+#include <Update.h>       // For HTTP OTA
+#include <HTTPClient.h>   // For pull-based OTA
 
 // WiFi Setup Variables
 WebServer server(80);
@@ -11,8 +21,74 @@ Preferences wifiPrefs;
 bool isConfigMode = false;
 unsigned long portalStartTime = 0;
 
+// OTA preparation tracking - reboot if OTA fails or times out
+static bool otaPrepared = false;
+static unsigned long otaPrepareTime = 0;
+static const unsigned long OTA_PREPARE_TIMEOUT_MS = 300000; // 5 minutes
+
+// Track one-time WiFi clear per build version
+static bool shouldClearWiFiForBuild()
+{
+#ifndef FIRMWARE_VERSION
+#define FIRMWARE_VERSION "0.0.0"
+#endif
+
+    // Ensure NVS is initialized
+    esp_err_t err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        nvs_flash_erase();
+        nvs_flash_init();
+    }
+
+    Preferences bootPrefs;
+    if (!bootPrefs.begin("bootflags", false)) {
+        Logger.println("❌ Failed to open bootflags preferences; will clear WiFi to be safe");
+        return true;
+    }
+
+    // NVS keys max 15 chars - use "wifi_clr_ver" (12 chars)
+    String lastCleared = bootPrefs.getString("wifi_clr_ver", "");
+    const String currentVersion = FIRMWARE_VERSION;
+    bool shouldClear = (lastCleared != currentVersion);
+    if (shouldClear) {
+        bootPrefs.putString("wifi_clr_ver", currentVersion);
+    }
+    bootPrefs.end();
+    return shouldClear;
+}
+
+// Keep SoftAP alive after STA tests
+static void ensureAPAndDNS()
+{
+    if (WiFi.getMode() != WIFI_AP && WiFi.getMode() != WIFI_AP_STA) {
+        WiFi.mode(WIFI_AP);
+    }
+    WiFi.softAP(WIFI_AP_NAME, WIFI_AP_PASSWORD);
+    IPAddress apIP = WiFi.softAPIP();
+    dnsServer.start(53, "*", apIP);
+}
+
 // WiFi connection callback
 static WiFiConnectedCallback wifiConnectedCallback = nullptr;
+
+// Escape JSON strings minimally (quotes and backslashes)
+static String escapeJson(const String& in)
+{
+    String out;
+    out.reserve(in.length() + 4);
+    for (size_t i = 0; i < in.length(); i++) {
+        char c = in[i];
+        if (c == '"' || c == '\\') {
+            out += '\\';
+            out += c;
+        } else if (c == '\n') {
+            out += "\\n";
+        } else {
+            out += c;
+        }
+    }
+    return out;
+}
 
 // Save WiFi credentials to preferences
 void saveWiFiCredentials(const String& ssid, const String& password)
@@ -92,6 +168,64 @@ void handleWiFiClear()
     server.send(302, "text/plain", "WiFi credentials cleared");
 }
 
+// Handle WiFi scan (JSON)
+void handleWiFiScan()
+{
+    int count = WiFi.scanNetworks(/*async=*/false, /*hidden=*/false);
+    String json = "[";
+    for (int i = 0; i < count; i++) {
+        if (i > 0) json += ",";
+        json += "{\"ssid\":\"" + escapeJson(WiFi.SSID(i)) + "\",";
+        json += "\"rssi\":" + String(WiFi.RSSI(i)) + ",";
+        json += "\"secure\":" + String(WiFi.encryptionType(i) != WIFI_AUTH_OPEN ? "true" : "false") + "}";
+    }
+    json += "]";
+    server.send(200, "application/json", json);
+}
+
+// Test WiFi credentials without committing/rebooting
+void handleWiFiTest()
+{
+    String ssid = server.arg("ssid");
+    String password = server.arg("password");
+    if (ssid.length() == 0) {
+        server.send(400, "application/json", "{\"ok\":false,\"message\":\"SSID required\"}");
+        return;
+    }
+
+    // Switch to AP+STA to keep portal alive during test
+    WiFi.mode(WIFI_AP_STA);
+    WiFi.softAP(WIFI_AP_NAME, WIFI_AP_PASSWORD);
+    IPAddress apIP = WiFi.softAPIP();
+    dnsServer.start(53, "*", apIP);
+
+    WiFi.begin(ssid.c_str(), password.c_str());
+    unsigned long start = millis();
+    wl_status_t status = WL_IDLE_STATUS;
+    while ((millis() - start) < 10000) { // 10s timeout
+        status = WiFi.status();
+        if (status == WL_CONNECTED) break;
+        delay(200);
+    }
+
+    bool ok = (status == WL_CONNECTED);
+    String message;
+    if (ok) {
+        message = "Connected. IP " + WiFi.localIP().toString();
+    } else {
+        message = "Failed (status " + String(static_cast<int>(status)) + ")";
+    }
+
+    // Disconnect station and restore AP-only mode for the portal
+    WiFi.disconnect(true, true);
+    ensureAPAndDNS();
+
+    String resp = "{\"ok\":";
+    resp += ok ? "true" : "false";
+    resp += ",\"message\":\"" + escapeJson(message) + "\"}";
+    server.send(ok ? 200 : 500, "application/json", resp);
+}
+
 // Build the combined configuration page
 String buildConfigPage()
 {
@@ -105,7 +239,31 @@ String buildConfigPage()
     const char* vpnIP = getTailscaleIP();
     VPNConfig vpnConfig;
     bool hasVpnConfig = loadVPNConfig(&vpnConfig);
-    bool hasPrivateKey = hasVpnConfig && strlen(vpnConfig.privateKey) > 0;
+
+    // Compile-time defaults for VPN (used when NVS empty)
+#ifdef WIREGUARD_LOCAL_IP
+    const char* defaultLocalIp = WIREGUARD_LOCAL_IP;
+#else
+    const char* defaultLocalIp = "";
+#endif
+#ifdef WIREGUARD_PEER_ENDPOINT
+    const char* defaultPeerEndpoint = WIREGUARD_PEER_ENDPOINT;
+#else
+    const char* defaultPeerEndpoint = "";
+#endif
+#ifdef WIREGUARD_PEER_PUBLIC_KEY
+    const char* defaultPeerPublicKey = WIREGUARD_PEER_PUBLIC_KEY;
+#else
+    const char* defaultPeerPublicKey = "";
+#endif
+    uint16_t defaultPeerPort = WIREGUARD_PEER_PORT;
+
+    bool hasPrivateKey = (hasVpnConfig && strlen(vpnConfig.privateKey) > 0);
+#ifdef WIREGUARD_PRIVATE_KEY
+    if (!hasPrivateKey) {
+        hasPrivateKey = true; // compile-time private key available (not shown)
+    }
+#endif
     
     String html = R"(
 <!DOCTYPE html><html><head><title>Bowie Phone Config</title>
@@ -170,15 +328,24 @@ button:hover{background:#ff6b6b}
 <form action="/save" method="POST">
 <div class="field">
 <label>WiFi SSID</label>
-<input type="text" name="ssid" placeholder="WiFi Network Name" value=")";
-    html += savedSSID;
-    html += R"(" required>
+<select id="ssid-select"></select>
+<input type="hidden" id="ssid-hidden" name="ssid" value=")";
+        html += savedSSID;
+        html += R"(">
+<input type="text" id="ssid-manual" placeholder="Enter SSID" style="display:none;margin-top:8px">
 </div>
 <div class="field">
 <label>WiFi Password</label>
-<input type="password" name="password" placeholder="WiFi Password">
+<div class="row">
+    <input type="password" id="wifi-password" name="password" placeholder="WiFi Password">
+    <button type="button" id="toggle-password" style="max-width:140px">👁️ Show</button>
 </div>
-<button type="submit">💾 Save & Connect WiFi</button>
+</div>
+<div class="row">
+    <button type="button" id="test-wifi">🧪 Test WiFi</button>
+    <button type="submit">💾 Save & Connect WiFi</button>
+</div>
+<div id="wifi-status" class="status info" style="display:none;margin-top:10px"></div>
 </form>
 <form action="/wifi/clear" method="POST">
 <button type="submit" class="btn-clear">🗑️ Clear WiFi Settings</button>
@@ -204,7 +371,7 @@ button:hover{background:#ff6b6b}
 <div class="field">
 <label>Local IP (your Tailscale IP)</label>
 <input type="text" name="localIp" placeholder="10.x.x.x" value=")";
-    html += hasVpnConfig ? vpnConfig.localIp : "";
+    html += hasVpnConfig ? vpnConfig.localIp : defaultLocalIp;
     html += R"(" required>
 </div>
 <div class="field">
@@ -223,19 +390,19 @@ button:hover{background:#ff6b6b}
 <div class="field">
 <label>Peer Endpoint</label>
 <input type="text" name="peerEndpoint" placeholder="relay.tailscale.com" value=")";
-    html += hasVpnConfig ? vpnConfig.peerEndpoint : "";
+    html += hasVpnConfig ? vpnConfig.peerEndpoint : defaultPeerEndpoint;
     html += R"(" required>
 </div>
 <div class="field">
 <label>Peer Public Key</label>
 <input type="text" name="peerPublicKey" placeholder="Peer's public key" value=")";
-    html += hasVpnConfig ? vpnConfig.peerPublicKey : "";
+    html += hasVpnConfig ? vpnConfig.peerPublicKey : defaultPeerPublicKey;
     html += R"(" required>
 </div>
 <div class="field">
 <label>Peer Port</label>
 <input type="number" name="peerPort" placeholder="41641" value=")";
-    html += hasVpnConfig ? String(vpnConfig.peerPort) : "41641";
+    html += hasVpnConfig ? String(vpnConfig.peerPort) : String(defaultPeerPort);
     html += R"(">
 </div>
 <button type="submit">💾 Save VPN Config</button>
@@ -251,11 +418,114 @@ button:hover{background:#ff6b6b}
 </div>
 
 </div>
+<script>
+    const savedSSID = ")";
+        html += escapeJson(savedSSID);
+        html += R"(";
+    const ssidSelect = document.getElementById('ssid-select');
+    const ssidHidden = document.getElementById('ssid-hidden');
+    const ssidManual = document.getElementById('ssid-manual');
+    const pwdInput = document.getElementById('wifi-password');
+    const togglePwd = document.getElementById('toggle-password');
+    const testBtn = document.getElementById('test-wifi');
+    const wifiStatus = document.getElementById('wifi-status');
+
+    function setStatus(msg, ok) {
+        wifiStatus.textContent = msg;
+        wifiStatus.className = 'status ' + (ok ? 'connected' : 'disconnected');
+        wifiStatus.style.display = 'block';
+    }
+
+    function populateSSIDs(list) {
+        ssidSelect.innerHTML = '';
+        const placeholder = document.createElement('option');
+        placeholder.textContent = 'Select network';
+        placeholder.disabled = true; placeholder.selected = true;
+        ssidSelect.appendChild(placeholder);
+
+        list.forEach(item => {
+            const opt = document.createElement('option');
+            opt.value = item.ssid;
+            opt.textContent = `${item.ssid} ${item.secure ? '🔒' : ''} (${item.rssi} dBm)`;
+            ssidSelect.appendChild(opt);
+        });
+
+        const other = document.createElement('option');
+        other.value = '__other__';
+        other.textContent = 'Other (enter manually)';
+        ssidSelect.appendChild(other);
+
+        // Preselect saved SSID if present
+        if (savedSSID) {
+            const match = Array.from(ssidSelect.options).find(o => o.value === savedSSID);
+            if (match) {
+                match.selected = true;
+                ssidHidden.value = savedSSID;
+            } else {
+                other.selected = true;
+                ssidManual.style.display = 'block';
+                ssidManual.value = savedSSID;
+                ssidHidden.value = savedSSID;
+            }
+        }
+    }
+
+    function loadSSIDs() {
+        ssidSelect.innerHTML = '<option>Scanning...</option>';
+        fetch('/wifi/scan').then(r => r.json()).then(data => {
+            populateSSIDs(data);
+        }).catch(() => {
+            populateSSIDs([]);
+            setStatus('Scan failed; enter SSID manually.', false);
+        });
+    }
+
+    ssidSelect.addEventListener('change', () => {
+        if (ssidSelect.value === '__other__') {
+            ssidManual.style.display = 'block';
+            ssidHidden.value = ssidManual.value;
+        } else {
+            ssidManual.style.display = 'none';
+            ssidHidden.value = ssidSelect.value;
+        }
+    });
+
+    ssidManual.addEventListener('input', () => {
+        ssidHidden.value = ssidManual.value;
+    });
+
+    togglePwd.addEventListener('click', () => {
+        const showing = pwdInput.type === 'text';
+        pwdInput.type = showing ? 'password' : 'text';
+        togglePwd.textContent = showing ? '👁️ Show' : '🙈 Hide';
+    });
+
+    testBtn.addEventListener('click', () => {
+        const formData = new FormData();
+        formData.append('ssid', ssidHidden.value);
+        formData.append('password', pwdInput.value);
+        setStatus('Testing...', true);
+        fetch('/wifi/test', { method: 'POST', body: formData })
+            .then(r => r.json())
+            .then(res => setStatus(res.message || (res.ok ? 'Success' : 'Failed'), !!res.ok))
+            .catch(() => setStatus('Test failed (network error)', false));
+    });
+
+    // Ensure hidden SSID matches selection before submit
+    document.querySelector('form[action="/save"]').addEventListener('submit', () => {
+        if (ssidSelect.value === '__other__') {
+            ssidHidden.value = ssidManual.value;
+        } else {
+            ssidHidden.value = ssidSelect.value;
+        }
+    });
+
+    loadSSIDs();
+</script>
 </body></html>
-)";
+")";
     return html;
 }
-
 // Web server handlers for WiFi configuration
 void handleRoot()
 {
@@ -386,7 +656,76 @@ bool startConfigPortalSafe()
     server.on("/", handleRoot);
     server.on("/save", HTTP_POST, handleSave);
     server.on("/wifi/clear", HTTP_POST, handleWiFiClear);
+    server.on("/wifi/scan", HTTP_GET, handleWiFiScan);
+    server.on("/wifi/test", HTTP_POST, handleWiFiTest);
     server.on("/logs", handleLogs);
+    
+    // OTA preparation endpoint - call before OTA to release SD/SPI
+    server.on("/prepareota", HTTP_GET, []() {
+        Logger.println("🔄 HTTP: Preparing for OTA update...");
+        shutdownAudioForOTA();
+        SD.end();
+        delay(500);  // Let SD card fully release
+        
+        // Set OTA prepare flag and timeout
+        otaPrepared = true;
+        otaPrepareTime = millis();
+        
+        Logger.println("✅ HTTP: Ready for OTA (5 min timeout)");
+        server.send(200, "text/plain", "OK - Ready for OTA (5 min timeout, will reboot if no OTA)");
+    });
+    
+    // HTTP OTA upload endpoint - alternative to ArduinoOTA
+    // Use: curl -F "firmware=@.pio/build/esp32dev/firmware.bin" http://DEVICE_IP/update
+    server.on("/update", HTTP_POST, []() {
+        // Response after upload completes
+        if (Update.hasError()) {
+            server.send(500, "text/plain", "FAIL - Update error");
+            delay(1000);
+            esp_restart();
+        } else {
+            server.send(200, "text/plain", "OK - Update successful, rebooting...");
+            delay(1000);
+            esp_restart();
+        }
+    }, []() {
+        // Handle file upload
+        HTTPUpload& upload = server.upload();
+        
+        if (upload.status == UPLOAD_FILE_START) {
+            Logger.printf("🔄 HTTP OTA: Receiving %s\n", upload.filename.c_str());
+            
+            // Prepare system for OTA - ONLY SD.end(), no SPI/GPIO manipulation
+            esp_task_wdt_delete(NULL);
+            shutdownAudioForOTA();
+            SD.end();
+            delay(500);  // Let SD card fully release
+            
+            // Start update
+            if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+                Logger.printf("❌ HTTP OTA: Begin failed: %s\n", Update.errorString());
+            }
+        } else if (upload.status == UPLOAD_FILE_WRITE) {
+            // Write firmware chunk
+            if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+                Logger.printf("❌ HTTP OTA: Write failed: %s\n", Update.errorString());
+            } else {
+                static int lastPercent = -1;
+                int percent = (Update.progress() * 100) / Update.size();
+                if (percent != lastPercent && percent % 10 == 0) {
+                    Logger.printf("📤 HTTP OTA Progress: %d%%\n", percent);
+                    lastPercent = percent;
+                }
+            }
+        } else if (upload.status == UPLOAD_FILE_END) {
+            if (Update.end(true)) {
+                Logger.printf("✅ HTTP OTA: Complete (%u bytes)\n", upload.totalSize);
+            } else {
+                Logger.printf("❌ HTTP OTA: End failed: %s\n", Update.errorString());
+            }
+        }
+    });
+    
     initVPNConfigRoutes(&server);
     server.onNotFound([]() {
         server.sendHeader("Location", "/", true);
@@ -420,6 +759,8 @@ void startConfigPortal()
     server.on("/", handleRoot);
     server.on("/save", HTTP_POST, handleSave);
     server.on("/wifi/clear", HTTP_POST, handleWiFiClear);
+    server.on("/wifi/scan", HTTP_GET, handleWiFiScan);
+    server.on("/wifi/test", HTTP_POST, handleWiFiTest);
     server.on("/logs", handleLogs);
     initVPNConfigRoutes(&server);
     server.onNotFound([]() {
@@ -436,10 +777,16 @@ void initWiFi(WiFiConnectedCallback onConnected)
 {
     Logger.printf("🔧 Starting WiFi initialization (non-blocking)...\n");
     
-    // Check for compile-time flag to clear WiFi credentials
+    // Check for compile-time flag to clear WiFi credentials (once per build)
 #ifdef CLEAR_WIFI_ON_BOOT
-    Logger.println("⚠️ CLEAR_WIFI_ON_BOOT flag set - clearing saved WiFi credentials");
-    clearWiFiCredentials();
+    if (shouldClearWiFiForBuild()) {
+        Logger.println("⚠️ CLEAR_WIFI_ON_BOOT flag set - clearing saved WiFi credentials for this build");
+        clearWiFiCredentials();
+        Logger.println("⚠️ CLEAR_WIFI_ON_BOOT flag set - clearing WireGuard/VPN config for this build");
+        clearVPNConfig();
+    } else {
+        Logger.println("ℹ️ CLEAR_WIFI_ON_BOOT already applied for this build; skipping clear");
+    }
 #endif
     
     // Store the callback for later use
@@ -473,19 +820,175 @@ void initOTA()
     ArduinoOTA.setPassword(OTA_PASSWORD);
     ArduinoOTA.setPort(OTA_PORT);
     
-    // Minimal callbacks
-    ArduinoOTA.onStart([]() { Logger.println("OTA Start"); });
-    ArduinoOTA.onEnd([]() { Logger.println("OTA End"); });
-    ArduinoOTA.onError([](ota_error_t error) { Logger.printf("OTA Error: %u\n", error); });
+    // Prepare system before OTA flash write
+    ArduinoOTA.onStart([]() { 
+        Logger.println("🔄 OTA Start - Preparing system for update...");
+        
+        // Clear OTA prepare timeout - we're now in an actual OTA
+        otaPrepared = false;
+        
+        // Disable watchdog to give more time for flash operations
+        esp_task_wdt_delete(NULL);
+        
+        // Shut down audio and SD - ONLY SD.end(), no SPI/GPIO manipulation
+        shutdownAudioForOTA();
+        SD.end();
+        delay(500);  // Let SD card fully release
+        
+        Logger.println("✅ System prepared for OTA");
+        Logger.println("⏳ Starting flash write...");
+    });
+    ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+        static int lastPercent = -1;
+        int percent = (progress / (total / 100));
+        if (percent != lastPercent && percent % 10 == 0) {
+            Logger.printf("📤 OTA Progress: %u%%\n", percent);
+            lastPercent = percent;
+        }
+    });
+    ArduinoOTA.onEnd([]() { Logger.println("✅ OTA End - Rebooting..."); });
+    ArduinoOTA.onError([](ota_error_t error) { 
+        const char* errMsg = "Unknown";
+        switch (error) {
+            case OTA_AUTH_ERROR: errMsg = "Auth Failed"; break;
+            case OTA_BEGIN_ERROR: errMsg = "Begin Failed"; break;
+            case OTA_CONNECT_ERROR: errMsg = "Connect Failed"; break;
+            case OTA_RECEIVE_ERROR: errMsg = "Receive Failed"; break;
+            case OTA_END_ERROR: errMsg = "End Failed"; break;
+        }
+        Logger.printf("❌ OTA Error[%u]: %s - Rebooting in 3 seconds...\n", error, errMsg);
+        delay(3000);
+        esp_restart();
+    });
     
     Logger.println("🔄 OTA configuration complete - will start when WiFi is ready");
 }
 
-// Start OTA service when WiFi is ready
+// Start OTA service and minimal web server when WiFi is ready
 void startOTA()
 {
     ArduinoOTA.begin();
+    
+    // Start minimal web server for OTA and remote management
+    // These endpoints work in normal operation mode (not just config portal)
+    
+    // OTA preparation endpoint
+    server.on("/prepareota", HTTP_GET, []() {
+        Logger.println("🔄 HTTP: Preparing for OTA update...");
+        shutdownAudioForOTA();
+        delay(100);
+        SD.end();  // Unmount SD card only - don't touch SPI or GPIO!
+        delay(500);
+        
+        otaPrepared = true;
+        otaPrepareTime = millis();
+        
+        Logger.println("✅ HTTP: Ready for OTA (5 min timeout)");
+        server.send(200, "text/plain", "OK - Ready for OTA (5 min timeout)");
+    });
+    
+    // HTTP OTA upload endpoint - alternative to ArduinoOTA
+    // Use: curl -F "firmware=@.pio/build/esp32dev/firmware.bin" http://DEVICE_IP/update
+    server.on("/update", HTTP_POST, []() {
+        if (Update.hasError()) {
+            server.send(500, "text/plain", "FAIL - Update error");
+            delay(1000);
+            esp_restart();
+        } else {
+            server.send(200, "text/plain", "OK - Update successful, rebooting...");
+            delay(1000);
+            esp_restart();
+        }
+    }, []() {
+        HTTPUpload& upload = server.upload();
+        
+        if (upload.status == UPLOAD_FILE_START) {
+            Logger.printf("🔄 HTTP OTA: Receiving %s\n", upload.filename.c_str());
+            esp_task_wdt_delete(NULL);
+            
+            // Only do shutdown if /prepareota wasn't already called
+            if (!otaPrepared) {
+                shutdownAudioForOTA();
+                delay(100);
+                SD.end();  // Unmount SD card only - don't touch SPI or GPIO!
+                delay(500);
+            } else {
+                Logger.println("ℹ️ OTA already prepared, skipping shutdown");
+            }
+            
+            if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+                Logger.printf("❌ HTTP OTA: Begin failed: %s\n", Update.errorString());
+            }
+        } else if (upload.status == UPLOAD_FILE_WRITE) {
+            if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+                Logger.printf("❌ HTTP OTA: Write failed: %s\n", Update.errorString());
+            } else {
+                static int lastPercent = -1;
+                int percent = (Update.progress() * 100) / Update.size();
+                if (percent != lastPercent && percent % 10 == 0) {
+                    Logger.printf("📤 HTTP OTA Progress: %d%%\n", percent);
+                    lastPercent = percent;
+                }
+            }
+        } else if (upload.status == UPLOAD_FILE_END) {
+            if (Update.end(true)) {
+                Logger.printf("✅ HTTP OTA: Complete (%u bytes)\n", upload.totalSize);
+            } else {
+                Logger.printf("❌ HTTP OTA: End failed: %s\n", Update.errorString());
+            }
+        }
+    });
+    
+    // WireGuard toggle endpoint
+    server.on("/vpn/on", HTTP_GET, []() {
+        Logger.println("🔐 HTTP: Enabling WireGuard VPN...");
+        if (initTailscaleFromConfig()) {
+            server.send(200, "text/plain", "OK - VPN enabled");
+        } else {
+            server.send(500, "text/plain", "FAIL - VPN init failed");
+        }
+    });
+    
+    server.on("/vpn/off", HTTP_GET, []() {
+        Logger.println("🔓 HTTP: Disabling WireGuard VPN...");
+        disconnectTailscale();
+        server.send(200, "text/plain", "OK - VPN disabled");
+    });
+    
+    server.on("/vpn/status", HTTP_GET, []() {
+        bool connected = isTailscaleConnected();
+        String status = connected ? "connected" : "disconnected";
+        String ip = connected ? getTailscaleIP() : "N/A";
+        server.send(200, "application/json", 
+            "{\"vpn\":\"" + status + "\",\"ip\":\"" + ip + "\"}");
+    });
+    
+    // Device status endpoint
+    server.on("/status", HTTP_GET, []() {
+        String json = "{";
+        json += "\"wifi_ip\":\"" + WiFi.localIP().toString() + "\",";
+        json += "\"wifi_rssi\":" + String(WiFi.RSSI()) + ",";
+        json += "\"vpn_connected\":" + String(isTailscaleConnected() ? "true" : "false") + ",";
+        json += "\"vpn_ip\":\"";
+        const char* vpnIp = getTailscaleIP();
+        json += (vpnIp != nullptr) ? vpnIp : "N/A";
+        json += "\",";
+        json += "\"heap_free\":" + String(ESP.getFreeHeap()) + ",";
+        json += "\"uptime\":" + String(millis() / 1000);
+        json += "}";
+        server.send(200, "application/json", json);
+    });
+    
+    // Reboot endpoint
+    server.on("/reboot", HTTP_GET, []() {
+        server.send(200, "text/plain", "OK - Rebooting...");
+        delay(500);
+        esp_restart();
+    });
+    
+    server.begin();
     Logger.printf("✅ OTA Ready: %s:%d\n", WiFi.localIP().toString().c_str(), OTA_PORT);
+    Logger.println("🌐 HTTP server started (OTA, VPN, status endpoints)");
 }
 
 // Stop OTA service when WiFi changes
@@ -493,6 +996,93 @@ void stopOTA()
 {
     ArduinoOTA.end();
     Logger.println("🔄 OTA stopped due to WiFi change");
+}
+
+// Pull-based OTA: Download and install firmware from a URL
+// This works over WireGuard VPN because it's an OUTBOUND connection
+bool performPullOTA(const char* firmwareUrl)
+{
+    Logger.printf("🔄 Pull OTA: Fetching firmware from %s\n", firmwareUrl);
+    
+    // Prepare system for OTA - ONLY SD.end(), no SPI/GPIO manipulation
+    esp_task_wdt_delete(NULL);
+    shutdownAudioForOTA();
+    SD.end();
+    delay(500);  // Let SD card fully release
+    
+    HTTPClient http;
+    http.setTimeout(120000);  // 2 minute timeout for large firmware
+    http.begin(firmwareUrl);
+    
+    int httpCode = http.GET();
+    if (httpCode != HTTP_CODE_OK) {
+        Logger.printf("❌ Pull OTA: HTTP error %d\n", httpCode);
+        http.end();
+        return false;
+    }
+    
+    int contentLength = http.getSize();
+    if (contentLength <= 0) {
+        Logger.println("❌ Pull OTA: Invalid content length");
+        http.end();
+        return false;
+    }
+    
+    Logger.printf("📦 Pull OTA: Firmware size: %d bytes\n", contentLength);
+    
+    if (!Update.begin(contentLength)) {
+        Logger.printf("❌ Pull OTA: Not enough space: %s\n", Update.errorString());
+        http.end();
+        return false;
+    }
+    
+    WiFiClient* stream = http.getStreamPtr();
+    size_t written = 0;
+    uint8_t buff[1024];
+    int lastPercent = -1;
+    
+    while (http.connected() && written < contentLength) {
+        size_t available = stream->available();
+        if (available) {
+            size_t readBytes = stream->readBytes(buff, min(available, sizeof(buff)));
+            size_t writeBytes = Update.write(buff, readBytes);
+            if (writeBytes != readBytes) {
+                Logger.printf("❌ Pull OTA: Write failed: %s\n", Update.errorString());
+                http.end();
+                Update.abort();
+                return false;
+            }
+            written += writeBytes;
+            
+            int percent = (written * 100) / contentLength;
+            if (percent != lastPercent && percent % 10 == 0) {
+                Logger.printf("📤 Pull OTA Progress: %d%%\n", percent);
+                lastPercent = percent;
+            }
+        }
+        delay(1);
+    }
+    
+    http.end();
+    
+    if (Update.end(true)) {
+        Logger.printf("✅ Pull OTA: Complete (%d bytes)\n", written);
+        Logger.println("🔄 Rebooting in 2 seconds...");
+        delay(2000);
+        esp_restart();
+        return true;  // Won't reach here
+    } else {
+        Logger.printf("❌ Pull OTA: End failed: %s\n", Update.errorString());
+        return false;
+    }
+}
+
+// Set OTA prepare timeout - call from serial command or HTTP endpoint
+void setOtaPrepareTimeout()
+{
+    otaPrepared = true;
+    otaPrepareTime = millis();
+    Logger.println("⏱️ OTA prepare timeout set (5 minutes)");
 }
 
 // Handle WiFi loop processing (call this in main loop)
@@ -583,5 +1173,220 @@ void handleWiFiLoop()
     if (otaStarted && (WiFi.status() == WL_CONNECTED || isConfigMode))
     {
         ArduinoOTA.handle();
+        // Also handle HTTP server requests in STA mode (for OTA, VPN, status endpoints)
+        if (!isConfigMode) {
+            server.handleClient();
+        }
+    }
+    
+    // Check OTA prepare timeout - reboot if no OTA received within timeout
+    if (otaPrepared && (millis() - otaPrepareTime > OTA_PREPARE_TIMEOUT_MS))
+    {
+        Logger.println("⏰ OTA prepare timeout - no OTA received. Rebooting...");
+        delay(1000);
+        esp_restart();
+    }
+}
+
+// ============================================================================
+// PHONE HOME - Periodic check-in with server for remote management
+// ============================================================================
+
+// ============================================================================
+// PHONE HOME - Check for updates from static JSON file
+// ============================================================================
+
+// Update check configuration - uses static JSON file on web server
+#ifndef UPDATE_CHECK_URL
+#define UPDATE_CHECK_URL "https://bowie-phone.infinitebutts.com/firmware/update.json"
+#endif
+
+#ifndef UPDATE_CHECK_INTERVAL_MS
+#define UPDATE_CHECK_INTERVAL_MS 300000  // 5 minutes default
+#endif
+
+static unsigned long phoneHomeInterval = UPDATE_CHECK_INTERVAL_MS;
+static unsigned long lastPhoneHomeTime = 0;
+static char phoneHomeStatus[64] = "Not started";
+static bool phoneHomeEnabled = true;
+
+void setPhoneHomeInterval(unsigned long intervalMs) {
+    phoneHomeInterval = intervalMs;
+    Logger.printf("📞 Update check interval set to %lu ms\n", intervalMs);
+}
+
+const char* getPhoneHomeStatus() {
+    return phoneHomeStatus;
+}
+
+// Compare version strings (e.g., "1.0.1" vs "1.0.2")
+// Returns: -1 if v1 < v2, 0 if equal, 1 if v1 > v2
+static int compareVersions(const char* v1, const char* v2) {
+    int major1 = 0, minor1 = 0, patch1 = 0;
+    int major2 = 0, minor2 = 0, patch2 = 0;
+    
+    sscanf(v1, "%d.%d.%d", &major1, &minor1, &patch1);
+    sscanf(v2, "%d.%d.%d", &major2, &minor2, &patch2);
+    
+    if (major1 != major2) return major1 < major2 ? -1 : 1;
+    if (minor1 != minor2) return minor1 < minor2 ? -1 : 1;
+    if (patch1 != patch2) return patch1 < patch2 ? -1 : 1;
+    return 0;
+}
+
+// Check for updates from static JSON file
+// JSON format:
+// {
+//   "version": "1.0.2",
+//   "firmware_url": "https://example.com/firmware/latest.bin",
+//   "release_notes": "Bug fixes",
+//   "action": "none" | "ota" | "reboot",  // "ota" forces update even if same version
+//   "message": "Optional message to log"
+// }
+bool phoneHome(const char* serverUrl) {
+    if (!WiFi.isConnected()) {
+        strcpy(phoneHomeStatus, "WiFi not connected");
+        return false;
+    }
+    
+    const char* url = serverUrl ? serverUrl : UPDATE_CHECK_URL;
+    
+    Logger.printf("📞 Checking for updates: %s\n", url);
+    strcpy(phoneHomeStatus, "Checking...");
+    
+    HTTPClient http;
+    http.setTimeout(15000);  // 15 second timeout
+    
+    if (!http.begin(url)) {
+        Logger.println("❌ Update check: Failed to begin HTTP");
+        strcpy(phoneHomeStatus, "HTTP begin failed");
+        return false;
+    }
+    
+    http.addHeader("User-Agent", "BowiePhone/" FIRMWARE_VERSION);
+    
+    int httpCode = http.GET();
+    
+    if (httpCode <= 0) {
+        Logger.printf("❌ Update check: HTTP error %d - %s\n", httpCode, http.errorToString(httpCode).c_str());
+        snprintf(phoneHomeStatus, sizeof(phoneHomeStatus), "HTTP error: %d", httpCode);
+        http.end();
+        return false;
+    }
+    
+    if (httpCode != HTTP_CODE_OK) {
+        Logger.printf("⚠️ Update check: HTTP %d\n", httpCode);
+        snprintf(phoneHomeStatus, sizeof(phoneHomeStatus), "HTTP %d", httpCode);
+        http.end();
+        return false;
+    }
+    
+    String response = http.getString();
+    http.end();
+    
+    Logger.printf("📞 Update info: %s\n", response.c_str());
+    
+    // Parse version from response
+    String serverVersion = "";
+    int versionStart = response.indexOf("\"version\":\"");
+    if (versionStart >= 0) {
+        versionStart += 11;
+        int versionEnd = response.indexOf("\"", versionStart);
+        if (versionEnd > versionStart) {
+            serverVersion = response.substring(versionStart, versionEnd);
+        }
+    }
+    
+    // Parse firmware URL
+    String firmwareUrl = "";
+    int urlStart = response.indexOf("\"firmware_url\":\"");
+    if (urlStart >= 0) {
+        urlStart += 16;
+        int urlEnd = response.indexOf("\"", urlStart);
+        if (urlEnd > urlStart) {
+            firmwareUrl = response.substring(urlStart, urlEnd);
+        }
+    }
+    
+    // Parse action (optional - forces update/reboot)
+    String action = "none";
+    int actionStart = response.indexOf("\"action\":\"");
+    if (actionStart >= 0) {
+        actionStart += 10;
+        int actionEnd = response.indexOf("\"", actionStart);
+        if (actionEnd > actionStart) {
+            action = response.substring(actionStart, actionEnd);
+        }
+    }
+    
+    // Log any message from server
+    int msgStart = response.indexOf("\"message\":\"");
+    if (msgStart >= 0) {
+        msgStart += 11;
+        int msgEnd = response.indexOf("\"", msgStart);
+        if (msgEnd > msgStart) {
+            String message = response.substring(msgStart, msgEnd);
+            if (message.length() > 0) {
+                Logger.printf("💬 Server: %s\n", message.c_str());
+            }
+        }
+    }
+    
+    // Handle forced actions
+    if (action == "reboot") {
+        Logger.println("🔄 Update check: Reboot requested");
+        strcpy(phoneHomeStatus, "Rebooting...");
+        delay(1000);
+        esp_restart();
+    }
+    
+    // Check if update is available
+    bool otaTriggered = false;
+    const char* currentVersion = FIRMWARE_VERSION;
+    
+    if (serverVersion.length() > 0 && firmwareUrl.length() > 0) {
+        int cmp = compareVersions(currentVersion, serverVersion.c_str());
+        
+        if (cmp < 0 || action == "ota") {
+            // Server has newer version OR forced OTA
+            if (cmp < 0) {
+                Logger.printf("📥 Update available: %s -> %s\n", currentVersion, serverVersion.c_str());
+            } else {
+                Logger.printf("📥 Forced OTA to version %s\n", serverVersion.c_str());
+            }
+            snprintf(phoneHomeStatus, sizeof(phoneHomeStatus), "Updating to %s", serverVersion.c_str());
+            otaTriggered = performPullOTA(firmwareUrl.c_str());
+        } else if (cmp == 0) {
+            Logger.printf("✅ Firmware up to date: %s\n", currentVersion);
+            snprintf(phoneHomeStatus, sizeof(phoneHomeStatus), "Up to date: %s", currentVersion);
+        } else {
+            Logger.printf("ℹ️ Running newer than server: %s > %s\n", currentVersion, serverVersion.c_str());
+            snprintf(phoneHomeStatus, sizeof(phoneHomeStatus), "Dev build: %s", currentVersion);
+        }
+    } else {
+        Logger.println("⚠️ Update check: Missing version or URL in response");
+        strcpy(phoneHomeStatus, "Invalid response");
+    }
+    
+    return otaTriggered;
+}
+
+// Handle phone home in main loop
+void handlePhoneHomeLoop() {
+    if (!phoneHomeEnabled || !WiFi.isConnected()) {
+        return;
+    }
+    
+    unsigned long now = millis();
+    
+    // Handle overflow
+    if (now < lastPhoneHomeTime) {
+        lastPhoneHomeTime = now;
+    }
+    
+    // Check if it's time to phone home
+    if (now - lastPhoneHomeTime >= phoneHomeInterval) {
+        lastPhoneHomeTime = now;
+        phoneHome(nullptr);
     }
 }

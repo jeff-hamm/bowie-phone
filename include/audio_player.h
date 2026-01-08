@@ -102,6 +102,12 @@ bool playAudioBySequence(const char* sequence);
 void stopAudio();
 
 /**
+ * @brief Completely shut down audio subsystem for OTA updates
+ * Stops all audio, ends the audio board stream, and releases I2S/I2C
+ */
+void shutdownAudioForOTA();
+
+/**
  * @brief Check if audio is currently playing
  * @return true if playing, false otherwise
  */

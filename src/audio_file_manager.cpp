@@ -50,8 +50,13 @@ static AudioFile audioFiles[MAX_KNOWN_SEQUENCES];
 static int audioFileCount = 0;
 static unsigned long lastCacheTime = 0;
 static bool sdCardAvailable = false;  // True if SD card is mounted and accessible
+static bool sdCardInitFailed = false; // True if SD init was attempted and failed (don't retry)
 static int sdCardCsPin = 13; // SD card chip select pin
 static bool sdMmmcSupport = false; // MMC support flag
+
+// DNS cache for use after WireGuard breaks public DNS
+static IPAddress cachedGitHubIP;
+static bool dnsPreCached = false;
 
 // Download queue management
 static AudioDownloadItem downloadQueue[MAX_DOWNLOAD_QUEUE];
@@ -73,6 +78,12 @@ static bool initializeSDCard()
         return true;
     }
     
+    // Don't retry if we already know it failed
+    if (sdCardInitFailed)
+    {
+        return false;
+    }
+    
     Logger.println("🔧 Initializing SD card...");
     
     if (sdMmmcSupport)
@@ -82,6 +93,7 @@ static bool initializeSDCard()
         if (cardType == CARD_NONE)
         {
             Logger.println("❌ No SD_MMC card detected");
+            sdCardInitFailed = true;
             return false;
         }
         
@@ -96,6 +108,7 @@ static bool initializeSDCard()
         if (!SD.begin(sdCardCsPin))
         {
             Logger.println("❌ SD card initialization failed");
+            sdCardInitFailed = true;
             return false;
         }
         delay(1000);
@@ -103,6 +116,7 @@ static bool initializeSDCard()
         if (cardType == CARD_NONE)
         {
             Logger.println("❌ No SD card attached");
+            sdCardInitFailed = true;
             return false;
         }
         
@@ -533,6 +547,7 @@ static bool processDownloadQueueInternal()
     http.begin(item->url);
     http.addHeader("User-Agent", USER_AGENT_HEADER);
     http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+    http.setTimeout(30000);  // 30 second timeout for file downloads
     
     int httpCode = http.GET();
     
@@ -906,6 +921,28 @@ bool downloadAudio()
     // - SD card available: streaming=false -> direct Drive download URLs for caching
     // - URL streaming mode: streaming=true -> authenticated URLs for real-time playback
     String catalogUrl = KNOWN_SEQUENCES_URL;
+    String originalHost = "";
+    
+    // If DNS is pre-cached, try to use the IP instead of hostname
+    // This allows downloads to work even if WireGuard broke public DNS
+    if (dnsPreCached && cachedGitHubIP != IPAddress(0,0,0,0))
+    {
+        // Extract and replace hostname with cached IP
+        int protoEnd = catalogUrl.indexOf("://");
+        if (protoEnd > 0)
+        {
+            String protocol = catalogUrl.substring(0, protoEnd + 3);
+            int hostStart = protoEnd + 3;
+            int hostEnd = catalogUrl.indexOf('/', hostStart);
+            if (hostEnd > hostStart)
+            {
+                originalHost = catalogUrl.substring(hostStart, hostEnd);
+                String path = catalogUrl.substring(hostEnd);
+                catalogUrl = protocol + cachedGitHubIP.toString() + path;
+                Logger.printf("🌐 Using cached IP: %s -> %s\n", originalHost.c_str(), cachedGitHubIP.toString().c_str());
+            }
+        }
+    }
     
     // Check if URL already has query parameters
     if (catalogUrl.indexOf('?') >= 0) {
@@ -926,6 +963,13 @@ bool downloadAudio()
     http.addHeader("Content-Type", "application/json");
     http.addHeader("User-Agent", USER_AGENT_HEADER);
     http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+    http.setTimeout(10000);  // 10 second timeout to prevent blocking
+    
+    // Add Host header if we're using IP instead of hostname (required for virtual hosts)
+    if (originalHost.length() > 0)
+    {
+        http.addHeader("Host", originalHost);
+    }
     
     Logger.printf("📡 Making GET request to: %s\n", catalogUrl.c_str());
     
@@ -1370,4 +1414,47 @@ void clearDownloadQueue()
 bool isDownloadQueueEmpty()
 {
     return (downloadQueueIndex >= downloadQueueCount);
+}
+void preCacheDNS()
+{
+    if (WiFi.status() != WL_CONNECTED)
+    {
+        Logger.println("⚠️ DNS pre-cache: WiFi not connected");
+        return;
+    }
+    
+    // Extract hostname from KNOWN_SEQUENCES_URL
+    // URL format: https://raw.githubusercontent.com/...
+    String url = KNOWN_SEQUENCES_URL;
+    String hostname = "";
+    
+    // Find hostname between :// and next /
+    int protoEnd = url.indexOf("://");
+    if (protoEnd > 0)
+    {
+        int hostStart = protoEnd + 3;
+        int hostEnd = url.indexOf('/', hostStart);
+        if (hostEnd > hostStart)
+        {
+            hostname = url.substring(hostStart, hostEnd);
+        }
+    }
+    
+    if (hostname.length() == 0)
+    {
+        Logger.println("⚠️ DNS pre-cache: Could not parse hostname from URL");
+        return;
+    }
+    
+    Logger.printf("🌐 Pre-caching DNS: %s\n", hostname.c_str());
+    
+    if (WiFi.hostByName(hostname.c_str(), cachedGitHubIP))
+    {
+        dnsPreCached = true;
+        Logger.printf("✅ DNS cached: %s -> %s\n", hostname.c_str(), cachedGitHubIP.toString().c_str());
+    }
+    else
+    {
+        Logger.printf("⚠️ DNS lookup failed for %s\n", hostname.c_str());
+    }
 }

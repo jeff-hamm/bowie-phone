@@ -1,0 +1,8 @@
+{
+  "version": "1.0.2",
+  "firmware_url": "https://bowie-phone.infinitebutts.com/firmware/bowie-phone-latest.bin",
+  "release_notes": "Fixed OTA updates with dual app partition layout",
+  "min_version": "0.0.0",
+  "action": "none",
+  "message": ""
+}

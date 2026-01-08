@@ -1,5 +1,8 @@
 #include <config.h>
 #include "dtmf_decoder.h"
+#include "esp_wifi.h"
+#include "esp_system.h"
+#include "driver/gpio.h"
 #include "AudioTools.h"
 #include "AudioTools/AudioLibs/AudioBoardStream.h"
 #include "AudioTools/AudioLibs/AudioRealFFT.h" // or AudioKissFFT
@@ -34,8 +37,62 @@ int bits_per_sample = 16;
 const int KEY_PINS[] = {36, 13, 19, 23, 18, 5};  // KEY1-KEY6
 const int NUM_KEYS = 6;
 
+// Firmware update mode key - KEY3 (GPIO 19) is safest as it doesn't conflict with SD card
+// Hold this key during boot to enter firmware update mode
+const int FIRMWARE_UPDATE_KEY = 19;  // GPIO 19 = KEY3
+
 // Tailscale enable flag - set at boot based on key press
 static bool tailscaleEnabled = false;
+
+// Enter USB download/bootloader mode for firmware flashing
+// This forces the ESP32 into the ROM bootloader
+void enterFirmwareUpdateMode() {
+    Logger.println();
+    Logger.println("============================================");
+    Logger.println("🔧 ENTERING FIRMWARE UPDATE MODE");
+    Logger.println("============================================");
+    Logger.println("   The device will now restart into bootloader.");
+    Logger.println("   You can now upload new firmware.");
+    Logger.println();
+    Logger.println("   After upload, device will boot normally.");
+    Logger.println("============================================");
+    Logger.flush();
+    delay(500);  // Let serial flush completely
+    
+    // Disable WiFi to ensure clean state
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    esp_wifi_stop();
+    delay(100);
+    
+    // Use USB_SERIAL_JTAG to request bootloader mode on restart
+    // This works on ESP32-S2/S3/C3 but for classic ESP32 we just restart
+    // and rely on the upload tool using RTS/DTR to enter bootloader
+    Logger.println("   Restarting... Press upload now!");
+    Logger.flush();
+    delay(200);
+    
+    esp_restart();
+}
+
+// Flag to track if audio board was initialized
+static bool audioKitInitialized = false;
+
+// Shut down audio for OTA updates - just stop playback, don't touch kit
+void shutdownAudioForOTA() {
+    Logger.println("🔇 Shutting down audio for OTA...");
+    
+    // Stop any playing audio
+    stopAudio();
+    delay(50);
+    
+    // Note: We intentionally do NOT call kit.end() here because:
+    // 1. It can crash if SPI was already released elsewhere
+    // 2. The OTA onStart already calls SD.end() and SPI.end()
+    // 3. GPIO pins are reset separately
+    
+    Logger.println("✅ Audio stopped for OTA");
+}
 
 // Scan all keys and return a bitmask of pressed keys (active LOW)
 uint8_t scanKeys() {
@@ -104,7 +161,10 @@ void processSerialDebugInput() {
                     Logger.println("   keys         - Scan hardware keys");
                     Logger.println("   vpn          - Show VPN/Tailscale status");
                     Logger.println("   refresh      - Re-download audio catalog");
+                    Logger.println("   update       - Enter firmware update/bootloader mode");
                     Logger.println("   help         - Show this help");
+                    Logger.println();
+                    Logger.println("   TIP: Hold KEY3 (GPIO19) during boot to enter update mode");
                 }
                 else if (cmd.equalsIgnoreCase("refresh")) {
                     // Force re-download of audio catalog
@@ -156,6 +216,62 @@ void processSerialDebugInput() {
                     Logger.printf("🔧 [DEBUG] State: Hook=%s, Audio=%s\n", 
                         Phone.isOffHook() ? "OFF_HOOK" : "ON_HOOK",
                         isAudioActive() ? "PLAYING" : "IDLE");
+                }
+                else if (cmd.equalsIgnoreCase("prepareota") || cmd.equalsIgnoreCase("otaprep")) {
+                    Logger.println("🔄 Preparing for OTA update...");
+                    shutdownAudioForOTA();
+                    delay(100);
+                    SD.end();
+                    SPI.end();
+                    delay(100);
+                    
+                    // Reset SD card GPIO pins (NOT GPIO 2 - it's used by internal flash!)
+                    gpio_reset_pin(GPIO_NUM_13);  // SD_CS
+                    gpio_reset_pin(GPIO_NUM_14);  // SD_CLK  
+                    gpio_reset_pin(GPIO_NUM_15);  // SD_MOSI
+                    // GPIO 2 is shared with internal flash - DO NOT reset it!
+                    
+                    // Set as inputs with pull-ups
+                    gpio_set_direction(GPIO_NUM_13, GPIO_MODE_INPUT);
+                    gpio_set_direction(GPIO_NUM_14, GPIO_MODE_INPUT);
+                    gpio_set_direction(GPIO_NUM_15, GPIO_MODE_INPUT);
+                    gpio_pullup_en(GPIO_NUM_13);
+                    gpio_pullup_en(GPIO_NUM_14);
+                    gpio_pullup_en(GPIO_NUM_15);
+                    
+                    delay(200);
+                    
+                    // Set timeout - reboot if no OTA within 5 minutes
+                    setOtaPrepareTimeout();
+                    
+                    Logger.println("✅ Ready for OTA - will reboot in 5 min if no OTA received");
+                }
+                else if (cmd.startsWith("pullota ") || cmd.startsWith("otapull ")) {
+                    // Pull-based OTA - device fetches firmware from URL (works over VPN!)
+                    String url = cmd.substring(cmd.indexOf(' ') + 1);
+                    url.trim();
+                    if (url.length() > 0) {
+                        Logger.printf("📥 Starting pull OTA from: %s\n", url.c_str());
+                        if (!performPullOTA(url.c_str())) {
+                            Logger.println("❌ Pull OTA failed");
+                        }
+                        // If successful, device reboots automatically
+                    } else {
+                        Logger.println("❌ Usage: pullota <firmware_url>");
+                        Logger.println("   Example: pullota http://10.253.0.1:8080/firmware.bin");
+                    }
+                }
+                else if (cmd.equalsIgnoreCase("phonehome") || cmd.equalsIgnoreCase("checkin")) {
+                    // Manual phone home check-in
+                    Logger.println("📞 Manual phone home check-in...");
+                    if (phoneHome(nullptr)) {
+                        Logger.println("✅ Phone home triggered OTA update");
+                    } else {
+                        Logger.printf("📞 Phone home status: %s\n", getPhoneHomeStatus());
+                    }
+                }
+                else if (cmd.equalsIgnoreCase("bootloader") || cmd.equalsIgnoreCase("flash") || cmd.equalsIgnoreCase("update")) {
+                    enterFirmwareUpdateMode();
                 }
                 else if (cmd.startsWith("level ")) {
                     // Set log level
@@ -216,7 +332,6 @@ void processSerialDebugInput() {
 #define SD_MISO 2
 
 const char *startFilePath="/audio";
-static bool audioKitInitialized = false;
 
 
 // DTMF sequence checking moved to sequence_processor.cpp
@@ -230,6 +345,16 @@ void setup()
     Logger.addLogger(Serial);
 
     Logger.printf("\n\n=== Bowie Phone Starting ===\n");
+    
+    // Check if firmware update key (KEY3 / GPIO19) is held during boot
+    // This provides a hardware way to enter bootloader mode for flashing
+    pinMode(FIRMWARE_UPDATE_KEY, INPUT_PULLUP);
+    delay(50);  // Debounce
+    if (digitalRead(FIRMWARE_UPDATE_KEY) == LOW) {
+        Logger.println("🔧 KEY3 (GPIO19) held at boot - entering firmware update mode...");
+        enterFirmwareUpdateMode();
+        // Will not return - device restarts into bootloader
+    }
     
     // Check if Tailscale should be enabled based on boot key press
     tailscaleEnabled = shouldEnableTailscale();
@@ -256,10 +381,12 @@ void setup()
     if (!kit.begin(cfg))
     {
         Logger.println("❌ Failed to initialize AudioKit");
+        audioKitInitialized = false;
     }
     else
     {
         Logger.println("✅ AudioKit initialized successfully");
+        audioKitInitialized = true;
         
         // Set input volume/gain to maximum for DTMF detection
         // Volume range is 0-100 (percentage)
@@ -363,20 +490,29 @@ void setup()
     // Pass callback to connect Tailscale after WiFi connects
     initWiFi([]() {
         // This is called when WiFi successfully connects
-        // Download sequences BEFORE Tailscale - DNS works at this point
-        Logger.println("🌐 Downloading audio catalog before VPN...");
+        
+        // PRE-CACHE DNS: Resolve hostnames BEFORE WireGuard starts
+        // WireGuard with full tunnel (0.0.0.0/0) may break DNS to public servers
+        Logger.println("🌐 Pre-caching DNS resolutions before VPN...");
+        preCacheDNS();
+        
+        // PRIORITY: Initialize Tailscale VPN FIRST (if enabled) to ensure remote access
+        // This ensures we can always reach the device via WireGuard for OTA updates
+        if (tailscaleEnabled) {
+            Logger.println("🔐 WiFi connected - initializing Tailscale VPN...");
+            initTailscaleFromConfig();
+            Logger.println("✅ Tailscale VPN initialized - device should be reachable");
+        } else {
+            Logger.println("🌐 Tailscale skipped (not enabled at boot)");
+        }
+        
+        // Download audio catalog (non-critical, can fail)
+        // Uses cached DNS if WireGuard broke public DNS
+        Logger.println("🌐 Downloading audio catalog...");
         if (downloadAudio()) {
             Logger.println("✅ Audio catalog downloaded successfully");
         } else {
             Logger.println("⚠️ Audio catalog download failed - will retry later");
-        }
-        
-        // Now initialize Tailscale VPN (only if enabled at boot)
-        if (tailscaleEnabled) {
-            Logger.println("🔐 WiFi connected - initializing Tailscale...");
-            initTailscaleFromConfig();
-        } else {
-            Logger.println("🌐 Tailscale skipped (not enabled at boot)");
         }
     });
     
@@ -429,6 +565,9 @@ void loop()
     if (tailscaleEnabled) {
         handleTailscaleLoop();
     }
+    
+    // Handle phone home periodic check-in (for remote OTA, status, etc.)
+    handlePhoneHomeLoop();
 
 #ifdef DEBUG
     // Process serial debug commands
