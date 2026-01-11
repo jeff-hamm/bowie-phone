@@ -5,12 +5,31 @@
 // Global logger instance
 LoggerClass Logger;
 
-LoggerClass::LoggerClass() : serialPrint(nullptr), logIndex(0), logCount(0), bufferPos(0), currentLogLevel(DEFAULT_LOG_LEVEL) {
+LoggerClass::LoggerClass() : streamCount(0), logIndex(0), logCount(0), bufferPos(0), currentLogLevel(DEFAULT_LOG_LEVEL) {
     messageBuffer[0] = '\0';
+    for (int i = 0; i < MAX_LOG_STREAMS; i++) {
+        streams[i] = nullptr;
+    }
 }
 
 void LoggerClass::addLogger(Print& print) {
-    serialPrint = &print;
+    if (streamCount < MAX_LOG_STREAMS) {
+        streams[streamCount++] = &print;
+    }
+}
+
+void LoggerClass::removeLogger(Print& print) {
+    for (int i = 0; i < streamCount; i++) {
+        if (streams[i] == &print) {
+            // Shift remaining streams down
+            for (int j = i; j < streamCount - 1; j++) {
+                streams[j] = streams[j + 1];
+            }
+            streams[streamCount - 1] = nullptr;
+            streamCount--;
+            break;
+        }
+    }
 }
 
 size_t LoggerClass::write(uint8_t byte) {
@@ -19,10 +38,12 @@ size_t LoggerClass::write(uint8_t byte) {
         return 1; // Pretend we wrote it
     }
     
-    // Write to serial/print object (if available)
-    size_t result = 0;
-    if (serialPrint) {
-        result = serialPrint->write(byte);
+    // Write to all output streams (Serial, Telnet, etc.)
+    size_t result = 1;
+    for (int i = 0; i < streamCount; i++) {
+        if (streams[i]) {
+            streams[i]->write(byte);
+        }
     }
     
     // Buffer the character for log messages
@@ -65,9 +86,12 @@ size_t LoggerClass::write(const uint8_t* buffer, size_t size) {
         return size; // Pretend we wrote it
     }
     
-    size_t result = 0;
-    if (serialPrint) {
-        result = serialPrint->write(buffer, size);
+    // Write to all output streams
+    size_t result = size;
+    for (int i = 0; i < streamCount; i++) {
+        if (streams[i]) {
+            streams[i]->write(buffer, size);
+        }
     }
     
     // Process each byte for log buffer (without calling serial again)

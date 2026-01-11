@@ -51,7 +51,7 @@ const PHONE_CONFIG = {
         'ringback',
         'disconnect',
         'error',
-        'silence'
+        'wrong_number'
     ],
     
     // Data field configuration
@@ -77,6 +77,14 @@ const PHONE_CONFIG = {
             label: 'Link',
             icon: '🔗',
             placeholder: 'Audio URL or recording...'
+        },
+        ring_duration: {
+            type: 'number',
+            required: false,
+            label: 'Ring Duration',
+            icon: '🔔',
+            placeholder: 'ms before audio (e.g., 4000)',
+            default: 0
         }
     },
     

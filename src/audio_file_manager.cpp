@@ -18,6 +18,8 @@
 #include <SD.h>
 #include <SD_MMC.h>
 #include <FS.h>
+#include <SPI.h>
+#include "AudioTools/Disk/AudioSourceSD.h"
 
 // Helper macros for SD vs SD_MMC abstraction
 #define SD_CARD (sdMmmcSupport ? (fs::FS&)SD_MMC : (fs::FS&)SD)
@@ -713,6 +715,10 @@ static bool saveAudioFilesToSDCard()
         {
             entry["ext"] = audioFiles[i].ext;
         }
+        if (audioFiles[i].ringDuration > 0)
+        {
+            entry["ring_duration"] = audioFiles[i].ringDuration;
+        }
     }
     
     // Open file for writing
@@ -837,8 +843,9 @@ static bool loadAudioFilesFromSDCard()
         audioFiles[audioFileCount].type = strdup(entryData["type"] | "unknown");
         audioFiles[audioFileCount].path = strdup(entryData["path"] | "");
         audioFiles[audioFileCount].ext = strdup(entryData["ext"] | "");
+        audioFiles[audioFileCount].ringDuration = entryData["ring_duration"] | 0;
         
-        audioFileCount++;
+        audioFileCount++;;
     }
     
     Logger.printf("✅ Loaded %d audio files from SD card\n", audioFileCount);
@@ -849,7 +856,10 @@ static bool loadAudioFilesFromSDCard()
 // PUBLIC FUNCTIONS
 // ============================================================================
 
-void initializeAudioFileManager(int sdCsPin, bool mmcSupport, bool sdAvailable)
+AudioSource *initializeAudioFileManager(int sdCsPin, bool mmcSupport,
+                                        int sdClkPin, int sdMosiPin, int sdMisoPin,
+                                        const char *startFilePath,
+                                        bool *sdCardAvailableOut)
 {
     Logger.println("🔧 Initializing Audio File Manager...");
     
@@ -858,14 +868,53 @@ void initializeAudioFileManager(int sdCsPin, bool mmcSupport, bool sdAvailable)
     sdCardCsPin = sdCsPin;
     audioFileCount = 0;
     lastCacheTime = 0;
-    sdCardAvailable = sdAvailable;  // Track SD card availability
+    sdCardAvailable = false;
+
+    AudioSource* source = nullptr;
+
+    // Initialize SD card in SPI mode
+    if (!mmcSupport)
+    {
+        SPI.begin(sdClkPin, sdMisoPin, sdMosiPin, sdCsPin);
+        
+        for (int attempt = 1; attempt <= 3 && !sdCardAvailable; attempt++) {
+            Logger.printf("🔧 SD SPI initialization attempt %d/3...\n", attempt);
+            delay(attempt * 300);
+            
+            if (SD.begin(sdCsPin, SPI)) {
+                uint8_t cardType = SD.cardType();
+                if (cardType != CARD_NONE) {
+                    uint64_t cardSize = SD.cardSize() / (1024 * 1024);
+                    Logger.printf("✅ SD card initialized (SPI mode, %lluMB)\n", cardSize);
+                    sdCardAvailable = true;
+                } else {
+                    Logger.println("❌ No SD card detected");
+                }
+            } else {
+                Logger.println("❌ SD.begin() failed");
+            }
+        }
+        
+        if (sdCardAvailable) {
+            // Create AudioSourceSD now that SPI is initialized
+            source = new AudioSourceSD(startFilePath, "wav", sdCsPin, SPI);
+            Logger.println("✅ AudioSourceSD created");
+        } else {
+            Logger.println("⚠️ SD initialization failed - continuing without SD card");
+        }
+    }
+    
+    // Return SD card availability status if requested
+    if (sdCardAvailableOut) {
+        *sdCardAvailableOut = sdCardAvailable;
+    }
     
     // Skip SD card operations if not available
     if (!sdCardAvailable)
     {
         Logger.println("⚠️ SD card not available - running in memory-only mode");
         Logger.println("ℹ️ Audio catalog will be downloaded when WiFi is available");
-        return;
+        return source;
     }
     
     // Try to load from SD card first
@@ -897,12 +946,15 @@ void initializeAudioFileManager(int sdCsPin, bool mmcSupport, bool sdAvailable)
     {
         Logger.println("ℹ️ No cached audio files found, will download when WiFi is available");
     }
+    
+    return source;
 }
 
-bool downloadAudio()
+// Forward declaration for internal download function
+static bool downloadAudioInternal();
+
+bool downloadAudio(int maxRetries, unsigned long retryDelayMs)
 {
-    Logger.println("🌐 Downloading list from server...");
-    
     // Check WiFi connection
     if (WiFi.status() != WL_CONNECTED)
     {
@@ -916,6 +968,30 @@ bool downloadAudio()
         Logger.println("✅ Cache is still valid, skipping download");
         return true;
     }
+    
+    // Retry loop
+    for (int attempt = 1; attempt <= maxRetries; attempt++)
+    {
+        if (attempt > 1)
+        {
+            Logger.printf("🔄 Retry attempt %d/%d after %lums delay...\n", attempt, maxRetries, retryDelayMs);
+            delay(retryDelayMs);
+        }
+        
+        if (downloadAudioInternal())
+        {
+            return true;
+        }
+    }
+    
+    Logger.printf("❌ Download failed after %d attempts\n", maxRetries);
+    return false;
+}
+
+// Internal download implementation (single attempt)
+static bool downloadAudioInternal()
+{
+    Logger.println("🌐 Downloading list from server...");
     
     // Build catalog URL with streaming parameter
     // - SD card available: streaming=false -> direct Drive download URLs for caching
@@ -1033,6 +1109,7 @@ bool downloadAudio()
         audioFiles[audioFileCount].type = strdup(entryData["type"] | "unknown");
         audioFiles[audioFileCount].path = strdup(entryData["path"] | "");
         audioFiles[audioFileCount].ext = strdup(entryData["ext"] | "");
+        audioFiles[audioFileCount].ringDuration = entryData["ring_duration"] | 0;
         
         const char* extInfo = audioFiles[audioFileCount].ext;
         Logger.printf("📝 Added: %s -> %s (%s%s%s)\n", 
@@ -1091,6 +1168,24 @@ bool hasAudioKey(const char *key)
     }
     
     return false;
+}
+
+unsigned long getAudioKeyRingDuration(const char *key)
+{
+    if (!key || audioFileCount == 0)
+    {
+        return 0;
+    }
+    
+    for (int i = 0; i < audioFileCount; i++)
+    {
+        if (strcmp(audioFiles[i].audioKey, key) == 0)
+        {
+            return audioFiles[i].ringDuration;
+        }
+    }
+    
+    return 0;
 }
 
 bool hasAudioKeyWithPrefix(const char *prefix)
@@ -1414,47 +1509,4 @@ void clearDownloadQueue()
 bool isDownloadQueueEmpty()
 {
     return (downloadQueueIndex >= downloadQueueCount);
-}
-void preCacheDNS()
-{
-    if (WiFi.status() != WL_CONNECTED)
-    {
-        Logger.println("⚠️ DNS pre-cache: WiFi not connected");
-        return;
-    }
-    
-    // Extract hostname from KNOWN_SEQUENCES_URL
-    // URL format: https://raw.githubusercontent.com/...
-    String url = KNOWN_SEQUENCES_URL;
-    String hostname = "";
-    
-    // Find hostname between :// and next /
-    int protoEnd = url.indexOf("://");
-    if (protoEnd > 0)
-    {
-        int hostStart = protoEnd + 3;
-        int hostEnd = url.indexOf('/', hostStart);
-        if (hostEnd > hostStart)
-        {
-            hostname = url.substring(hostStart, hostEnd);
-        }
-    }
-    
-    if (hostname.length() == 0)
-    {
-        Logger.println("⚠️ DNS pre-cache: Could not parse hostname from URL");
-        return;
-    }
-    
-    Logger.printf("🌐 Pre-caching DNS: %s\n", hostname.c_str());
-    
-    if (WiFi.hostByName(hostname.c_str(), cachedGitHubIP))
-    {
-        dnsPreCached = true;
-        Logger.printf("✅ DNS cached: %s -> %s\n", hostname.c_str(), cachedGitHubIP.toString().c_str());
-    }
-    else
-    {
-        Logger.printf("⚠️ DNS lookup failed for %s\n", hostname.c_str());
-    }
 }

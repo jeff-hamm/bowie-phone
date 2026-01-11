@@ -63,7 +63,7 @@ void initAudioPlayer(AudioSource &source, AudioStream &output, AudioDecoder &dec
  * 
  * Sets up URL-based streaming when SD card is unavailable.
  */
-void initAudioPlayerURLMode(AudioStream &output, AudioDecoder &decoder);
+void initAudioUrlPlayer(AudioStream &output, AudioDecoder &decoder);
 
 /**
  * @brief Check if audio player is in URL streaming mode
@@ -89,12 +89,38 @@ bool playAudioPath(const char* filePath);
 
 /**
  * @brief Start playing an audio file by sequence/key
- * @param sequence DTMF sequence or audio key to look up and play
+ * @param key DTMF sequence or audio key to look up and play
+ * @param durationMs Maximum duration in milliseconds (0 = unlimited)
  * @return true if playback started, false if key not found or error
  * 
- * Looks up the sequence in known_processor and plays the associated file.
+ * Looks up the key in known_processor and plays the associated file.
+ * If durationMs > 0, audio will automatically stop after that duration.
  */
-bool playAudioBySequence(const char* sequence);
+bool playAudioKey(const char* key, unsigned long durationMs = 0);
+
+/**
+ * @brief Play an audio key for a duration, then play a file path
+ * @param audioKey The audio key to play first (e.g., "ringback")
+ * @param durationMs Duration to play the audio key in milliseconds
+ * @param filePath Path to the audio file to play after the audio key completes
+ * @return true if playback started, false on error
+ * 
+ * Plays audioKey for durationMs, then automatically transitions to filePath.
+ * Useful for playing ringback before the actual audio content.
+ */
+bool playAudioPair(const char* audioKey, unsigned long durationMs, const char* filePath);
+
+/**
+ * @brief Set the ring duration (how long ringback plays before audio)
+ * @param durationMs Duration in milliseconds (0 = no ringback)
+ */
+void setRingDuration(unsigned long durationMs);
+
+/**
+ * @brief Get the current ring duration setting
+ * @return Ring duration in milliseconds
+ */
+unsigned long getRingDuration();
 
 /**
  * @brief Stop current audio playback
@@ -114,16 +140,11 @@ void shutdownAudioForOTA();
 bool isAudioActive();
 
 /**
- * @brief Check if dial tone is currently playing
- * @return true if dial tone is playing, false otherwise
+ * @brief Check if specific audio is currently playing
+ * @param audioKey The audio key to check (e.g., "dialtone", "ringback")
+ * @return true if the specified audio is playing, false otherwise
  */
-bool isDialTonePlaying();
-
-/**
- * @brief Initialize the synthesized dial tone generator
- * @param output The audio output stream (AudioBoardStream)
- */
-void initDialToneGenerator(AudioStream &output);
+bool isAudioKeyPlaying(const char* audioKey);
 
 /**
  * @brief Start playing the synthesized dial tone (350 + 440 Hz)
@@ -132,29 +153,16 @@ void initDialToneGenerator(AudioStream &output);
 bool startDialTone();
 
 /**
- * @brief Stop the synthesized dial tone
+ * @brief Start playing the synthesized ringback tone (440 + 480 Hz, 2s on / 4s off)
+ * @return true if ringback started successfully
  */
-void stopDialTone();
+bool startRingback();
 
 /**
- * @brief Check if synthesized dial tone is playing
- * @return true if dial tone is active
+ * @brief Stop audio if currently playing the specified key
+ * @param audioKey The audio key to stop (e.g., "dialtone", "ringback")
  */
-bool isSynthDialTonePlaying();
-
-/**
- * @brief Process dial tone output (call in main loop)
- * @return true if dial tone is still active
- */
-bool processDialTone();
-
-/**
- * @brief Sample mic for DTMF detection during dial tone
- * @param fftInput The FFT stream to receive mic input
- * @param micSource The mic input source (kit stream)
- * @return true if dial tone is still active
- */
-bool sampleDTMFDuringDialTone(AudioStream& fftInput, AudioStream& micSource);
+void stopAudioKey(const char* audioKey);
 
 /**
  * @brief Get the current audio key being played

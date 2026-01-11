@@ -161,10 +161,17 @@ void PhoneService::setHookCallback(HookStateCallback callback) {
     _hookCallback = callback;
 }
 
-void PhoneService::setOffHook(bool offHook, bool fromDebug) {
+void PhoneService::resetDebugOverride() {
+    if (_debugOverride) {
+        _debugOverride = false;
+        Logger.println("🔧 [DEBUG] Hook override DISABLED - resuming automatic detection");
+    }
+}
+
+void PhoneService::setOffHook(bool offHook, bool override) {
     // When called from debug, enable override to ignore physical pin
-    if (fromDebug) {
-        _debugOverride = true;
+    _debugOverride = override;
+    if (override) {
         Logger.println("🔧 [DEBUG] Hook override ENABLED - physical pin ignored");
     }
     
@@ -172,7 +179,7 @@ void PhoneService::setOffHook(bool offHook, bool fromDebug) {
         _isOffHook = offHook;
         
         if (_isOffHook) {
-            if (fromDebug) {
+            if (override) {
                 Logger.println("📞 [DEBUG] Phone set to OFF HOOK");
             } else {
                 Logger.println("📞 Phone picked up (OFF HOOK)");
@@ -183,7 +190,7 @@ void PhoneService::setOffHook(bool offHook, bool fromDebug) {
             }
 #endif
         } else {
-            if (fromDebug) {
+            if (override) {
                 Logger.println("📞 [DEBUG] Phone set to ON HOOK");
             } else {
                 Logger.println("📞 Phone hung up (ON HOOK)");

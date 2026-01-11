@@ -10,6 +10,20 @@ struct FrequencyPeak {
     bool detected;
 };
 
+// Structure to hold captured FFT frame data for deferred processing
+// Populated by lightweight callback, processed in main loop
+struct FFTFrameData {
+    unsigned long timestamp;      // When frame was captured
+    float summedFreq;             // Summed frequency from FFT result
+    float summedMag;              // Summed magnitude from FFT result
+    float rowFreq;                // Interpolated row frequency
+    float rowMag;                 // Row frequency magnitude
+    float colFreq;                // Interpolated column frequency
+    float colMag;                 // Column frequency magnitude
+    float rowMags[4];             // Magnitudes at exact DTMF row frequencies
+    bool valid;                   // True if data is ready to process
+};
+
 // DTMF frequency pairs
 const float DTMF_FREQS_LOW[] = {697, 770, 852, 941};    // Low group frequencies
 const float DTMF_FREQS_HIGH[] = {1209, 1336, 1477, 1633}; // High group frequencies
@@ -28,9 +42,15 @@ const float DTMF_RATIO_THRESHOLD = 5.0;          // Signal-to-noise ratio
 const int DTMF_MIN_FRAMES = 3;                   // Minimum consecutive detections
 
 // Function declarations
+  // Initialize FFT and copier for DTMF detection
 char analyzeDTMF();
 char decodeDTMF(float rowFreq, float colFreq);
 int findClosestDTMFFreq(float freq, const float *freqArray, int arraySize);
 void fftResult(AudioFFTBase &fft);
+void processFFTFrame();  // Call from main loop to process captured FFT data
+
+// FFT debug mode (runtime toggle via special command)
+bool isFFTDebugEnabled();
+void setFFTDebugEnabled(bool enabled);
 
 #endif // DTMF_DECODER_H

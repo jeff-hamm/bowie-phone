@@ -13,6 +13,31 @@ static char dtmfSequence[MAX_SEQUENCE_LENGTH + 1];  // +1 for null terminator
 static int sequenceIndex = 0;
 static unsigned long lastDigitTime = 0;
 static bool sequenceReady = false;  // Flag set when sequence is ready to process
+static int maxSequenceLength = MAX_SEQUENCE_LENGTH;  // Runtime configurable max length
+
+// ============================================================================
+// CONFIGURATION FUNCTIONS
+// ============================================================================
+
+void setMaxSequenceLength(int maxLength)
+{
+    if (maxLength <= 0 || maxLength > MAX_SEQUENCE_LENGTH)
+    {
+        // 0 or invalid values reset to full MAX_SEQUENCE_LENGTH
+        maxSequenceLength = MAX_SEQUENCE_LENGTH;
+        Logger.printf("📏 Max sequence length reset to %d\n", maxSequenceLength);
+    }
+    else
+    {
+        maxSequenceLength = maxLength;
+        Logger.printf("📏 Max sequence length set to %d\n", maxSequenceLength);
+    }
+}
+
+int getMaxSequenceLength()
+{
+    return maxSequenceLength;
+}
 
 // ============================================================================
 // DTMF SEQUENCE READING
@@ -26,14 +51,14 @@ static bool sequenceReady = false;  // Flag set when sequence is ready to proces
 static bool addDigitToSequence(char digit)
 {
     // Stop dial tone when first digit is pressed
-    if (isDialTonePlaying())
+    if (isAudioKeyPlaying("dialtone"))
     {
         Logger.debugln("🔇 Stopping dial tone - digit detected");
         stopAudio();
     }
 
     // Special case: '*' key completes the sequence (excluding the '*')
-    if (digit == '*')
+    if (digit == '*' || digit == '#')
     {
         if (sequenceIndex > 0)
         {
@@ -45,7 +70,7 @@ static bool addDigitToSequence(char digit)
     }
 
     // Add digit to sequence
-    if (sequenceIndex < MAX_SEQUENCE_LENGTH)
+    if (sequenceIndex < maxSequenceLength)
     {
         dtmfSequence[sequenceIndex] = digit;
         sequenceIndex++;
@@ -70,7 +95,7 @@ static bool addDigitToSequence(char digit)
     }
 
     // Only complete if buffer is full (no timeout - wait for hang up or match)
-    if (sequenceIndex >= MAX_SEQUENCE_LENGTH - 1)
+    if (sequenceIndex >= maxSequenceLength - 1)
     {
         Logger.debugln("Sequence complete: buffer full");
         return true;
@@ -81,33 +106,35 @@ static bool addDigitToSequence(char digit)
 
 /**
  * @brief Check for new DTMF digits and manage sequence collection
+ * @param skipFFT If true, skip FFT processing (use when Goertzel is active)
  * @return true when a complete sequence is ready to process (matches a known pattern)
+ * 
+ * Note: The FFT callback (fftResult) fires when each FFT window completes
+ * (~46ms at 2048 samples @ 44100Hz). That callback captures data which
+ * processFFTFrame() analyzes. analyzeDTMF() returns any confirmed button.
  */
-static bool checkForDTMFSequence()
+static bool checkForDTMFSequence(bool skipFFT = false)
 {
-    static unsigned long lastAnalysisTime = 0;
-    unsigned long currentTime = millis();
-
-    // Analyze DTMF data every 50ms
-    if (currentTime - lastAnalysisTime > 50)
+    // Process any pending FFT frame (deferred from callback for efficiency)
+    // Skip when using Goertzel (dial tone active) to avoid dial tone harmonic interference
+    if (!skipFFT) {
+        processFFTFrame();
+    }
+    
+    char detectedChar = analyzeDTMF();
+    if (detectedChar != 0)
     {
-        char detectedChar = analyzeDTMF();
-        if (detectedChar != 0)
-        {
-            Logger.debugf("DTMF digit detected: %c\n", detectedChar);
-            lastAnalysisTime = currentTime;
-            return addDigitToSequence(detectedChar);
-        }
-        lastAnalysisTime = currentTime;
+        Logger.debugf("DTMF digit detected: %c\n", detectedChar);
+        return addDigitToSequence(detectedChar);
     }
 
     return false; // No complete sequence yet
 }
 
-const char* readDTMFSequence()
+const char* readDTMFSequence(bool skipFFT)
 {
     // Check for complete DTMF sequences from real audio or simulated input
-    bool ready = checkForDTMFSequence() || sequenceReady;
+    bool ready = checkForDTMFSequence(skipFFT) || sequenceReady;
     
     if (ready && sequenceIndex > 0)
     {
@@ -186,7 +213,7 @@ void processUnknownSequence(const char *sequence)
 {
     Logger.printf("❓ UNKNOWN SEQUENCE: %s\n", sequence);
     Logger.debugln("💡 This sequence doesn't match any known patterns");
-
+    playAudioKey("wrong_number");
     // Unknown sequence handling:
     // - Log for analysis
     // - Check for patterns

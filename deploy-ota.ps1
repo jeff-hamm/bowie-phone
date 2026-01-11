@@ -6,7 +6,8 @@ param(
     [string]$UnraidIP = "100.86.189.46",
     [int]$OTAPort = 3232,
     [string]$OTAPassword = "bowie-ota-2024",
-    [string]$ComPort = "COM3"
+    [string]$ComPort = "COM3",
+    [switch]$NoMonitor
 )
 
 Write-Host "=====================================" -ForegroundColor Cyan
@@ -78,6 +79,15 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "=====================================" -ForegroundColor Green
     Write-Host ""
     Write-Host "Device should reboot with new firmware in a few seconds." -ForegroundColor Cyan
+    
+    if (-not $NoMonitor) {
+        Write-Host ""
+        Write-Host "Waiting for device to reboot..." -ForegroundColor Yellow
+        Start-Sleep -Seconds 10
+        Write-Host "Starting log monitor..." -ForegroundColor Cyan
+        Write-Host ""
+        & .\monitor-logs.ps1
+    }
 } else {
     Write-Host ""
     Write-Host "=====================================" -ForegroundColor Red

@@ -28,6 +28,7 @@ public:
     
     // Debug/simulation methods
     void setOffHook(bool offHook, bool fromDebug = true);  // Simulate hook state change
+    void resetDebugOverride();  // Reset to automatic hook detection
 
 private:
 #ifdef CAN_RING

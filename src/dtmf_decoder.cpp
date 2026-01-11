@@ -1,105 +1,108 @@
 #include "dtmf_decoder.h"
+#include "phone.h"
+#include "logging.h"
+#include "config.h"
 #include "AudioTools/AudioLibs/AudioBoardStream.h"
 #include "AudioTools/AudioLibs/AudioRealFFT.h" // or AudioKissFFT
+// Compile-time configurable gap threshold (ms)
+// Gap = silence between button presses, used for state reset
+#ifndef GAP_THRESHOLD_MS
+#define GAP_THRESHOLD_MS 150
+#endif
 
-// Uncomment to enable debug output
-// #define DEBUG
+// Minimum samples before emitting key-down detection
+#ifndef MIN_KEYDOWN_SAMPLES
+#define MIN_KEYDOWN_SAMPLES 3
+#endif
 
-// Uncomment to see ALL FFT values (not just DTMF candidates)
-#define DEBUG_FFT_ALL
+// Minimum average row magnitude to trust row detection
+#ifndef MIN_AVG_ROW_MAG
+#define MIN_AVG_ROW_MAG 2.0f
+#endif
 
-// Standard DTMF frequency definitions (for reference)
-const float DTMF_ROW_FREQS[] = {697.0, 770.0, 852.0, 941.0};
-const float DTMF_COL_FREQS[] = {1209.0, 1336.0, 1477.0, 1633.0};
-const char DTMF_KEYPAD[4][4] = {
-    {'1', '2', '3', 'A'},
-    {'4', '5', '6', 'B'},
-    {'7', '8', '9', 'C'},
-    {'*', '0', '#', 'D'}};
-
-// OBSERVED summed frequencies from actual phone (with ~1.17x scaling factor)
-// These are empirically measured - the phone seems to output at different frequencies
-// Standard sum would be: 1=1906, 2=2033, 3=2174, 4=1979, etc.
-// Observed sum is ~1.17x higher
-const float OBSERVED_FREQ_SCALE = 1.17;  // Scaling factor observed
-
-// Summed frequencies lookup (detected_freq -> button)
-// Format: {min_freq, max_freq, button_char}
-struct SummedFreqEntry {
-    float freq;       // Expected detected frequency
-    char button;      // Button character
-};
-
-// Based on observations: 1=2234, 2=2447, 3=2700 (with some tolerance)
-// UPDATED: Button 9 appears at ~2707, need to differentiate from button 3
-// Let's recalculate with better scaling estimates
-const SummedFreqEntry SUMMED_FREQ_TABLE[] = {
-    {2234.0, '1'},  // 697+1209=1906 * ~1.17 = 2230 (CONFIRMED)
-    {2380.0, '2'},  // 697+1336=2033 * ~1.17 = 2379
-    {2540.0, '3'},  // 697+1477=2174 * ~1.17 = 2544
-    {2317.0, '4'},  // 770+1209=1979 * ~1.17 = 2315
-    {2467.0, '5'},  // 770+1336=2106 * ~1.17 = 2464
-    {2627.0, '6'},  // 770+1477=2247 * ~1.17 = 2629
-    {2411.0, '7'},  // 852+1209=2061 * ~1.17 = 2411
-    {2561.0, '8'},  // 852+1336=2188 * ~1.17 = 2560
-    {2720.0, '9'},  // 852+1477=2329 * ~1.17 = 2725 (observed ~2707)
-    {2516.0, '*'},  // 941+1209=2150 * ~1.17 = 2516
-    {2666.0, '0'},  // 941+1336=2277 * ~1.17 = 2664
-    {2830.0, '#'},  // 941+1477=2418 * ~1.17 = 2829
-};
-const int SUMMED_FREQ_TABLE_SIZE = sizeof(SUMMED_FREQ_TABLE) / sizeof(SummedFreqEntry);
-const float SUMMED_FREQ_TOLERANCE = 40.0;  // Hz tolerance for matching (reduced to differentiate adjacent buttons)
-
-// Detection parameters
-const float MAGNITUDE_THRESHOLD = 15.0;       // Minimum magnitude for detection (increased to reduce false positives)
-const float FREQ_TOLERANCE = 45.0;            // Frequency tolerance in Hz
-const unsigned long DETECTION_COOLDOWN = 120; // 120ms between detections (prevent double-detection)
-const unsigned long GAP_THRESHOLD = 80;       // 80ms silence = new button press
+// Get phone configuration (from phone-specific implementation)
+#define PHONE_CONFIG getPhoneConfig()
 
 // Global variables for DTMF detection
 FrequencyPeak detectedPeaks[10];
 int peakCount = 0;
 unsigned long lastDetectionTime = 0;
 
-// Summed frequency detection state
+// Detection state
 static char lastDetectedButton = 0;
 static unsigned long lastButtonTime = 0;
 static int consecutiveDetections = 0;
-const int REQUIRED_CONSECUTIVE = 2;  // Require 2 consecutive detections to confirm (reduces noise)
 static char confirmedButton = 0;     // Button that passed consecutive detection threshold
 static unsigned long lastSignalTime = 0;  // When we last saw a strong signal (for gap detection)
 static bool inGap = true;            // True when we haven't seen signal recently
 
+// Summed-frequency triggered row detection state
+static int pendingColumn = -1;       // Column detected from summed frequency
+static float pendingRowMagMax = 0;   // Max row magnitude seen during summed detection
+static int pendingRow = -1;          // Best row match during summed detection
+static unsigned long pendingStartTime = 0;  // When we started looking for row
+
+// Row frequency accumulation state (for averaging across button press duration)
+static float rowAccumulators[4] = {0, 0, 0, 0};  // Accumulated magnitude at each row freq
+static int rowSampleCount = 0;                    // Number of samples accumulated
+static int accumulatedColumn = -1;                // Column from summed freq during accumulation
+static bool buttonPressActive = false;            // True while we're accumulating for a button
+static bool keyDownEmitted = false;               // True if we already emitted for this press (key-down mode)
+
 // Debug: track max magnitude seen for signal level monitoring
-#ifdef DEBUG_FFT_ALL
+// Runtime toggle for FFT debug output (controlled via special command)
+static bool fftDebugEnabled = false;
 static float maxMagnitudeSeen = 0;
 static unsigned long lastDebugPrintTime = 0;
 static unsigned long fftCallCount = 0;
 static float lastStrongestFreq = 0;
 static float lastStrongestMag = 0;
-#endif
+static unsigned long fftStartTime = 0;  // For tracking FFT rate
+static float maxRowMagSeen = 0;
+static float maxColMagSeen = 0;
+static float maxSummedMagSeen = 0;
 
-// Decode button from summed frequency (new method for this phone)
-char decodeFromSummedFreq(float freq)
-{
-  for (int i = 0; i < SUMMED_FREQ_TABLE_SIZE; i++)
-  {
-    float diff = freq - SUMMED_FREQ_TABLE[i].freq;
-    if (diff < 0) diff = -diff;  // Manual abs for float
-    if (diff <= SUMMED_FREQ_TOLERANCE)
-    {
-      return SUMMED_FREQ_TABLE[i].button;
+// FFT debug mode getter/setter
+bool isFFTDebugEnabled() { return fftDebugEnabled; }
+void setFFTDebugEnabled(bool enabled) { fftDebugEnabled = enabled; }
+
+// FFT frame buffer for deferred processing
+// Callback captures data here, processFFTFrame() handles heavy logic
+static FFTFrameData pendingFrame = {0, 0, 0, 0, 0, 0, 0, {0, 0, 0, 0}, false, false};
+
+// Get column index from button character
+int getColumnFromButton(char button) {
+    for (int row = 0; row < 4; row++) {
+        for (int col = 0; col < 4; col++) {
+            if (DTMF_KEYPAD[row][col] == button) {
+                return col;
+            }
+        }
     }
-  }
-  return 0; // No match
+    return -1;
 }
 
-// Find closest DTMF frequency
+// Get row index from button character  
+int getRowFromButton(char button) {
+    for (int row = 0; row < 4; row++) {
+        for (int col = 0; col < 4; col++) {
+            if (DTMF_KEYPAD[row][col] == button) {
+                return row;
+            }
+        }
+    }
+    return -1;
+}
+
+// Find closest DTMF frequency (uses phone config)
 int findClosestDTMFFreq(float freq, const float *freqArray, int arraySize)
 {
+  const PhoneConfig& config = PHONE_CONFIG;
   for (int i = 0; i < arraySize; i++)
   {
-    if (abs(freq - freqArray[i]) <= FREQ_TOLERANCE)
+    float diff = freq - freqArray[i];
+    if (diff < 0) diff = -diff;
+    if (diff <= config.freqTolerance)
     {
       return i;
     }
@@ -107,11 +110,12 @@ int findClosestDTMFFreq(float freq, const float *freqArray, int arraySize)
   return -1;
 }
 
-// Decode DTMF from detected frequencies
+// Decode DTMF from detected frequencies (uses phone config)
 char decodeDTMF(float rowFreq, float colFreq)
 {
-  int row = findClosestDTMFFreq(rowFreq, DTMF_ROW_FREQS, 4);
-  int col = findClosestDTMFFreq(colFreq, DTMF_COL_FREQS, 4);
+  const PhoneConfig& config = PHONE_CONFIG;
+  int row = findClosestFreq(rowFreq, config.rowFreqs, 4, config.freqTolerance);
+  int col = findClosestFreq(colFreq, config.colFreqs, 4, config.freqTolerance);
 
   if (row >= 0 && col >= 0)
   {
@@ -128,16 +132,15 @@ char analyzeDTMF()
   {
     char result = confirmedButton;
     confirmedButton = 0;  // Clear it so it's only returned once
+    Logger.debugf("analyzeDTMF: returning confirmed button '%c'\n", result);
     return result;
   }
 
-#ifdef DEBUG
   // Only show debug for meaningful peak counts to reduce spam
   if (peakCount >= 2)
   {
-    Serial.printf("DEBUG: analyzeDTMF() called with %d peaks\n", peakCount);
+    Logger.debugf("analyzeDTMF: called with %d peaks\n", peakCount);
   }
-#endif
 
   if (peakCount < 2)
   {
@@ -145,15 +148,15 @@ char analyzeDTMF()
     return 0;      // No debug output for empty calls to reduce spam
   }
 
-#ifdef DEBUG
+  const PhoneConfig& config = PHONE_CONFIG;
+
   // Debug: Print all detected peaks
-  Serial.printf("DEBUG: Detected frequency peaks:\n");
+  Logger.debugf("analyzeDTMF: Detected frequency peaks:\n");
   for (int i = 0; i < peakCount; i++)
   {
-    Serial.printf("  Peak %d: %.1fHz (mag: %.1f)\n",
-                  i, detectedPeaks[i].frequency, detectedPeaks[i].magnitude);
+    Logger.debugf("  Peak %d: %.1fHz (mag: %.1f)\n",
+                i, detectedPeaks[i].frequency, detectedPeaks[i].magnitude);
   }
-#endif
 
   // Find the two strongest peaks
   float strongestRowFreq = 0, strongestColFreq = 0;
@@ -165,58 +168,46 @@ char analyzeDTMF()
     float mag = detectedPeaks[i].magnitude;
 
     // Check if it's a row frequency
-    if (findClosestDTMFFreq(freq, DTMF_ROW_FREQS, 4) >= 0)
+    if (findClosestFreq(freq, config.rowFreqs, 4, config.freqTolerance) >= 0)
     {
-#ifdef DEBUG
-      Serial.printf("DEBUG: Found row frequency candidate: %.1fHz (mag: %.1f)\n", freq, mag);
-#endif
+      Logger.debugf("analyzeDTMF: row freq candidate %.1fHz (mag: %.1f)\n", freq, mag);
       if (mag > maxRowMagnitude)
       {
         maxRowMagnitude = mag;
         strongestRowFreq = freq;
-#ifdef DEBUG
-        Serial.printf("DEBUG: New strongest row frequency: %.1fHz\n", freq);
-#endif
+        Logger.debugf("analyzeDTMF: new strongest row %.1fHz\n", freq);
       }
     }
 
     // Check if it's a column frequency
-    if (findClosestDTMFFreq(freq, DTMF_COL_FREQS, 4) >= 0)
+    if (findClosestFreq(freq, config.colFreqs, 4, config.freqTolerance) >= 0)
     {
-#ifdef DEBUG
-      Serial.printf("DEBUG: Found column frequency candidate: %.1fHz (mag: %.1f)\n", freq, mag);
-#endif
+      Logger.debugf("analyzeDTMF: col freq candidate %.1fHz (mag: %.1f)\n", freq, mag);
       if (mag > maxColMagnitude)
       {
         maxColMagnitude = mag;
         strongestColFreq = freq;
-#ifdef DEBUG
-        Serial.printf("DEBUG: New strongest column frequency: %.1fHz\n", freq);
-#endif
+        Logger.debugf("analyzeDTMF: new strongest col %.1fHz\n", freq);
       }
     }
   }
 
-#ifdef DEBUG
-  Serial.printf("DEBUG: Final strongest frequencies - Row: %.1fHz, Column: %.1fHz\n",
-                strongestRowFreq, strongestColFreq);
-#endif
+  Logger.debugf("analyzeDTMF: final Row=%.1fHz Col=%.1fHz\n",
+              strongestRowFreq, strongestColFreq);
 
   // Decode DTMF if we have both row and column frequencies
   if (strongestRowFreq > 0 && strongestColFreq > 0)
   {
     char dtmfChar = decodeDTMF(strongestRowFreq, strongestColFreq);
 
-#ifdef DEBUG
-    Serial.printf("DEBUG: decodeDTMF returned: %c\n", dtmfChar ? dtmfChar : '0');
-#endif
+    Logger.debugf("analyzeDTMF: decodeDTMF returned '%c'\n", dtmfChar ? dtmfChar : '0');
 
     if (dtmfChar != 0)
     {
       unsigned long currentTime = millis();
-      if (currentTime - lastDetectionTime > DETECTION_COOLDOWN)
+      if (currentTime - lastDetectionTime > config.detectionCooldown)
       {
-        Serial.printf("DTMF Detected: %c (Row: %.1fHz, Col: %.1fHz)\n",
+        Logger.printf("DTMF Detected: %c (Row: %.1fHz, Col: %.1fHz)\n",
                       dtmfChar, strongestRowFreq, strongestColFreq);
         lastDetectionTime = currentTime;
 
@@ -226,23 +217,19 @@ char analyzeDTMF()
       }
       else
       {
-#ifdef DEBUG
-        Serial.printf("DEBUG: DTMF detection in cooldown period\n");
-#endif
+        Logger.debugf("analyzeDTMF: in cooldown period (%lums remaining)\n", 
+               config.detectionCooldown - (currentTime - lastDetectionTime));
       }
     }
     else
     {
-#ifdef DEBUG
-      Serial.printf("DEBUG: Invalid DTMF character decoded\n");
-#endif
+      Logger.debugf("analyzeDTMF: invalid DTMF char decoded\n");
     }
   }
   else
   {
-#ifdef DEBUG
-    Serial.printf("DEBUG: Missing row or column frequency for DTMF\n");
-#endif
+    Logger.debugf("analyzeDTMF: missing row (%.1f) or col (%.1f) freq\n",
+           strongestRowFreq, strongestColFreq);
   }
 
   // Reset for next analysis cycle
@@ -250,27 +237,29 @@ char analyzeDTMF()
   return 0;
 }
 
-// FFT result callback - collect frequency peaks and analyze periodically
+// FFT result callback - LIGHTWEIGHT version that only captures data
+// Heavy processing is deferred to processFFTFrame() called from main loop
 void fftResult(AudioFFTBase &fft)
 {
   auto result = fft.result();
-  static unsigned long lastAnalysisTime = 0;
   
-  // Get FFT parameters for frequency calculation
-  float sample_rate = 44100.0;  // Must match main.ino
-  int fft_length = 2048;        // Must match main.ino - 46ms window
-  float bin_width = sample_rate / fft_length;  // ~21.5 Hz per bin
-  int num_bins = fft_length / 2;  // Nyquist limit
+  // Get FFT parameters
+  int num_bins = fft.size();
+  float bin_width = fft.frequency(1);
 
-  // DTMF uses two separate frequency bands:
-  // Row frequencies: 697, 770, 852, 941 Hz (low band: 650-1000 Hz)
-  // Column frequencies: 1209, 1336, 1477, 1633 Hz (high band: 1150-1700 Hz)
-  // We must find the strongest peak in EACH band separately
-  
-  int low_min_bin = (int)(650.0 / bin_width);
-  int low_max_bin = (int)(1000.0 / bin_width);
-  int high_min_bin = (int)(1150.0 / bin_width);
-  int high_max_bin = (int)(1700.0 / bin_width);
+  // Check for dial tone presence (350Hz and 440Hz)
+  // If dial tone is strong, skip DTMF detection to avoid harmonic interference
+  int dial_350_bin = (int)(350.0f / bin_width + 0.5f);
+  int dial_440_bin = (int)(440.0f / bin_width + 0.5f);
+  float dial_350_mag = (dial_350_bin >= 0 && dial_350_bin < num_bins) ? fft.magnitude(dial_350_bin) : 0;
+  float dial_440_mag = (dial_440_bin >= 0 && dial_440_bin < num_bins) ? fft.magnitude(dial_440_bin) : 0;
+  bool dialTonePresent = (dial_350_mag > 50.0f && dial_440_mag > 50.0f);
+
+  // Calculate bin ranges for DTMF frequency bands
+  int low_min_bin = (int)(650.0f / bin_width);
+  int low_max_bin = (int)(1000.0f / bin_width);
+  int high_min_bin = (int)(1150.0f / bin_width);
+  int high_max_bin = (int)(1700.0f / bin_width);
   
   // Find strongest peak in LOW band (row frequencies)
   float row_mag = 0;
@@ -298,147 +287,295 @@ void fftResult(AudioFFTBase &fft)
     }
   }
   
-  // Parabolic interpolation for more accurate frequency estimation
-  // This compensates for bin width causing frequency rounding errors
-  auto interpolateFreq = [&fft, bin_width, num_bins](int bin, float peak_mag) -> float {
-    if (bin <= 0 || bin >= num_bins - 1) return bin * bin_width;
-    float left = fft.magnitude(bin - 1);
-    float right = fft.magnitude(bin + 1);
-    float delta = 0.5f * (right - left) / (2.0f * peak_mag - left - right);
-    return (bin + delta) * bin_width;
-  };
+  // Quick parabolic interpolation for frequency accuracy
+  float row_freq = fft.frequency(row_bin);
+  float col_freq = fft.frequency(col_bin);
+  if (row_bin > 0 && row_bin < num_bins - 1 && row_mag > 0)
+  {
+    float left = fft.magnitude(row_bin - 1);
+    float right = fft.magnitude(row_bin + 1);
+    float delta = 0.5f * (right - left) / (2.0f * row_mag - left - right);
+    row_freq += delta * bin_width;
+  }
+  if (col_bin > 0 && col_bin < num_bins - 1 && col_mag > 0)
+  {
+    float left = fft.magnitude(col_bin - 1);
+    float right = fft.magnitude(col_bin + 1);
+    float delta = 0.5f * (right - left) / (2.0f * col_mag - left - right);
+    col_freq += delta * bin_width;
+  }
   
-  float row_freq = (row_mag > 0) ? interpolateFreq(row_bin, row_mag) : row_bin * bin_width;
-  float col_freq = (col_mag > 0) ? interpolateFreq(col_bin, col_mag) : col_bin * bin_width;
+  // Capture magnitudes at exact DTMF row frequency bins
+  const float rowTargets[4] = {697.0f, 770.0f, 852.0f, 941.0f};
+  float rowMags[4];
+  for (int r = 0; r < 4; r++)
+  {
+    int bin = (int)(rowTargets[r] / bin_width + 0.5f);
+    rowMags[r] = (bin >= 0 && bin < num_bins) ? fft.magnitude(bin) : 0;
+  }
   
-  // For backward compatibility, set peak1/peak2 as row/col
-  float peak1_freq = row_freq;
-  float peak1_mag = row_mag;
-  float peak2_freq = col_freq;
-  float peak2_mag = col_mag;
+  // Store captured data for deferred processing
+  pendingFrame.timestamp = millis();
+  pendingFrame.summedFreq = result.frequency;
+  pendingFrame.summedMag = result.magnitude;
+  pendingFrame.rowFreq = row_freq;
+  pendingFrame.rowMag = row_mag;
+  pendingFrame.colFreq = col_freq;
+  pendingFrame.colMag = col_mag;
+  for (int r = 0; r < 4; r++) pendingFrame.rowMags[r] = rowMags[r];
+  pendingFrame.dialTonePresent = dialTonePresent;  // Flag dial tone to reject DTMF
+  pendingFrame.valid = true;
 
-#ifdef DEBUG_FFT_ALL
-  fftCallCount++;
-  
-  // Track the strongest signal we see
-  if (result.magnitude > lastStrongestMag)
-  {
-    lastStrongestMag = result.magnitude;
-    lastStrongestFreq = result.frequency;
+  if (fftDebugEnabled) {
+    fftCallCount++;
+    if (fftStartTime == 0) fftStartTime = millis();
+    if (result.magnitude > lastStrongestMag) { lastStrongestMag = result.magnitude; lastStrongestFreq = result.frequency; }
+    if (result.magnitude > maxMagnitudeSeen) maxMagnitudeSeen = result.magnitude;
+    if (result.magnitude > maxSummedMagSeen) maxSummedMagSeen = result.magnitude;
+    if (row_mag > maxRowMagSeen) maxRowMagSeen = row_mag;
+    if (col_mag > maxColMagSeen) maxColMagSeen = col_mag;
   }
-  if (result.magnitude > maxMagnitudeSeen)
-  {
-    maxMagnitudeSeen = result.magnitude;
-  }
-  
-  // Print debug info every 2000ms
-  unsigned long now = millis();
-  if (now - lastDebugPrintTime > 2000)
-  {
-    Serial.printf("🎵 FFT: peak1=%.1fHz (%.1f), peak2=%.1fHz (%.1f), threshold=%.1f\n",
-                  peak1_freq, peak1_mag, peak2_freq, peak2_mag, MAGNITUDE_THRESHOLD);
-    lastDebugPrintTime = now;
-    fftCallCount = 0;
-    lastStrongestMag = 0;
-    lastStrongestFreq = 0;
-  }
-#endif
+}
 
-  // Gap detection: if no signal for GAP_THRESHOLD ms, reset for next button
-  unsigned long now2 = millis();
-  if (now2 - lastSignalTime > GAP_THRESHOLD && !inGap)
+// Process captured FFT frame - call from main loop (e.g., during analyzeDTMF)
+// This performs all the heavy DTMF detection logic
+void processFFTFrame()
+{
+  if (!pendingFrame.valid) return;
+  
+  // Copy frame data locally and mark as processed
+  FFTFrameData frame = pendingFrame;
+  pendingFrame.valid = false;
+  
+  unsigned long now = frame.timestamp;
+  
+  if (fftDebugEnabled) {
+    // Print comprehensive debug info every 2000ms
+    static unsigned long lastDebugPrintTime_proc = 0;
+    if (now - lastDebugPrintTime_proc > 2000)
+    {
+      const PhoneConfig& cfg = PHONE_CONFIG;
+      unsigned long elapsed = now - fftStartTime;
+      float fftRate = (elapsed > 0) ? (fftCallCount * 1000.0f / elapsed) : 0;
+      
+      Logger.debugf("[%lu] 🎵 FFT: row=%.1fHz (%.2f), col=%.1fHz (%.2f)\n",
+               now, frame.rowFreq, frame.rowMag, frame.colFreq, frame.colMag);
+      Logger.debugf("[%lu] 📈 Stats: rate=%.1f/s, maxRow=%.2f, maxCol=%.2f, maxSum=%.1f, thresh=%.2f\n",
+               now, fftRate, maxRowMagSeen, maxColMagSeen, maxSummedMagSeen, 
+               cfg.fundamentalMagnitudeThreshold);
+      Logger.debugf("[%lu] 🔧 State: gap=%s, pending=%d/%d, lastBtn=%c, consec=%d\n",
+               now, inGap ? "Y" : "N", pendingColumn, pendingRow, 
+               lastDetectedButton ? lastDetectedButton : '-', consecutiveDetections);
+      Logger.debugf("[%lu] 🎹 RowMags: 697=%.2f, 770=%.2f, 852=%.2f, 941=%.2f\n",
+               now, frame.rowMags[0], frame.rowMags[1], frame.rowMags[2], frame.rowMags[3]);
+      
+      lastDebugPrintTime_proc = now;
+      fftStartTime = now;
+      fftCallCount = 0;
+      lastStrongestMag = 0;
+      lastStrongestFreq = 0;
+      maxRowMagSeen = 0;
+      maxColMagSeen = 0;
+      maxSummedMagSeen = 0;
+    }
+  }
+
+  const PhoneConfig& config = PHONE_CONFIG;
+  
+  // Gap detection: if no signal for GAP_THRESHOLD_MS, reset state for next button
+  if (now - lastSignalTime > GAP_THRESHOLD_MS && !inGap)
   {
+    Logger.debugf("[%lu] 🔇 GAP DETECTED: %lums since last signal\n", now, now - lastSignalTime);
+    
+    if (buttonPressActive && !keyDownEmitted)
+    {
+      Logger.debugf("[%lu] ⚠️ GAP but keyDown not emitted (samples=%d)\n", now, rowSampleCount);
+    }
+    
+    // Reset all state for next button
+    Logger.debugf("[%lu] 🔄 Resetting state for next button\n", now);
     inGap = true;
-    lastDetectedButton = 0;  // Allow re-detection of same button after gap
+    lastDetectedButton = 0;
     consecutiveDetections = 0;
+    pendingColumn = -1;
+    pendingRow = -1;
+    pendingRowMagMax = 0;
+    buttonPressActive = false;
+    keyDownEmitted = false;
+    accumulatedColumn = -1;
+    rowSampleCount = 0;
+    for (int r = 0; r < 4; r++) rowAccumulators[r] = 0;
   }
 
-  // Check if we have strong peaks in both bands (dual-tone DTMF)
-  // row_freq is already from low band, col_freq is already from high band
-  // Use lower threshold for row since it's often weaker than column
-  if (row_mag > MAGNITUDE_THRESHOLD && col_mag > MAGNITUDE_THRESHOLD)
+  // Skip DTMF detection if dial tone is present (harmonics cause false positives)
+  // Dial tone (350+440 Hz) produces harmonics at 700Hz (near row 0: 697Hz) and 880Hz (near row 2: 852Hz)
+  if (frame.dialTonePresent)
   {
-    lastSignalTime = now2;  // Update signal time
-    inGap = false;
+    return;  // Don't process DTMF during dial tone
+  }
+
+  // Reject constant line noise frequencies
+  // 642Hz is common analog line noise (possibly 60Hz mains hum harmonics)
+  // 1088Hz is another noise frequency seen on this phone
+  // These are NOT valid DTMF frequencies and should be ignored
+  if ((frame.rowFreq >= 630.0f && frame.rowFreq <= 665.0f) ||
+      (frame.colFreq >= 1070.0f && frame.colFreq <= 1110.0f))
+  {
+    // Line noise, not DTMF - skip processing
+    return;
+  }
+
+  // Strategy 1: Standard DTMF detection (if fundamentals are strong enough)
+  if (config.useFundamentalDetection && 
+      frame.rowMag > config.fundamentalMagnitudeThreshold && 
+      frame.colMag > config.fundamentalMagnitudeThreshold)
+  {
+    int row = findClosestFreq(frame.rowFreq, config.rowFreqs, 4, config.freqTolerance);
+    int col = findClosestFreq(frame.colFreq, config.colFreqs, 4, config.freqTolerance);
     
-    // Try standard DTMF decoding - row_freq and col_freq are already separated by band
-    int row = findClosestDTMFFreq(row_freq, DTMF_ROW_FREQS, 4);
-    int col = findClosestDTMFFreq(col_freq, DTMF_COL_FREQS, 4);
+    Logger.debugf("[%lu] 🎯 FUNDAMENTAL: row=%d (%.1fHz, mag=%.2f), col=%d (%.1fHz, mag=%.2f)\n",
+           now, row, frame.rowFreq, frame.rowMag, col, frame.colFreq, frame.colMag);
     
+    // Only count as valid signal if BOTH row and col match valid DTMF frequencies
+    // This prevents line noise from triggering false "signal detected" events
     if (row >= 0 && col >= 0)
     {
-      char dtmfChar = DTMF_KEYPAD[row][col];
+      lastSignalTime = now;
+      inGap = false;
       
-      // Check if this is a new detection or continuation
-      if (dtmfChar == lastDetectedButton && (now2 - lastButtonTime) < 500)
+      // Strong fundamentals - accumulate for key-down detection
+      if (buttonPressActive && accumulatedColumn != col)
       {
-        consecutiveDetections++;
+        Logger.debugf("[%lu] ⚠️ FUND: column changed %d→%d, resetting\n", now, accumulatedColumn, col);
+        for (int r = 0; r < 4; r++) rowAccumulators[r] = 0;
+        rowSampleCount = 0;
+        keyDownEmitted = false;
       }
-      else if (dtmfChar != lastDetectedButton)
-      {
-        lastDetectedButton = dtmfChar;
-        consecutiveDetections = 1;
-        Serial.printf("🔢 DTMF %c: NEW (row=%.1fHz/%.1f, col=%.1fHz/%.1f)\n", 
-                      dtmfChar, row_freq, row_mag, col_freq, col_mag);
-      }
-      lastButtonTime = now2;
       
-      // Confirm detection - only if we haven't already confirmed this button press
-      // Must see a gap before detecting the same button again
-      if (consecutiveDetections >= REQUIRED_CONSECUTIVE && 
-          (now2 - lastDetectionTime) > DETECTION_COOLDOWN &&
-          (dtmfChar != confirmedButton || inGap))  // Only detect same button after gap
+      buttonPressActive = true;
+      accumulatedColumn = col;
+      
+      for (int r = 0; r < 4; r++) rowAccumulators[r] += frame.rowMags[r];
+      rowSampleCount++;
+      
+      // KEY-DOWN DETECTION
+      if (!keyDownEmitted && rowSampleCount >= MIN_KEYDOWN_SAMPLES)
       {
-        Serial.printf("🎹 DTMF DETECTED: %c (row=%.1fHz, col=%.1fHz)\n", 
-                      dtmfChar, row_freq, col_freq);
-        lastDetectionTime = now2;
-        consecutiveDetections = 0;
-        confirmedButton = dtmfChar;
-        inGap = false;  // We're now in an active button press
+        int bestRow = -1;
+        float bestAccum = 0.0f;
+        for (int r = 0; r < 4; r++)
+        {
+          if (rowAccumulators[r] > bestAccum) { bestAccum = rowAccumulators[r]; bestRow = r; }
+        }
+        
+        float avgBestMag = bestAccum / rowSampleCount;
+        if (bestRow >= 0 && avgBestMag >= MIN_AVG_ROW_MAG)
+        {
+          char finalButton = DTMF_KEYPAD[bestRow][accumulatedColumn];
+          Logger.printf("[%lu] 🎹 KEY-DOWN: %c (col=%d, row=%d, samples=%d, avgMag=%.2f)\n",
+                        now, finalButton, accumulatedColumn, bestRow, rowSampleCount, avgBestMag);
+          confirmedButton = finalButton;
+          keyDownEmitted = true;
+        }
       }
-      return;  // Standard DTMF worked!
+      
+      static unsigned long lastFundLog = 0;
+      if ((now - lastFundLog) > 300)
+      {
+        lastFundLog = now;
+        Logger.debugf("[%lu] 📊 FUND ACCUM: col=%d, samples=%d, 697=%.1f, 770=%.1f, 852=%.1f, 941=%.1f\n",
+               now, col, rowSampleCount,
+               rowAccumulators[0], rowAccumulators[1], rowAccumulators[2], rowAccumulators[3]);
+      }
+      return;  // Don't fall through to Strategy 2
     }
   }
   
-  // Fallback: Try summed frequency detection (for non-standard phones)
-  // if (result.magnitude > 500.0)  // Higher threshold for summed freq detection
-  // {
-  //   char summedButton = decodeFromSummedFreq(result.frequency);
-  //   if (summedButton != 0)
-  //   {
-  //     unsigned long now = millis();
-      
-  //     if (summedButton == lastDetectedButton && (now - lastButtonTime) < 500)
-  //     {
-  //       consecutiveDetections++;
-  //       Serial.printf("🔢 SUM Button %c: detection #%d (freq=%.1fHz, mag=%.1f)\n", 
-  //                     summedButton, consecutiveDetections, result.frequency, result.magnitude);
-  //     }
-  //     else if (summedButton != lastDetectedButton)
-  //     {
-  //       lastDetectedButton = summedButton;
-  //       consecutiveDetections = 1;
-  //       Serial.printf("🔢 SUM Button %c: detection #1 (NEW) (freq=%.1fHz, mag=%.1f)\n", 
-  //                     summedButton, result.frequency, result.magnitude);
-  //     }
-  //     lastButtonTime = now;
-      
-  //     if (consecutiveDetections >= REQUIRED_CONSECUTIVE && (now - lastDetectionTime) > DETECTION_COOLDOWN)
-  //     {
-  //       Serial.printf("🎹 SUM DETECTED: %c (freq=%.1fHz, mag=%.1f)\n", 
-  //                     summedButton, result.frequency, result.magnitude);
-  //       lastDetectionTime = now;
-  //       consecutiveDetections = 0;
-  //       confirmedButton = summedButton;
-  //     }
-  //   }
-  // }
-
-#ifdef DEBUG_FFT_ALL
-  // Print any strong signal
-  if (result.magnitude > MAGNITUDE_THRESHOLD)
+  // Strategy 2: Summed frequency detection with row accumulation
+  if (config.useSummedFreqDetection && frame.summedMag > config.summedMagnitudeThreshold)
   {
-    Serial.printf("📊 Signal: %.1fHz (mag=%.1f)\n", result.frequency, result.magnitude);
+    char summedButton = decodeFromSummedFreq(frame.summedFreq);
+    if (summedButton != 0)
+    {
+      lastSignalTime = now;
+      inGap = false;
+      
+      int detectedCol = getColumnFromButton(summedButton);
+      Logger.debugf("[%lu] 🔔 SUMMED: %.1fHz (mag=%.1f) → '%c' col=%d\n",
+             now, frame.summedFreq, frame.summedMag, summedButton, detectedCol);
+      
+      if (config.summedTriggersRowCheck && detectedCol >= 0)
+      {
+        if (buttonPressActive && accumulatedColumn != detectedCol)
+        {
+          Logger.debugf("[%lu] ⚠️ Column changed %d→%d, resetting accumulators\n",
+                 now, accumulatedColumn, detectedCol);
+          for (int r = 0; r < 4; r++) rowAccumulators[r] = 0;
+          rowSampleCount = 0;
+          keyDownEmitted = false;
+        }
+        
+        buttonPressActive = true;
+        accumulatedColumn = detectedCol;
+        
+        for (int r = 0; r < 4; r++) rowAccumulators[r] += frame.rowMags[r];
+        rowSampleCount++;
+        
+        // KEY-DOWN DETECTION
+        if (!keyDownEmitted && rowSampleCount >= MIN_KEYDOWN_SAMPLES)
+        {
+          int bestRow = -1;
+          float bestAccum = 0.0f;
+          for (int r = 0; r < 4; r++)
+          {
+            if (rowAccumulators[r] > bestAccum) { bestAccum = rowAccumulators[r]; bestRow = r; }
+          }
+          
+          float avgBestMag = bestAccum / rowSampleCount;
+          if (bestRow >= 0 && avgBestMag >= MIN_AVG_ROW_MAG)
+          {
+            char finalButton = DTMF_KEYPAD[bestRow][accumulatedColumn];
+            Logger.printf("[%lu] 🎹 KEY-DOWN: %c (col=%d, row=%d, samples=%d, avgMag=%.2f)\n",
+                          now, finalButton, accumulatedColumn, bestRow, rowSampleCount, avgBestMag);
+            confirmedButton = finalButton;
+            keyDownEmitted = true;
+          }
+          else if (avgBestMag < MIN_AVG_ROW_MAG && rowSampleCount >= MIN_KEYDOWN_SAMPLES * 2)
+          {
+            char finalButton = DTMF_KEYPAD[0][accumulatedColumn];
+            Logger.printf("[%lu] 🎹 KEY-DOWN (col-only): %c (col=%d, avgMag=%.2f too low)\n",
+                          now, finalButton, accumulatedColumn, avgBestMag);
+            confirmedButton = finalButton;
+            keyDownEmitted = true;
+          }
+        }
+        
+        static unsigned long lastAccumLog = 0;
+        if ((now - lastAccumLog) > 300)
+        {
+          lastAccumLog = now;
+          Logger.debugf("[%lu] 📊 ACCUM: col=%d, samples=%d, 697=%.1f, 770=%.1f, 852=%.1f, 941=%.1f\n",
+                 now, accumulatedColumn, rowSampleCount,
+                 rowAccumulators[0], rowAccumulators[1], rowAccumulators[2], rowAccumulators[3]);
+        }
+      }
+      else
+      {
+        // Use summed frequency directly
+        if (!keyDownEmitted)
+        {
+          Logger.printf("[%lu] 🎹 KEY-DOWN (summed): %c\n", now, summedButton);
+          confirmedButton = summedButton;
+          keyDownEmitted = true;
+        }
+        buttonPressActive = true;
+        accumulatedColumn = detectedCol >= 0 ? detectedCol : 0;
+        rowSampleCount++;
+      }
+    }
   }
-#endif
+  if (fftDebugEnabled) {
+    Logger.debugf("[%lu] 📊 Frame: sumFreq=%.1fHz (%.1f), rowMags=[%.2f,%.2f,%.2f,%.2f]\n",
+             now, frame.summedFreq, frame.summedMag, frame.rowMags[0], frame.rowMags[1], frame.rowMags[2], frame.rowMags[3]);
+  }
 }

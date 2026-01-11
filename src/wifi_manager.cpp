@@ -2,6 +2,7 @@
 #include "logging.h"
 #include "config.h"
 #include "tailscale_manager.h"
+#include "remote_logger.h"
 #include "nvs_flash.h"
 #include "audio_player.h"
 #include <SD.h>
@@ -13,6 +14,11 @@
 #include "esp_ota_ops.h"  // For ESP-IDF OTA info
 #include <Update.h>       // For HTTP OTA
 #include <HTTPClient.h>   // For pull-based OTA
+
+// Default OTA hostname if not specified in build flags
+#ifndef OTA_HOSTNAME
+#define OTA_HOSTNAME "jump-phone"
+#endif
 
 // WiFi Setup Variables
 WebServer server(80);
@@ -727,6 +733,7 @@ bool startConfigPortalSafe()
     });
     
     initVPNConfigRoutes(&server);
+    initRemoteLoggerRoutes(&server);
     server.onNotFound([]() {
         server.sendHeader("Location", "/", true);
         server.send(302, "text/plain", "");
@@ -763,6 +770,7 @@ void startConfigPortal()
     server.on("/wifi/test", HTTP_POST, handleWiFiTest);
     server.on("/logs", handleLogs);
     initVPNConfigRoutes(&server);
+    initRemoteLoggerRoutes(&server);
     server.onNotFound([]() {
         server.sendHeader("Location", "/", true);
         server.send(302, "text/plain", "");
@@ -809,6 +817,9 @@ void initWiFi(WiFiConnectedCallback onConnected)
         // WiFi connection status will be handled in handleWiFiLoop()
         isConfigMode = false;
     }
+    
+    // Initialize OTA update callbacks (actual service starts when WiFi connects)
+    initOTA();
     
     Logger.println("📡 WiFi initialization complete - connection status will be monitored in background");
 }
@@ -1011,7 +1022,7 @@ bool performPullOTA(const char* firmwareUrl)
     delay(500);  // Let SD card fully release
     
     HTTPClient http;
-    http.setTimeout(120000);  // 2 minute timeout for large firmware
+    http.setTimeout(60000);  // 60 second timeout for large firmware
     http.begin(firmwareUrl);
     
     int httpCode = http.GET();
@@ -1126,6 +1137,19 @@ void handleWiFiLoop()
             WiFi.config(WiFi.localIP(), WiFi.gatewayIP(), WiFi.subnetMask(), dns1, dns2);
             Logger.printf("🌐 DNS configured: %s, %s\n", dns1.toString().c_str(), dns2.toString().c_str());
             
+            // Initialize Tailscale VPN FIRST (if enabled) to ensure remote access
+            // This ensures we can always reach the device via WireGuard for OTA updates
+            if (isTailscaleEnabled()) {
+                Logger.println("🔐 WiFi connected - initializing Tailscale VPN...");
+                initTailscaleFromConfig();
+                Logger.println("✅ Tailscale VPN initialized - device should be reachable");
+                
+                // Initialize remote logging (sends logs to server over VPN)
+                initRemoteLogger();
+            } else {
+                Logger.println("🌐 Tailscale skipped (not enabled)");
+            }
+            
             // Call the user-provided callback if set
             if (wifiConnectedCallback != nullptr)
             {
@@ -1202,7 +1226,7 @@ void handleWiFiLoop()
 #endif
 
 #ifndef UPDATE_CHECK_INTERVAL_MS
-#define UPDATE_CHECK_INTERVAL_MS 300000  // 5 minutes default
+#define UPDATE_CHECK_INTERVAL_MS 3600000  // 1 hour default
 #endif
 
 static unsigned long phoneHomeInterval = UPDATE_CHECK_INTERVAL_MS;
@@ -1286,48 +1310,60 @@ bool phoneHome(const char* serverUrl) {
     
     Logger.printf("📞 Update info: %s\n", response.c_str());
     
-    // Parse version from response
+    // Parse version from response (handle spaces after colon)
     String serverVersion = "";
-    int versionStart = response.indexOf("\"version\":\"");
+    int versionStart = response.indexOf("\"version\"");
     if (versionStart >= 0) {
-        versionStart += 11;
-        int versionEnd = response.indexOf("\"", versionStart);
-        if (versionEnd > versionStart) {
-            serverVersion = response.substring(versionStart, versionEnd);
+        versionStart = response.indexOf("\"", versionStart + 9);  // Find opening quote of value
+        if (versionStart >= 0) {
+            versionStart++;  // Skip the quote
+            int versionEnd = response.indexOf("\"", versionStart);
+            if (versionEnd > versionStart) {
+                serverVersion = response.substring(versionStart, versionEnd);
+            }
         }
     }
     
-    // Parse firmware URL
+    // Parse firmware URL (handle spaces after colon)
     String firmwareUrl = "";
-    int urlStart = response.indexOf("\"firmware_url\":\"");
+    int urlStart = response.indexOf("\"firmware_url\"");
     if (urlStart >= 0) {
-        urlStart += 16;
-        int urlEnd = response.indexOf("\"", urlStart);
-        if (urlEnd > urlStart) {
-            firmwareUrl = response.substring(urlStart, urlEnd);
+        urlStart = response.indexOf("\"", urlStart + 14);  // Find opening quote of value
+        if (urlStart >= 0) {
+            urlStart++;  // Skip the quote
+            int urlEnd = response.indexOf("\"", urlStart);
+            if (urlEnd > urlStart) {
+                firmwareUrl = response.substring(urlStart, urlEnd);
+            }
         }
     }
     
-    // Parse action (optional - forces update/reboot)
+    // Parse action (optional - forces update/reboot, handle spaces after colon)
     String action = "none";
-    int actionStart = response.indexOf("\"action\":\"");
+    int actionStart = response.indexOf("\"action\"");
     if (actionStart >= 0) {
-        actionStart += 10;
-        int actionEnd = response.indexOf("\"", actionStart);
-        if (actionEnd > actionStart) {
-            action = response.substring(actionStart, actionEnd);
+        actionStart = response.indexOf("\"", actionStart + 8);  // Find opening quote of value
+        if (actionStart >= 0) {
+            actionStart++;  // Skip the quote
+            int actionEnd = response.indexOf("\"", actionStart);
+            if (actionEnd > actionStart) {
+                action = response.substring(actionStart, actionEnd);
+            }
         }
     }
     
-    // Log any message from server
-    int msgStart = response.indexOf("\"message\":\"");
+    // Log any message from server (handle spaces after colon)
+    int msgStart = response.indexOf("\"message\"");
     if (msgStart >= 0) {
-        msgStart += 11;
-        int msgEnd = response.indexOf("\"", msgStart);
-        if (msgEnd > msgStart) {
-            String message = response.substring(msgStart, msgEnd);
-            if (message.length() > 0) {
-                Logger.printf("💬 Server: %s\n", message.c_str());
+        msgStart = response.indexOf("\"", msgStart + 9);  // Find opening quote of value
+        if (msgStart >= 0) {
+            msgStart++;  // Skip the quote
+            int msgEnd = response.indexOf("\"", msgStart);
+            if (msgEnd > msgStart) {
+                String message = response.substring(msgStart, msgEnd);
+                if (message.length() > 0) {
+                    Logger.printf("💬 Server: %s\n", message.c_str());
+                }
             }
         }
     }

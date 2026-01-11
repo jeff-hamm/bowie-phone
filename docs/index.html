@@ -170,6 +170,21 @@
             </div>
         </div>
         
+        <!-- Ring Duration field -->
+        <div class="form-row">
+            <div class="form-group full-width">
+                <label for="sequence-ring-duration">
+                    <span>🔔</span> Ring Duration (ms)
+                </label>
+                <input type="number" id="sequence-ring-duration" name="ring_duration" 
+                       placeholder="e.g., 4000 (0 = no ringback)" min="0" step="500" value="0">
+                <div class="form-help">
+                    Time in milliseconds to play ringback before the audio starts.
+                    Set to 0 to disable ringback.
+                </div>
+            </div>
+        </div>
+        
         <!-- Form actions -->
         <div class="form-actions">
             <button type="button" class="btn btn-secondary" onclick="phoneApp.hideModal()">Cancel</button>

@@ -17,6 +17,12 @@
 // ============================================================================
 #include <Arduino.h>
 
+// Forward declarations
+namespace audio_tools {
+    class AudioSource;
+}
+using namespace audio_tools;
+
 // ============================================================================
 // CONSTANTS AND CONFIGURATION
 // ============================================================================
@@ -69,6 +75,7 @@ struct AudioFile
     const char *type;        ///< Entry type (e.g., "audio", "service", "shortcut", "url")
     const char *path;        ///< File path or URL
     const char *ext;         ///< File extension (e.g., "wav", "mp3") - from server metadata
+    unsigned long ringDuration; ///< Ring duration in ms (how long ringback plays before audio)
 };
 
 // ============================================================================
@@ -77,15 +84,23 @@ struct AudioFile
 
 /**
  * @brief Initialize the audio file manager
- * 
+ *
  * Loads cached audio files from SD card if available.
- * Call this during setup() AFTER SD card is initialized (for SD_MMC mode).
- * 
+ * Initializes SD card in SPI mode and creates AudioSourceSD if successful.
+ *
  * @param sdCsPin CS pin for SPI SD mode (ignored if mmcSupport is true)
  * @param mmcSupport If true, use SD_MMC interface (already initialized). If false, use SPI SD.
- * @param sdAvailable If true, SD card is mounted and available. If false, runs in memory-only mode.
+ * @param sdClkPin CLK pin for SPI SD mode (default: 14)
+ * @param sdMosiPin MOSI pin for SPI SD mode (default: 15)
+ * @param sdMisoPin MISO pin for SPI SD mode (default: 2)
+ * @param startFilePath Base path for audio files (default: "/audio")
+ * @param sdCardAvailableOut Pointer to bool to receive SD card availability status (optional)
+ * @return AudioSource pointer if SD card available and initialized, nullptr otherwise
  */
-void initializeAudioFileManager(int sdCsPin = 13, bool mmcSupport = true, bool sdAvailable = false);
+AudioSource *initializeAudioFileManager(int sdCsPin = 13, bool mmcSupport = false,
+                                        int sdClkPin = 14, int sdMosiPin = 15, int sdMisoPin = 2,
+                                        const char *startFilePath = "/audio",
+                                        bool *sdCardAvailableOut = nullptr);
 
 /**
  * @brief Download audio file list from remote server
@@ -103,8 +118,11 @@ void initializeAudioFileManager(int sdCsPin = 13, bool mmcSupport = true, bool s
  *     "path": "<path or URL>"
  *   }
  * }
+ * 
+ * @param maxRetries Maximum number of retry attempts (default: 3)
+ * @param retryDelayMs Delay between retries in milliseconds (default: 2000)
  */
-bool downloadAudio();
+bool downloadAudio(int maxRetries = 3, unsigned long retryDelayMs = 2000);
 
 /**
  * @brief Check if an audio key exists in the loaded audio files
@@ -129,6 +147,13 @@ bool hasAudioKeyWithPrefix(const char *prefix);
  * returns the cached local path if available, or queues for download.
  */
 const char* processAudioKey(const char *key);
+
+/**
+ * @brief Get the ring duration for an audio key
+ * @param key Audio key to look up
+ * @return Ring duration in milliseconds (0 = no ringback)
+ */
+unsigned long getAudioKeyRingDuration(const char *key);
 
 /**
  * @brief List all audio keys to serial output

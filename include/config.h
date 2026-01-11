@@ -15,9 +15,49 @@
 // AUDIO CONFIGURATION
 // ============================================================================
 
+// Audio format settings (must match AudioKit and FFT configuration)
+#ifndef AUDIO_CHANNELS
+#define AUDIO_CHANNELS 1
+#endif
+
+#ifndef AUDIO_SAMPLE_RATE
+#define AUDIO_SAMPLE_RATE 44100
+#endif
+
+#ifndef AUDIO_BITS_PER_SAMPLE
+#define AUDIO_BITS_PER_SAMPLE 16
+#endif
+#ifndef DEFAULT_AUDIO_VOLUME
+#define DEFAULT_AUDIO_VOLUME 1.0f
+#endif
+
+// Input volume/gain for DTMF detection (0-100 percentage)
+#ifndef AUDIOKIT_INPUT_VOLUME
+#define AUDIOKIT_INPUT_VOLUME 100
+#endif
+
+// Helper macro to create AudioInfo with default settings
+#define AUDIO_INFO_DEFAULT() ([]{ \
+    AudioInfo info; \
+    info.sample_rate = AUDIO_SAMPLE_RATE; \
+    info.channels = AUDIO_CHANNELS; \
+    info.bits_per_sample = AUDIO_BITS_PER_SAMPLE; \
+    return info; \
+}())
+
 // Buffer size for audio copy operations (affects DTMF sampling)
 #ifndef AUDIO_COPY_BUFFER_SIZE
 #define AUDIO_COPY_BUFFER_SIZE 4096
+#endif
+
+// Interval for checking DTMF input during audio playback (milliseconds)
+#ifndef DTMF_CHECK_DURING_PLAYBACK_INTERVAL_MS
+#define DTMF_CHECK_DURING_PLAYBACK_INTERVAL_MS 200
+#endif
+
+// AudioTools library log level (Error=1, Warning=2, Info=3, Debug=4)
+#ifndef AUDIOTOOLS_LOG_LEVEL
+#define AUDIOTOOLS_LOG_LEVEL AudioToolsLogLevel::Warning
 #endif
 
 // ============================================================================

@@ -56,6 +56,26 @@ bool initTailscale(const char* localIp,
 bool shouldEnableTailscale();
 
 /**
+ * Check if Tailscale was enabled at boot
+ * @return true if Tailscale is enabled
+ */
+bool isTailscaleEnabled();
+
+/**
+ * Toggle Tailscale enabled state in NVS
+ * Requires reboot to take effect
+ * @return New enabled state
+ */
+bool toggleTailscaleEnabled();
+
+/**
+ * Set Tailscale enabled state explicitly in NVS
+ * Requires reboot to take effect
+ * @param enabled New state
+ */
+void setTailscaleEnabled(bool enabled);
+
+/**
  * Initialize Tailscale using build flags from platformio.ini
  * Requires WIREGUARD_* defines to be set
  * @return true if connection initiated successfully

@@ -6,6 +6,7 @@
 
 #define LOG_BUFFER_SIZE 100
 #define MAX_LOG_MESSAGE_LENGTH 256
+#define MAX_LOG_STREAMS 3  // Serial + Telnet + future expansion
 
 // ============================================================================
 // LOG LEVEL CONFIGURATION
@@ -28,7 +29,8 @@ enum LogLevel {
 
 class LoggerClass : public Print {
 private:
-    Print* serialPrint;  // Reference to Serial or other Print object
+    Print* streams[MAX_LOG_STREAMS];  // Multiple output streams (Serial, Telnet, etc.)
+    int streamCount;
     String logBuffer[LOG_BUFFER_SIZE];
     int logIndex;
     int logCount;
@@ -39,8 +41,11 @@ private:
 public:
     LoggerClass();
     
-    // Initialize with a Print object (replaces constructor functionality)
+    // Add output stream (Serial, Telnet, etc.)
     void addLogger(Print& print);
+    
+    // Remove a specific stream
+    void removeLogger(Print& print);
     
     // Log level management
     void setLogLevel(LogLevel level) { currentLogLevel = level; }

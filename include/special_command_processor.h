@@ -18,6 +18,38 @@
 #include <Arduino.h>
 
 // ============================================================================
+// SYSTEM FUNCTIONS
+// ============================================================================
+
+/**
+ * @brief Enter firmware update/bootloader mode
+ */
+void enterFirmwareUpdateMode();
+
+/**
+ * @brief Shutdown audio for OTA updates
+ */
+void shutdownAudioForOTA();
+
+#ifdef DEBUG
+/**
+ * @brief Process debug input from a stream (Serial or Telnet)
+ * @param input Stream to read debug commands from
+ */
+void processDebugInput(Stream& input);
+
+/**
+ * @brief CPU load test for FFT-based DTMF detection during audio playback
+ */
+void performFFTCPULoadTest();
+
+/**
+ * @brief CPU load test for Goertzel-based DTMF detection during audio playback
+ */
+void performGoertzelCPULoadTest();
+#endif
+
+// ============================================================================
 // CONSTANTS AND DEFINITIONS
 // ============================================================================
 
@@ -88,29 +120,14 @@ void processSpecialCommand(const char *sequence);
 void executeSystemStatus();
 
 /**
- * @brief Reset WiFi configuration
+ * @brief Reboot the device
  */
-void executeWiFiReset();
+void executeReboot();
 
 /**
- * @brief Restart the device
- */
-void executeDeviceReset();
-
-/**
- * @brief Perform factory reset
+ * @brief Perform factory reset (erase settings and reboot)
  */
 void executeFactoryReset();
-
-/**
- * @brief Toggle debug mode
- */
-void executeDebugToggle();
-
-/**
- * @brief Run audio system test
- */
-void executeAudioTest();
 
 /**
  * @brief Display device information
@@ -118,9 +135,19 @@ void executeAudioTest();
 void executeDeviceInfo();
 
 /**
- * @brief Access admin menu
+ * @brief Refresh audio catalog from server
  */
-void executeAdminMenu();
+void executeRefreshAudio();
+
+/**
+ * @brief Prepare device for OTA update
+ */
+void executePrepareOTA();
+
+/**
+ * @brief Trigger manual phone home check-in
+ */
+void executePhoneHome();
 
 /**
  * @brief List all configured commands

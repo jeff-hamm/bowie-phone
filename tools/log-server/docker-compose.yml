@@ -1,0 +1,35 @@
+services:
+  log-receiver:
+    build: .
+    container_name: phone-log-receiver
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - /mnt/pool/appdata/phone/logs:/app/logs
+    environment:
+      - LOG_DIR=/app/logs
+      - PORT=3000
+      - LOG_RETENTION_DAYS=30
+      - MAX_LOG_SIZE_MB=100
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "com.bowie-phone.service=log-receiver"
+
+  # Optional: Log viewer web interface
+  log-viewer:
+    image: amir20/dozzle:latest
+    container_name: phone-log-viewer
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - DOZZLE_LEVEL=info
+    profiles:
+      - viewer

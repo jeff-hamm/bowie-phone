@@ -8,131 +8,169 @@
  * @date 2025
  */
 
+#include <config.h>
 #include "audio_player.h"
 #include "audio_file_manager.h"
 #include "logging.h"
 #include <Preferences.h>
 #include <SD.h>
 #include <WiFi.h>
+#include "tone_generators.h"
 #include "AudioTools/CoreAudio/AudioEffects/SoundGenerator.h"
 
 using namespace audio_tools;
 
 // ============================================================================
-// DIAL TONE GENERATOR (350 Hz + 440 Hz North American dial tone)
+// CONFIGURATION
 // ============================================================================
 
-// Custom dual-tone generator for dial tone
-class DualToneGenerator : public SoundGenerator<int16_t> {
-public:
-    DualToneGenerator(float freq1 = 350.0f, float freq2 = 440.0f, float amplitude = 16000.0f) 
-        : m_freq1(freq1), m_freq2(freq2), m_amplitude(amplitude) {
-        m_sampleRate = 44100; // Default
-        recalcPhaseIncrements();
-    }
-    
-    bool begin(AudioInfo info) override {
-        SoundGenerator<int16_t>::begin(info);
-        m_sampleRate = info.sample_rate;
-        recalcPhaseIncrements();
-        reset();
-        return true;
-    }
-    
-    void reset() {
-        m_phase1 = 0.0f;
-        m_phase2 = 0.0f;
-    }
-    
-    void recalcPhaseIncrements() {
-        // Phase increment per sample (radians)
-        m_phaseInc1 = 2.0f * PI * m_freq1 / (float)m_sampleRate;
-        m_phaseInc2 = 2.0f * PI * m_freq2 / (float)m_sampleRate;
-    }
-    
-    int16_t readSample() override {
-        // Generate two sine waves and add them together
-        float sample1 = sinf(m_phase1) * m_amplitude * 0.5f;
-        float sample2 = sinf(m_phase2) * m_amplitude * 0.5f;
-        
-        // Advance phases
-        m_phase1 += m_phaseInc1;
-        m_phase2 += m_phaseInc2;
-        
-        // Wrap phases to avoid floating point overflow (wrap at 2*PI)
-        if (m_phase1 >= 2.0f * PI) m_phase1 -= 2.0f * PI;
-        if (m_phase2 >= 2.0f * PI) m_phase2 -= 2.0f * PI;
-        
-        return (int16_t)(sample1 + sample2);
-    }
-    
-private:
-    float m_freq1, m_freq2;
-    float m_amplitude;
-    int m_sampleRate;
-    float m_phaseInc1 = 0.0f;
-    float m_phaseInc2 = 0.0f;
-    float m_phase1 = 0.0f;
-    float m_phase2 = 0.0f;
+// Uncomment to disable dial tone (for DTMF detection testing)
+//#define DISABLE_DIAL_TONE
+
+// ============================================================================
+// ACTIVE STREAM MANAGEMENT
+// ============================================================================
+
+enum class ActiveStreamType {
+    NONE,
+    GENERATOR,    // Dial tone, ringback, or other synthesized tones
+    URL_STREAM,
+    AUDIO_PLAYER  // SD card mode
 };
 
-// Dial tone components
-static DualToneGenerator* dialToneGenerator = nullptr;
-static GeneratedSoundStream<int16_t>* dialToneStream = nullptr;
-static StreamCopy* dialToneCopier = nullptr;
-static AudioStream* dialToneOutput = nullptr;
-static bool dialToneActive = false;
+static ActiveStreamType activeStreamType = ActiveStreamType::NONE;
+static StreamCopy* activeStreamCopier = nullptr;
+static AudioStream* audioOutput = nullptr;
+static VolumeStream volume_out;
+    // ============================================================================
+    // TONE GENERATORS
+    // ============================================================================
+
+    // Single GeneratedSoundStream that switches between generators via setInput
+    static GeneratedSoundStream<int16_t>
+        toneStream;
+
+// Available tone generators
+static DualToneGenerator dialToneGenerator(350.0f, 440.0f, 16000.0f);
+static DualToneGenerator ringbackToneGenerator(440.0f, 480.0f, 16000.0f);
+static RepeatingToneGenerator<int16_t> ringbackRepeater(ringbackToneGenerator, 2000, 4000);
 
 // ============================================================================
 // GLOBAL VARIABLES
 // ============================================================================
 
 static AudioPlayer* audioPlayer = nullptr;
-static bool isPlaying = false;
 static unsigned long audioStartTime = 0;
+static unsigned long audioDurationLimit = 0;  // 0 = unlimited
 static float currentVolume = DEFAULT_AUDIO_VOLUME;
 static Preferences volumePrefs;
 static AudioEventCallback eventCallback = nullptr;
-static char currentAudioKey[32] = {0};  // Track what audio is currently playing
+static char currentAudioKey[32] = {0};
+
+// Audio pair playback state (play audioKey, then filePath)
+static bool audioPairPending = false;
+static char pendingFilePath[256] = {0};
+
+// Ring duration setting (how long ringback plays before audio)
+static unsigned long ringDuration = 0;  // 0 = no ringback
 
 // URL Streaming support
-static bool urlStreamingMode = false;
 static URLStream* urlStream = nullptr;
-static AudioStream* urlOutput = nullptr;
 static AudioDecoder* urlDecoder = nullptr;
-static StreamCopy* urlCopier = nullptr;
 static EncodedAudioStream* urlEncodedStream = nullptr;
 static char currentStreamURL[256] = {0};
 
 // ============================================================================
-// DIAL TONE FUNCTIONS
+// STREAM MANAGEMENT HELPERS
 // ============================================================================
 
 /**
- * @brief Initialize the dial tone generator
- * @param output The audio output stream (AudioBoardStream)
+ * @brief Dispose the active stream copier and reset state
  */
-void initDialToneGenerator(AudioStream &output)
+static void disposeActiveStream()
 {
-    if (dialToneGenerator != nullptr) {
-        Logger.println("⚠️ Dial tone generator already initialized");
-        return;
+    // Delete the dynamic StreamCopy
+    if (activeStreamCopier) {
+        delete activeStreamCopier;
+        activeStreamCopier = nullptr;
     }
     
-    Logger.println("🔧 Initializing dial tone generator (350 Hz + 440 Hz)...");
+    // Clean up stream-specific resources
+    switch (activeStreamType) {
+        case ActiveStreamType::AUDIO_PLAYER:
+            if (audioPlayer && audioPlayer->isActive()) {
+                audioPlayer->stop();
+                audioPlayer->setAudioInfo(AUDIO_INFO_DEFAULT());
+            }
+            break;
+        case ActiveStreamType::URL_STREAM:
+            if (urlStream)
+                urlStream->end();
+            if (urlEncodedStream)
+                urlEncodedStream->end();
+            currentStreamURL[0] = '\0';
+        default:
+            // Reset audio output to original config
+            if (audioOutput)
+            {
+                audioOutput->setAudioInfo(AUDIO_INFO_DEFAULT());
+            }
+            break;
+    }
+
+    activeStreamType = ActiveStreamType::NONE;
+    currentAudioKey[0] = '\0';
+    audioDurationLimit = 0;
     
-    dialToneOutput = &output;
+    // Don't clear pending pair or call callback if we're transitioning to second audio
+    if (!audioPairPending) {
+        if (eventCallback) {
+            eventCallback(false);
+        }
+    }
+}
+
+// ============================================================================
+// TONE GENERATOR FUNCTIONS
+// ============================================================================
+
+/**
+ * @brief Helper to start a tone generator
+ * @param generator The SoundGenerator to use
+ * @param key The audio key name (e.g., "dialtone", "ringback")
+ * @param description Log description
+ * @return true if started successfully
+ */
+template<typename T>
+static bool startToneGenerator(SoundGenerator<T>& generator, const char* key, const char* description)
+{
+    if (!audioOutput) {
+        Logger.println("❌ Audio output not initialized");
+        return false;
+    }
     
-    // Create the dual-tone generator (North American dial tone: 350 + 440 Hz)
-    dialToneGenerator = new DualToneGenerator(350.0f, 440.0f, 16000.0f);
+    // Dispose any active stream first
+    disposeActiveStream();
     
-    // Create stream wrapper
-    dialToneStream = new GeneratedSoundStream<int16_t>(*dialToneGenerator);
+    Logger.printf("🎵 Starting %s...\n", description);
     
-    // Create copier to output
-    dialToneCopier = new StreamCopy(*dialToneOutput, *dialToneStream);
+    AudioInfo info = AUDIO_INFO_DEFAULT();
+    generator.begin(info);
+
+    // Set the generator on the shared stream
+    toneStream.setInput(generator);
+    toneStream.begin(info);
     
-    Logger.println("✅ Dial tone generator initialized");
+    // Create new StreamCopy
+    activeStreamCopier = new StreamCopy(*audioOutput, toneStream);
+    activeStreamType = ActiveStreamType::GENERATOR;
+    strncpy(currentAudioKey, key, sizeof(currentAudioKey) - 1);
+    audioStartTime = millis();
+    
+    if (eventCallback) eventCallback(true);
+    
+    Logger.printf("✅ %s started\n", description);
+    return true;
 }
 
 /**
@@ -141,110 +179,42 @@ void initDialToneGenerator(AudioStream &output)
  */
 bool startDialTone()
 {
-    if (!dialToneGenerator || !dialToneStream || !dialToneCopier) {
-        Logger.println("❌ Dial tone generator not initialized");
-        return false;
-    }
-    
-    if (dialToneActive) {
-        Logger.println("⚠️ Dial tone already playing");
-        return true;
-    }
-    
-    // Stop any file-based audio first
-    if (isPlaying) {
-        stopAudio();
-    }
-    
-    Logger.println("🎵 Starting synthesized dial tone (350 + 440 Hz)...");
-    
-    // Configure audio info
-    AudioInfo info;
-    info.sample_rate = 44100;
-    info.channels = 2;
-    info.bits_per_sample = 16;
-    
-    // Always reset the generator to ensure consistent frequency
-    dialToneGenerator->reset();
-    dialToneGenerator->begin(info);
-    dialToneStream->begin(info);
-    
-    dialToneActive = true;
-    isPlaying = true;
-    strncpy(currentAudioKey, "dialtone", sizeof(currentAudioKey) - 1);
-    audioStartTime = millis();
-    
-    // Notify callback
-    if (eventCallback) {
-        eventCallback(true);
-    }
-    
-    Logger.println("✅ Dial tone started");
-    return true;
+    return startToneGenerator(dialToneGenerator, "dialtone", "dial tone (350 + 440 Hz)");
 }
 
 /**
- * @brief Stop the synthesized dial tone
+ * @brief Start playing the synthesized ringback tone
+ * @return true if ringback started successfully
  */
-void stopDialTone()
+bool startRingback()
 {
-    if (!dialToneActive) {
+    return startToneGenerator(ringbackRepeater, "ringback", "ringback (440 + 480 Hz, 2s on / 4s off)");
+}
+
+/**
+ * @brief Stop audio if currently playing the specified key
+ * @param audioKey The audio key to stop (e.g., "dialtone", "ringback")
+ */
+void stopAudioKey(const char* audioKey)
+{
+    if (!audioKey || activeStreamType == ActiveStreamType::NONE) {
         return;
     }
     
-    Logger.println("⏹️ Stopping dial tone...");
-    dialToneActive = false;
-    // Don't clear isPlaying here - let stopAudio() handle it
+    if (strcmp(currentAudioKey, audioKey) == 0) {
+        disposeActiveStream();
+        Logger.printf("⏹️ %s stopped\n", audioKey);
+    }
 }
 
 /**
- * @brief Process dial tone output (call this in the main loop)
- * @return true if dial tone is still active
+ * @brief Check if specific audio is currently playing
+ * @param audioKey The audio key to check (e.g., "dialtone", "ringback")
+ * @return true if the specified audio is playing, false otherwise
  */
-bool processDialTone()
+bool isAudioKeyPlaying(const char* audioKey)
 {
-    if (!dialToneActive || !dialToneGenerator || !dialToneOutput) {
-        return false;
-    }
-    
-    // Use StreamCopy for proper I2S timing synchronization
-    // This ensures dial tone output is synchronized with the I2S driver
-    if (dialToneCopier) {
-        dialToneCopier->copy();
-    }
-    return true;
-}
-
-/**
- * @brief Briefly pause dial tone, sample mic for DTMF, and resume
- * This creates a tiny gap (~5ms) that's barely audible but allows clean DTMF detection
- * @param fftInput The FFT stream to receive mic input
- * @param micSource The mic input source (kit stream)
- * @return true if dial tone is still active
- */
-bool sampleDTMFDuringDialTone(AudioStream& fftInput, AudioStream& micSource)
-{
-    if (!dialToneActive) {
-        return false;
-    }
-    
-    // Read mic input and send to FFT
-    // The dial tone output continues via DMA while we sample
-    static uint8_t buffer[512];
-    size_t bytesRead = micSource.readBytes(buffer, sizeof(buffer));
-    if (bytesRead > 0) {
-        fftInput.write(buffer, bytesRead);
-    }
-    
-    return true;
-}
-
-/**
- * @brief Check if synthesized dial tone is playing
- */
-bool isSynthDialTonePlaying()
-{
-    return dialToneActive;
+    return activeStreamType != ActiveStreamType::NONE && strcmp(currentAudioKey, audioKey) == 0;
 }
 
 // ============================================================================
@@ -298,6 +268,23 @@ static void saveVolumeToStorage(float volume)
 // ============================================================================
 // PUBLIC FUNCTIONS
 // ============================================================================
+AudioStream* initOutput(AudioStream &output)
+{
+
+    // Load volume from storage (after player is initialized)
+    currentVolume = loadVolumeFromStorage();
+
+    // Set the volume on the player
+    if (audioPlayer)
+    {
+        audioPlayer->setVolume(currentVolume);
+        Logger.printf("🔊 Initial volume set to %.2f\n", currentVolume);
+    }
+    volume_out.setVolume(currentVolume);
+    volume_out.setOutput(output);
+    audioOutput = &volume_out;
+    return audioOutput;
+}
 
 void initAudioPlayer(AudioSource &source, AudioStream &output, AudioDecoder &decoder)
 {
@@ -320,48 +307,36 @@ void initAudioPlayer(AudioSource &source, AudioStream &output, AudioDecoder &dec
     // begin() resets autonext from the source, so we must set it after
     // We want to play only the requested file, not iterate through all files
     audioPlayer->setAutoNext(false);
-    
-    // Load volume from storage (after player is initialized)
-    currentVolume = loadVolumeFromStorage();
-    
-    // Set the volume on the player
-    if (audioPlayer)
-    {
-        audioPlayer->setVolume(currentVolume);
-        Logger.printf("🔊 Initial volume set to %.2f\n", currentVolume);
-    }
-    
+    initOutput(output);
     Logger.println("✅ Audio player initialized");
 }
 
-void initAudioPlayerURLMode(AudioStream &output, AudioDecoder &decoder)
+void initAudioUrlPlayer(AudioStream &output, AudioDecoder &decoder)
 {
     Logger.println("🔧 Initializing audio player in URL streaming mode...");
+
     
-    urlStreamingMode = true;
-    urlOutput = &output;
     urlDecoder = &decoder;
     
     // Create URLStream for HTTP fetching
     urlStream = new URLStream(URL_STREAM_BUFFER_SIZE);
     
-    // Create encoded stream for decoding (takes pointers)
-    urlEncodedStream = new EncodedAudioStream(&output, &decoder);
+    // Configure URLStream to look like a browser to avoid bot detection
+    urlStream->httpRequest().header().put("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+    urlStream->httpRequest().header().put("Accept", "*/*");
     
-    // Create stream copier
-    urlCopier = new StreamCopy(*urlEncodedStream, *urlStream);
-    urlCopier->setRetry(10);  // Retry on network hiccups
-    
-    // Load volume from storage
-    currentVolume = loadVolumeFromStorage();
-    Logger.printf("🔊 Initial volume set to %.2f\n", currentVolume);
+    // Create encoded stream for decoding
+    initOutput(output);
+
+    urlEncodedStream = new EncodedAudioStream(audioOutput, &decoder);
+
     
     Logger.println("✅ Audio player initialized (URL streaming mode)");
 }
 
 bool isURLStreamingMode()
 {
-    return urlStreamingMode;
+    return urlStream != nullptr;
 }
 
 bool playAudioFromURL(const char* url)
@@ -372,61 +347,45 @@ bool playAudioFromURL(const char* url)
         return false;
     }
     
-    if (!urlStreamingMode || !urlStream || !urlEncodedStream)
+    if (!urlStream || !urlEncodedStream || !audioOutput)
     {
         Logger.println("❌ Cannot play URL: URL streaming mode not initialized");
         return false;
     }
     
-    // Check WiFi connection
     if (WiFi.status() != WL_CONNECTED)
     {
         Logger.println("❌ Cannot stream: WiFi not connected");
         return false;
     }
     
-    // Stop any current playback
-    if (isPlaying)
-    {
-        Logger.println("⏹️ Stopping current audio to play new URL");
-        stopAudio();
-    }
+    // Dispose any active stream first
+    disposeActiveStream();
     
     Logger.printf("🌐 Starting URL stream: %s\n", url);
     
-    // Store the URL
     strncpy(currentStreamURL, url, sizeof(currentStreamURL) - 1);
     currentStreamURL[sizeof(currentStreamURL) - 1] = '\0';
     
     // Determine MIME type from URL extension
-    const char* mimeType = "audio/mpeg";  // Default to MP3
-    if (strstr(url, ".wav") != nullptr)
-    {
-        mimeType = "audio/wav";
-    }
-    else if (strstr(url, ".mp3") != nullptr)
-    {
-        mimeType = "audio/mpeg";
-    }
+    const char* mimeType = "audio/mpeg";
+    if (strstr(url, ".wav") != nullptr) mimeType = "audio/wav";
     
-    // Begin URL stream
     if (!urlStream->begin(url, mimeType))
     {
         Logger.printf("❌ Failed to open URL stream: %s\n", url);
         return false;
     }
     
-    // Begin the encoded stream
     urlEncodedStream->begin();
     
-    isPlaying = true;
+    // Create new StreamCopy for URL streaming
+    activeStreamCopier = new StreamCopy(*urlEncodedStream, *urlStream);
+    activeStreamCopier->setRetry(10);
+    activeStreamType = ActiveStreamType::URL_STREAM;
     audioStartTime = millis();
     
-    // Notify callback
-    if (eventCallback)
-    {
-        eventCallback(true);
-    }
+    if (eventCallback) eventCallback(true);
     
     Logger.println("🎵 URL streaming started");
     return true;
@@ -435,7 +394,7 @@ bool playAudioFromURL(const char* url)
 bool playAudioPath(const char* filePath)
 {
     // In URL streaming mode, check if this is actually a URL
-    if (urlStreamingMode)
+    if (urlStream)
     {
         if (strncmp(filePath, "http://", 7) == 0 || strncmp(filePath, "https://", 8) == 0)
         {
@@ -451,45 +410,34 @@ bool playAudioPath(const char* filePath)
         return false;
     }
     
-    // Check if file exists
     if (!SD.exists(filePath))
     {
         Logger.printf("❌ Audio file not found: %s\n", filePath);
         return false;
     }
     
-    // Stop any currently playing audio first
-    if (isPlaying)
-    {
-        Logger.println("⏹️ Stopping current audio to play new file");
-        stopAudio();
-    }
+    // Dispose any active stream first
+    disposeActiveStream();
     
     Logger.printf("🎵 Starting audio playback: %s\n", filePath);
     
-    // Use setPath which properly closes the previous file before opening the new one
-    // This is important to prevent SD card corruption from leftover file handles
     if (!audioPlayer->setPath(filePath))
     {
         Logger.printf("❌ Failed to set path: %s\n", filePath);
         return false;
     }
     
-    isPlaying = true;
+    // setPath creates an active stream via audioPlayer
+    activeStreamType = ActiveStreamType::AUDIO_PLAYER;
     audioStartTime = millis();
-    // Note: currentAudioKey is set by playAudioBySequence if called via key
     
-    // Notify callback
-    if (eventCallback)
-    {
-        eventCallback(true);
-    }
+    if (eventCallback) eventCallback(true);
     
     Logger.println("🎵 Audio playback started");
     return true;
 }
 
-bool playAudioBySequence(const char* sequence)
+bool playAudioKey(const char* sequence, unsigned long durationMs)
 {
     if (!sequence)
     {
@@ -497,13 +445,32 @@ bool playAudioBySequence(const char* sequence)
         return false;
     }
     
+    // Store duration limit (0 = unlimited)
+    audioDurationLimit = durationMs;
+    
     // Special case: use synthesized dial tone for seamless looping
-    // TEMPORARILY DISABLED - focusing on DTMF detection
     if (strcmp(sequence, "dialtone") == 0)
     {
-        Logger.println("🎯 Dial tone DISABLED for DTMF testing");
-        return false;  // Don't play dial tone
-        // return startDialTone();
+#ifdef DISABLE_DIAL_TONE
+        Logger.println("🎯 Dial tone DISABLED (DISABLE_DIAL_TONE defined)");
+        return false;
+#else
+        bool result = startDialTone();
+        if (result && durationMs > 0) {
+            Logger.printf("⏱️ Duration limit set: %lu ms\n", durationMs);
+        }
+        return result;
+#endif
+    }
+    
+    // Special case: use synthesized ringback tone
+    if (strcmp(sequence, "ringback") == 0)
+    {
+        bool result = startRingback();
+        if (result && durationMs > 0) {
+            Logger.printf("⏱️ Duration limit set: %lu ms\n", durationMs);
+        }
+        return result;
     }
     
     // Check if this is a known audio key
@@ -517,7 +484,12 @@ bool playAudioBySequence(const char* sequence)
     strncpy(currentAudioKey, sequence, sizeof(currentAudioKey) - 1);
     currentAudioKey[sizeof(currentAudioKey) - 1] = '\0';
     
-    Logger.printf("🎯 Playing audio for key: %s\n", sequence);
+    Logger.printf("🎯 Playing audio for key: %s", sequence);
+    if (durationMs > 0) {
+        Logger.printf(" (duration limit: %lu ms)\n", durationMs);
+    } else {
+        Logger.println();
+    }
     
     // Process the audio key to get the file path
     const char* filePath = processAudioKey(sequence);
@@ -529,67 +501,31 @@ bool playAudioBySequence(const char* sequence)
     }
     
     Logger.printf("📂 Got file path: %s\n", filePath);
+    
+    // Check if this audio key has a ring duration configured
+    unsigned long keyRingDuration = getAudioKeyRingDuration(sequence);
+    if (keyRingDuration > 0)
+    {
+        Logger.printf("🔔 Audio key has ring_duration: %lu ms\n", keyRingDuration);
+        return playAudioPair("ringback", keyRingDuration, filePath);
+    }
+    
     return playAudioPath(filePath);
 }
 
 void stopAudio()
 {
-    // Stop synthesized dial tone if active
-    if (dialToneActive)
-    {
-        stopDialTone();
-    }
-    
-    // Handle URL streaming mode
-    if (urlStreamingMode)
-    {
-        if (urlStream)
-        {
-            urlStream->end();
-        }
-        if (urlEncodedStream)
-        {
-            urlEncodedStream->end();
-        }
-        currentStreamURL[0] = '\0';
-    }
-    else if (audioPlayer)
-    {
-        // Stop playback but don't end/close the player
-        // Using stop() instead of end() to keep the player ready for next file
-        if (audioPlayer->isActive())
-        {
-            audioPlayer->stop();
-            Logger.println("⏹️ Audio player stopped");
-        }
-    }
-    
-    if (!isPlaying)
-    {
+    if (activeStreamType == ActiveStreamType::NONE) {
         return;
     }
     
-    isPlaying = false;
-    currentAudioKey[0] = '\0';  // Clear the audio key
-    
-    // Notify callback
-    if (eventCallback)
-    {
-        eventCallback(false);
-    }
-    
-    Logger.println("🔇 Audio playback stopped");
+    Logger.println("🔇 Stopping audio...");
+    disposeActiveStream();
 }
 
 bool isAudioActive()
 {
-    return isPlaying || dialToneActive;
-}
-
-bool isDialTonePlaying()
-{
-    // Check both synthesized dial tone and file-based dial tone
-    return dialToneActive || (isPlaying && (strcmp(currentAudioKey, "dialtone") == 0));
+    return activeStreamType != ActiveStreamType::NONE;
 }
 
 const char* getCurrentAudioKey()
@@ -599,71 +535,66 @@ const char* getCurrentAudioKey()
 
 bool processAudio()
 {
-    // Handle synthesized dial tone first (highest priority for smooth playback)
-    if (dialToneActive)
-    {
-        return processDialTone();
-    }
-    
-    if (!isPlaying)
-    {
-        return false;
-    }
-    
-    // Handle URL streaming mode
-    if (urlStreamingMode)
-    {
-        if (!urlCopier || !urlStream)
-        {
-            return false;
-        }
-        
-        // Copy data from URL stream to output
-        size_t copied = urlCopier->copy();
-        
-        // Check if stream ended
-        if (copied == 0 && !urlStream->available())
-        {
-            // If dial tone was playing, loop it
-            if (currentAudioKey[0] != '\0' && strcmp(currentAudioKey, "dialtone") == 0)
-            {
-                Logger.println("🔄 Looping dial tone (URL mode)...");
-                // Restart the URL stream
-                if (currentStreamURL[0] != '\0')
-                {
-                    urlStream->end();
-                    if (urlStream->begin(currentStreamURL, "audio/mpeg"))
-                    {
-                        urlEncodedStream->begin();
-                        audioStartTime = millis();
-                        return true;
-                    }
+    // Check if duration limit has been exceeded
+    if (audioDurationLimit > 0 && activeStreamType != ActiveStreamType::NONE) {
+        unsigned long elapsed = millis() - audioStartTime;
+        if (elapsed >= audioDurationLimit) {
+            Logger.printf("⏱️ Duration limit reached (%lu ms)\n", audioDurationLimit);
+            disposeActiveStream();
+            
+            // Check if we have a pending audio pair file to play
+            if (audioPairPending && pendingFilePath[0] != '\0') {
+                Logger.printf("🎵 Transitioning to second audio: %s\n", pendingFilePath);
+                audioPairPending = false;
+                char pathCopy[256];
+                strncpy(pathCopy, pendingFilePath, sizeof(pathCopy) - 1);
+                pathCopy[sizeof(pathCopy) - 1] = '\0';
+                pendingFilePath[0] = '\0';
+                
+                if (playAudioPath(pathCopy)) {
+                    return true;
                 }
             }
-            
-            stopAudio();
             return false;
         }
+    }
+    
+    // If audioPlayer is active, ensure no other StreamCopy is running
+    if (audioPlayer && audioPlayer->isActive()) {
+        if (activeStreamType != ActiveStreamType::AUDIO_PLAYER && activeStreamType != ActiveStreamType::NONE) {
+            // Dispose any stale stream copier
+            if (activeStreamCopier) {
+                delete activeStreamCopier;
+                activeStreamCopier = nullptr;
+            }
+            activeStreamType = ActiveStreamType::AUDIO_PLAYER;
+        }
         
+        audioPlayer->copy();
+        
+        if (!audioPlayer->isActive()) {
+            disposeActiveStream();
+            return false;
+        }
         return true;
     }
     
-    // SD card mode
-    if (!audioPlayer)
-    {
-        return false;
+    // Handle StreamCopy-based streams (dial tone, ringback, URL)
+    if (activeStreamCopier) {
+        size_t copied = activeStreamCopier->copy();
+        
+        // For URL streams, check if stream ended (copied 0 and no more data)
+        if (activeStreamType == ActiveStreamType::URL_STREAM) {
+            if (copied == 0 && urlStream && !urlStream->available()) {
+                disposeActiveStream();
+                return false;
+            }
+        }
+        // Tone generators run forever, no end check needed
+        return true;
     }
     
-    audioPlayer->copy();
-    
-    // Check if playback finished
-    if (!audioPlayer->isActive())
-    {
-        stopAudio();
-        return false;
-    }
-    
-    return true;
+    return false;
 }
 
 void setAudioVolume(float volume)
@@ -687,6 +618,44 @@ void setAudioVolume(float volume)
 float getAudioVolume()
 {
     return currentVolume;
+}
+
+void setRingDuration(unsigned long durationMs)
+{
+    ringDuration = durationMs;
+    Logger.printf("🔔 Ring duration set to %lu ms\n", durationMs);
+}
+
+unsigned long getRingDuration()
+{
+    return ringDuration;
+}
+
+bool playAudioPair(const char* audioKey, unsigned long durationMs, const char* filePath)
+{
+    if (!audioKey || !filePath || strlen(filePath) == 0)
+    {
+        Logger.println("❌ playAudioPair: invalid parameters");
+        return false;
+    }
+    
+    // Store the pending file path for after the first audio completes
+    strncpy(pendingFilePath, filePath, sizeof(pendingFilePath) - 1);
+    pendingFilePath[sizeof(pendingFilePath) - 1] = '\0';
+    audioPairPending = true;
+    
+    Logger.printf("🎵 Playing audio pair: %s (%lu ms) -> %s\n", audioKey, durationMs, filePath);
+    
+    // Start the first audio with duration limit
+    if (!playAudioKey(audioKey, durationMs))
+    {
+        Logger.println("❌ Failed to start first audio in pair");
+        audioPairPending = false;
+        pendingFilePath[0] = '\0';
+        return false;
+    }
+    
+    return true;
 }
 
 void setAudioEventCallback(AudioEventCallback callback)

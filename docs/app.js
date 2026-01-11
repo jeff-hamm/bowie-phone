@@ -486,6 +486,12 @@ class PhoneSequenceApp {
         document.getElementById('sequence-link').value = sequence.link || '';
         document.getElementById('sequence-link-url').value = sequence.link || '';
         
+        // Fill ring duration
+        const ringDurationInput = document.getElementById('sequence-ring-duration');
+        if (ringDurationInput) {
+            ringDurationInput.value = sequence.ring_duration || '0';
+        }
+        
         this.showModal();
 
         this.updateSubmitButtonState();
@@ -524,6 +530,10 @@ class PhoneSequenceApp {
         
         document.getElementById('sequence-link').value = '';
         document.getElementById('number-validation').style.display = 'none';
+        
+        // Reset ring duration to 0
+        const ringDurationInput = document.getElementById('sequence-ring-duration');
+        if (ringDurationInput) ringDurationInput.value = '0';
         
         this.resetAudioUI();
 
@@ -581,7 +591,7 @@ class PhoneSequenceApp {
         
         // Check if it's a special name
         const specialNumbers = this.config.specialNumbers || [
-            'dialtone', 'busy', 'ringback', 'disconnect', 'error', 'silence'
+            'dialtone', 'busy', 'ringback', 'disconnect', 'error', 'silence', 'wrong_number'
         ];
         
         if (specialNumbers.includes(trimmed)) {
@@ -1288,7 +1298,11 @@ class PhoneSequenceApp {
             return;
         }
         
-        const data = { name, number, link };
+        // Get ring duration
+        const ringDurationInput = document.getElementById('sequence-ring-duration');
+        const ring_duration = ringDurationInput ? parseInt(ringDurationInput.value, 10) || 0 : 0;
+        
+        const data = { name, number, link, ring_duration };
         
         // Show loading
         document.getElementById('form-loading-overlay').style.display = 'flex';

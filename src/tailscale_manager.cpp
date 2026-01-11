@@ -1,6 +1,7 @@
 #include "tailscale_manager.h"
 #include "logging.h"
 #include "config.h"
+#include "remote_logger.h"
 #include <WireGuard-ESP32.h>
 #include <Preferences.h>
 #include <WebServer.h>
@@ -30,27 +31,89 @@ static char storedPrivateKey[64] = {0};
 static char storedPeerEndpoint[128] = {0};
 static char storedPeerPublicKey[64] = {0};
 static uint16_t storedPeerPort = 51820;
+static bool tailscaleEnabled = false;  // Set by shouldEnableTailscale()
+
+// NVS namespace for Tailscale enable state
+#define TAILSCALE_NVS_NAMESPACE "tailscale"
+
+// Load tailscale enabled state from NVS
+static bool loadTailscaleEnabledState() {
+    Preferences prefs;
+    if (!prefs.begin(TAILSCALE_NVS_NAMESPACE, true)) {
+        return false;  // Default: disabled
+    }
+    bool enabled = prefs.getBool("enabled", false);
+    prefs.end();
+    return enabled;
+}
+
+// Save tailscale enabled state to NVS
+static void saveTailscaleEnabledState(bool enabled) {
+    Preferences prefs;
+    if (!prefs.begin(TAILSCALE_NVS_NAMESPACE, false)) {
+        Logger.println("❌ Failed to save Tailscale state to NVS");
+        return;
+    }
+    prefs.putBool("enabled", enabled);
+    prefs.end();
+    Logger.printf("💾 Tailscale enabled state saved: %s\n", enabled ? "ON" : "OFF");
+}
+
+// Toggle tailscale enabled state in NVS and return new state
+bool toggleTailscaleEnabled() {
+    bool newState = !loadTailscaleEnabledState();
+    saveTailscaleEnabledState(newState);
+    tailscaleEnabled = newState;
+    Logger.printf("🔐 Tailscale toggled to: %s (reboot required)\n", newState ? "ENABLED" : "DISABLED");
+    return newState;
+}
+
+// Set tailscale enabled state explicitly
+void setTailscaleEnabled(bool enabled) {
+    saveTailscaleEnabledState(enabled);
+    tailscaleEnabled = enabled;
+    Logger.printf("🔐 Tailscale set to: %s (reboot required)\n", enabled ? "ENABLED" : "DISABLED");
+}
 
 bool shouldEnableTailscale() {
-#ifdef TAILSCALE_ALWAYS_ENABLED
-    // Always enable Tailscale when TAILSCALE_ALWAYS_ENABLED is defined
-    Logger.println("🔐 Tailscale VPN ALWAYS ENABLED (compile-time flag)");
-    return true;
-#else
-    // Check if enable pin is held during boot to enable Tailscale VPN
+    // Load saved state from NVS first
+    bool savedState = loadTailscaleEnabledState();
+    
+    // Check if enable pin is held during boot - TOGGLES the saved state
     // Default: KEY1 (GPIO36) on AudioKit board
     pinMode(TAILSCALE_ENABLE_PIN, INPUT_PULLUP);
     delay(50);  // Debounce
-    bool enabled = (digitalRead(TAILSCALE_ENABLE_PIN) == LOW);
-    
-    if (enabled) {
-        Logger.printf("🔐 GPIO%d held at boot - Tailscale VPN ENABLED\n", TAILSCALE_ENABLE_PIN);
+    bool pinHeld = (digitalRead(TAILSCALE_ENABLE_PIN) == LOW);
+    #ifdef TAILSCALE_ALWAYS_ENABLED
+        saveTailscaleEnabledState(true);
+    // Always enable Tailscale when TAILSCALE_ALWAYS_ENABLED is defined
+        Logger.println("🔐 Tailscale VPN ALWAYS ENABLED (compile-time flag)");
+        tailscaleEnabled = true;
+        return true;
+    #else
+    if (pinHeld) {
+        // Toggle the saved state
+        bool newState = !savedState;
+        saveTailscaleEnabledState(newState);
+        Logger.printf("🔐 GPIO%d held at boot - Tailscale toggled to: %s\n", 
+                      TAILSCALE_ENABLE_PIN, newState ? "ENABLED" : "DISABLED");
+        tailscaleEnabled = newState;
     } else {
-        Logger.printf("🌐 Tailscale VPN DISABLED (hold GPIO%d during boot to enable)\n", TAILSCALE_ENABLE_PIN);
+        // Use saved state
+        tailscaleEnabled = savedState;
+        if (savedState) {
+            Logger.printf("🔐 Tailscale VPN ENABLED (from saved state)\n");
+        } else {
+            Logger.printf("🌐 Tailscale VPN DISABLED (hold GPIO%d during boot to toggle)\n", TAILSCALE_ENABLE_PIN);
+        }
     }
     
-    return enabled;
+    return tailscaleEnabled;
 #endif
+}
+
+bool isTailscaleEnabled() {
+    return tailscaleEnabled;
 }
 
 bool initTailscale(const char* localIp, 
@@ -212,6 +275,14 @@ void setTailscaleSkipCallback(bool (*callback)()) {
 }
 
 void handleTailscaleLoop() {
+    // Skip if Tailscale was not enabled at boot
+    if (!tailscaleEnabled) {
+        return;
+    }
+    
+    // Flush buffered remote logs periodically
+    RemoteLogger.loop();
+    
     // Check if we need to reconnect
     if (vpnInitialized && !vpnConnected) {
         unsigned long now = millis();
@@ -508,6 +579,39 @@ void handleVPNClear() {
     vpnWebServer->send(302, "text/plain", "Config cleared");
 }
 
+// Handle toggling Tailscale enabled state via web endpoint
+void handleVPNToggle() {
+    if (!vpnWebServer) return;
+    
+    bool newState = toggleTailscaleEnabled();
+    
+    String json = "{\"enabled\":";
+    json += newState ? "true" : "false";
+    json += ",\"message\":\"Tailscale ";
+    json += newState ? "enabled" : "disabled";
+    json += ". Reboot required.\"}";
+    
+    vpnWebServer->send(200, "application/json", json);
+}
+
+// Handle getting current Tailscale status via API
+void handleVPNStatus() {
+    if (!vpnWebServer) return;
+    
+    String json = "{";
+    json += "\"enabled\":";
+    json += isTailscaleEnabled() ? "true" : "false";
+    json += ",\"connected\":";
+    json += isTailscaleConnected() ? "true" : "false";
+    json += ",\"status\":\"" + String(getTailscaleStatus()) + "\"";
+    if (isTailscaleConnected()) {
+        json += ",\"ip\":\"" + String(getTailscaleIP()) + "\"";
+    }
+    json += "}";
+    
+    vpnWebServer->send(200, "application/json", json);
+}
+
 void initVPNConfigRoutes(void* server) {
     vpnWebServer = static_cast<WebServer*>(server);
     if (!vpnWebServer) return;
@@ -515,6 +619,8 @@ void initVPNConfigRoutes(void* server) {
     vpnWebServer->on("/vpn", HTTP_GET, handleVPNConfigPage);
     vpnWebServer->on("/vpn/save", HTTP_POST, handleVPNSave);
     vpnWebServer->on("/vpn/clear", HTTP_POST, handleVPNClear);
+    vpnWebServer->on("/vpn/toggle", HTTP_GET, handleVPNToggle);
+    vpnWebServer->on("/vpn/status", HTTP_GET, handleVPNStatus);
     
-    Logger.println("🔐 VPN config routes registered (/vpn)");
+    Logger.println("🔐 VPN config routes registered (/vpn, /vpn/toggle, /vpn/status)");
 }

@@ -51,8 +51,10 @@
  *   if (audioPath) {
  *     playAudioPath(audioPath);
  *   }
+ * 
+ * @param skipFFT If true, skip FFT processing (use when Goertzel is active during dial tone)
  */
-const char* readDTMFSequence();
+const char* readDTMFSequence(bool skipFFT = false);
 
 /**
  * @brief Reset the DTMF sequence buffer
@@ -61,6 +63,22 @@ const char* readDTMFSequence();
  * goes on-hook or when you need to discard the current sequence.
  */
 void resetDTMFSequence();
+
+/**
+ * @brief Set maximum sequence length
+ * @param maxLength Maximum length (must be <= MAX_SEQUENCE_LENGTH)
+ *
+ * Sets a runtime configurable maximum sequence length. This allows
+ * limiting sequence length below the compile-time MAX_SEQUENCE_LENGTH.
+ * Pass 0 to use the full MAX_SEQUENCE_LENGTH.
+ */
+void setMaxSequenceLength(int maxLength);
+
+/**
+ * @brief Get current maximum sequence length
+ * @return Current maximum sequence length setting
+ */
+int getMaxSequenceLength();
 
 /**
  * @brief Simulate a DTMF digit for debug/testing purposes
