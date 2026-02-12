@@ -18,10 +18,17 @@
 #include "AudioTools/CoreAudio/GoerzelStream.h"
 #include "AudioTools/AudioLibs/AudioBoardStream.h"
 #include "dtmf_goertzel.h"
+#include "esp_heap_caps.h"
+#include "config.h"
 
 // Forward declarations for FFT debug mode functions (from dtmf_decoder.cpp)
 bool isFFTDebugEnabled();
 void setFFTDebugEnabled(bool enabled);
+
+// Forward declaration for audio capture
+#ifdef DEBUG
+void performAudioCapture(int durationSec);
+#endif
 
 // ============================================================================
 // SYSTEM FUNCTIONS
@@ -134,6 +141,8 @@ void processDebugCommand(const String& cmd) {
         Logger.println("   cpuload-goertzel - Test CPU load (Goertzel DTMF + audio)");
         Logger.println("   level <0-2>   - Set log level (0=quiet, 1=normal, 2=debug)");
         Logger.println("   state         - Show current state");
+        Logger.println("   debugaudio [s] - Capture raw audio (1-10s, default 2)");
+        Logger.println("   scan          - Scan for WiFi networks");
         Logger.println("   dns           - Test DNS resolution");
         Logger.println("   tailscale     - Toggle Tailscale VPN on/off");
         Logger.println("   pullota <url> - Pull firmware from URL");
@@ -149,6 +158,30 @@ void processDebugCommand(const String& cmd) {
         Logger.println("   *#09#  - Phone Home Check-in");
         Logger.println("   *#88#  - Tailscale Status");
         Logger.println("   *#00#  - List All Commands");
+    }
+    else if (cmd.equalsIgnoreCase("scan") || cmd.equalsIgnoreCase("wifiscan")) {
+        Logger.println("🔧 [DEBUG] Scanning for WiFi networks...");
+        Logger.printf("   Current WiFi: %s\n", WiFi.status() == WL_CONNECTED ? "Connected" : "Disconnected");
+        if (WiFi.status() == WL_CONNECTED) {
+            Logger.printf("   Connected to: %s\n", WiFi.SSID().c_str());
+            Logger.printf("   Signal: %d dBm\n", WiFi.RSSI());
+        }
+        Logger.println();
+        
+        int n = WiFi.scanNetworks();
+        Logger.printf("   Found %d networks:\n", n);
+        Logger.println();
+        
+        for (int i = 0; i < n; i++) {
+            Logger.printf("   %2d: %-32s | Ch:%2d | %4d dBm | %s\n",
+                i + 1,
+                WiFi.SSID(i).c_str(),
+                WiFi.channel(i),
+                WiFi.RSSI(i),
+                WiFi.encryptionType(i) == WIFI_AUTH_OPEN ? "Open" : "Secure");
+        }
+        Logger.println();
+        WiFi.scanDelete();
     }
     else if (cmd.equalsIgnoreCase("dns")) {
         Logger.println("🔧 [DEBUG] Testing DNS resolution...");
@@ -188,6 +221,16 @@ void processDebugCommand(const String& cmd) {
         bool newState = !isFFTDebugEnabled();
         setFFTDebugEnabled(newState);
         Logger.printf("🎵 FFT debug output: %s\n", newState ? "ENABLED" : "DISABLED");
+    }
+    else if (cmd.startsWith("debugaudio") || cmd.startsWith("debugAudio") || cmd.equalsIgnoreCase("audiodebug")) {
+        // Parse optional duration: "debugaudio 3" = 3 seconds
+        int durationSec = 2; // default
+        int spaceIdx = cmd.indexOf(' ');
+        if (spaceIdx > 0) {
+            int val = cmd.substring(spaceIdx + 1).toInt();
+            if (val >= 1 && val <= 10) durationSec = val;
+        }
+        performAudioCapture(durationSec);
     }
     else if (cmd.startsWith("pullota ") || cmd.startsWith("otapull ")) {
         // Pull-based OTA - device fetches firmware from URL (works over VPN!)
@@ -1131,4 +1174,214 @@ void performGoertzelCPULoadTest()
     Logger.printf("\n💾 Free heap: %u bytes\n", ESP.getFreeHeap());
     Logger.println("============================================");
 }
+
+// ============================================================================
+// AUDIO CAPTURE FOR OFFLINE ANALYSIS
+// ============================================================================
+
+void performAudioCapture(int durationSec) {
+    extern AudioBoardStream kit;
+    
+    // Clamp duration
+    if (durationSec < 1) durationSec = 1;
+    if (durationSec > 20) durationSec = 20;
+    
+    // Downsample factor: 44100 -> 11025 Hz (take every 4th sample)
+    const int DOWNSAMPLE = 4;
+    const int EFFECTIVE_RATE = AUDIO_SAMPLE_RATE / DOWNSAMPLE; // 11025
+    const size_t SAMPLES_NEEDED = EFFECTIVE_RATE * durationSec;
+    const size_t BUFFER_BYTES = SAMPLES_NEEDED * sizeof(int16_t);
+    
+    Logger.println();
+    Logger.println("============================================");
+    Logger.println("🎙️ AUDIO CAPTURE FOR OFFLINE ANALYSIS");
+    Logger.println("============================================");
+    Logger.printf("   Duration: %d seconds\n", durationSec);
+    Logger.printf("   Source rate: %d Hz -> Capture rate: %d Hz\n", AUDIO_SAMPLE_RATE, EFFECTIVE_RATE);
+    Logger.printf("   Samples: %u  Buffer: %u KB\n", SAMPLES_NEEDED, BUFFER_BYTES / 1024);
+    Logger.printf("   Free PSRAM: %u KB\n", ESP.getFreePsram() / 1024);
+    Logger.printf("   Free heap: %u KB\n", ESP.getFreeHeap() / 1024);
+    
+    if (BUFFER_BYTES > ESP.getFreePsram()) {
+        Logger.println("   ❌ Not enough PSRAM! Reduce duration.");
+        return;
+    }
+    
+    // Allocate capture buffer in PSRAM
+    int16_t* captureBuf = (int16_t*)heap_caps_malloc(BUFFER_BYTES, MALLOC_CAP_SPIRAM);
+    if (!captureBuf) {
+        Logger.println("   ❌ PSRAM allocation failed!");
+        return;
+    }
+    
+    // Stop competing tasks
+    Logger.println("   Stopping Goertzel task...");
+    stopGoertzelTask();
+    getExtendedAudioPlayer().stop();
+    
+    // Disable remote logging to prevent uptime logs from contaminating audio dump
+    Logger.println("   Disabling remote logger...");
+    extern RemoteLoggerClass RemoteLogger;
+    bool wasRemoteEnabled = RemoteLogger.isEnabled();
+    RemoteLogger.setEnabled(false);
+    
+    delay(50);
+    
+    // Drain any stale data in I2S input buffer
+    {
+        uint8_t drain[1024];
+        unsigned long drainStart = millis();
+        while (kit.available() > 0 && (millis() - drainStart) < 200) {
+            kit.readBytes(drain, min((int)sizeof(drain), kit.available()));
+        }
+    }
+    
+    Logger.println("   🔴 RECORDING...");
+    Logger.flush();
+    
+    // Read buffer: read full-rate I2S data, pick every Nth sample
+    const size_t READ_CHUNK = 2048; // bytes per read (1024 16-bit samples)
+    uint8_t readBuf[READ_CHUNK];
+    size_t capturedSamples = 0;
+    size_t totalSourceSamples = 0;
+    size_t sourceSkipCounter = 0;
+    unsigned long captureStart = millis();
+    unsigned long lastDot = captureStart;
+    size_t readFailCount = 0;
+    
+    while (capturedSamples < SAMPLES_NEEDED) {
+        int avail = kit.available();
+        if (avail <= 0) {
+            // Brief yield to let I2S DMA fill
+            delayMicroseconds(100);
+            readFailCount++;
+            if (readFailCount > 100000) {
+                Logger.printf("\n   ⚠️ I2S read stalled at %u samples\n", capturedSamples);
+                break;
+            }
+            continue;
+        }
+        readFailCount = 0;
+        
+        size_t toRead = min((size_t)avail, READ_CHUNK);
+        // Ensure even number of bytes (16-bit samples)
+        toRead &= ~1;
+        if (toRead == 0) continue;
+        
+        size_t bytesRead = kit.readBytes(readBuf, toRead);
+        size_t samplesRead = bytesRead / sizeof(int16_t);
+        int16_t* samples = (int16_t*)readBuf;
+        
+        for (size_t i = 0; i < samplesRead && capturedSamples < SAMPLES_NEEDED; i++) {
+            totalSourceSamples++;
+            if (sourceSkipCounter == 0) {
+                captureBuf[capturedSamples++] = samples[i];
+            }
+            sourceSkipCounter++;
+            if (sourceSkipCounter >= (size_t)DOWNSAMPLE) {
+                sourceSkipCounter = 0;
+            }
+        }
+        
+        // Progress dots every second
+        if (millis() - lastDot >= 1000) {
+            Logger.print(".");
+            lastDot = millis();
+        }
+    }
+    
+    unsigned long captureTime = millis() - captureStart;
+    Logger.println();
+    Logger.printf("   ✅ Captured %u samples in %lu ms\n", capturedSamples, captureTime);
+    Logger.printf("   Source samples read: %u (expected ~%u)\n", 
+                  totalSourceSamples, (unsigned)(AUDIO_SAMPLE_RATE * durationSec));
+    
+    // Compute basic stats for sanity check
+    int32_t minVal = 32767, maxVal = -32768;
+    int64_t sumAbs = 0;
+    for (size_t i = 0; i < capturedSamples; i++) {
+        int16_t s = captureBuf[i];
+        if (s < minVal) minVal = s;
+        if (s > maxVal) maxVal = s;
+        sumAbs += abs(s);
+    }
+    int32_t avgAbs = capturedSamples > 0 ? (int32_t)(sumAbs / capturedSamples) : 0;
+    
+    Logger.println();
+    Logger.println("📊 Signal Statistics:");
+    Logger.printf("   Min: %d  Max: %d  Avg|x|: %d\n", minVal, maxVal, avgAbs);
+    Logger.printf("   Peak: %.1f dBFS\n", 
+                  maxVal > 0 ? 20.0f * log10f((float)max(abs(minVal), abs(maxVal)) / 32768.0f) : -96.0f);
+    
+    // Dump as CSV via writeRaw - bypasses log buffer to avoid flooding
+    // Format: one line of header, then 20 samples per line for compactness
+    // Total output: ~capturedSamples * ~4 chars = manageable over serial
+    Logger.println();
+    Logger.println("📤 Dumping audio data (CSV signed int16)...");
+    Logger.println("   Copy between BEGIN/END markers.");
+    Logger.println("   Python: np.loadtxt('file.csv', delimiter=',', dtype=np.int16)");
+    Logger.flush();
+    delay(100);
+    
+    // Markers for easy parsing
+    Logger.writeRawLine("---BEGIN_AUDIO_CAPTURE---");
+    
+    // Header comment
+    char hdr[128];
+    snprintf(hdr, sizeof(hdr), "# rate=%d,bits=16,channels=1,samples=%u,duration_ms=%lu",
+             EFFECTIVE_RATE, capturedSamples, captureTime);
+    Logger.writeRawLine(hdr);
+    
+    // Dump samples, 20 per line
+    const int SAMPLES_PER_LINE = 20;
+    char lineBuf[256]; // 20 samples * max "-32768," = 140 chars + safety
+    size_t dumped = 0;
+    
+    while (dumped < capturedSamples) {
+        int linePos = 0;
+        int lineCount = 0;
+        
+        while (lineCount < SAMPLES_PER_LINE && dumped < capturedSamples) {
+            if (lineCount > 0) {
+                lineBuf[linePos++] = ',';
+            }
+            int written = snprintf(lineBuf + linePos, sizeof(lineBuf) - linePos, "%d", captureBuf[dumped]);
+            linePos += written;
+            dumped++;
+            lineCount++;
+        }
+        lineBuf[linePos] = '\0';
+        Logger.writeRawLine(lineBuf);
+        
+        // Yield every 100 lines to prevent watchdog reset
+        if ((dumped / SAMPLES_PER_LINE) % 100 == 0) {
+            yield();
+            delay(1); // Let serial TX buffer drain
+        }
+    }
+    
+    Logger.writeRawLine("---END_AUDIO_CAPTURE---");
+    Logger.flush();
+    
+    Logger.printf("\n   ✅ Dumped %u samples (%u lines)\n", dumped, (dumped + SAMPLES_PER_LINE - 1) / SAMPLES_PER_LINE);
+    
+    // Free PSRAM
+    heap_caps_free(captureBuf);
+    Logger.printf("   💾 Buffer freed. Free PSRAM: %u KB\n", ESP.getFreePsram() / 1024);
+    
+    // Re-enable remote logging if it was enabled
+    if (wasRemoteEnabled) {
+        Logger.println("   Re-enabling remote logger...");
+        RemoteLogger.setEnabled(true);
+    }
+    
+    // Restart Goertzel
+    Logger.println("   Restarting Goertzel task...");
+    extern StreamCopy goertzelCopier;
+    resetGoertzelState();
+    startGoertzelTask(goertzelCopier);
+    
+    Logger.println("============================================");
+}
+
 #endif

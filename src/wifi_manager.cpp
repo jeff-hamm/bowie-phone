@@ -568,7 +568,86 @@ void handleSave()
     }
 }
 
-// Connect to WiFi using saved credentials
+// ============================================================================
+// MULTIPLE FALLBACK WIFI SUPPORT
+// ============================================================================
+
+// Structure for WiFi credentials
+struct WiFiCredential {
+    const char* ssid;
+    const char* password;
+};
+
+// Fallback WiFi networks - tried in order
+// First: NVS saved credentials (if any)
+// Then: Compile-time defaults (can define multiple via build flags)
+static const WiFiCredential fallbackNetworks[] = {
+#ifdef DEFAULT_SSID
+    { DEFAULT_SSID, DEFAULT_PASSWORD },
+#endif
+#ifdef FALLBACK_SSID_1
+    { FALLBACK_SSID_1, FALLBACK_PASSWORD_1 },
+#endif
+#ifdef FALLBACK_SSID_2
+    { FALLBACK_SSID_2, FALLBACK_PASSWORD_2 },
+#endif
+#ifdef FALLBACK_SSID_3
+    { FALLBACK_SSID_3, FALLBACK_PASSWORD_3 },
+#endif
+};
+static const int numFallbackNetworks = sizeof(fallbackNetworks) / sizeof(fallbackNetworks[0]);
+
+// Track current network being tried (for fallback enumeration)
+static int currentNetworkIndex = -1;  // -1 = trying saved credentials
+static bool triedSavedCredentials = false;
+
+// Get next WiFi credentials to try
+// Returns false if no more networks to try
+bool getNextWiFiCredentials(String& ssid, String& password) {
+    // First try: saved credentials from NVS
+    if (!triedSavedCredentials) {
+        triedSavedCredentials = true;
+        
+        if (wifiPrefs.begin("wifi", true)) {
+            String savedSsid = wifiPrefs.getString("ssid", "");
+            String savedPassword = wifiPrefs.getString("password", "");
+            wifiPrefs.end();
+            
+            if (savedSsid.length() > 0) {
+                ssid = savedSsid;
+                password = savedPassword;
+                Logger.printf("📡 Trying saved WiFi: %s\n", ssid.c_str());
+                return true;
+            }
+        }
+    }
+    
+    // Then try: fallback networks from compile-time
+    currentNetworkIndex++;
+    if (currentNetworkIndex < numFallbackNetworks) {
+        ssid = fallbackNetworks[currentNetworkIndex].ssid;
+        password = fallbackNetworks[currentNetworkIndex].password;
+        Logger.printf("📡 Trying fallback WiFi %d/%d: %s\n", 
+            currentNetworkIndex + 1, numFallbackNetworks, ssid.c_str());
+        return true;
+    }
+    
+    return false;  // No more networks to try
+}
+
+// Reset fallback iteration (call when starting fresh connection attempt)
+void resetWiFiFallback() {
+    currentNetworkIndex = -1;
+    triedSavedCredentials = false;
+}
+
+// Check if there are more networks to try
+bool hasMoreNetworksToTry() {
+    if (!triedSavedCredentials) return true;
+    return (currentNetworkIndex + 1) < numFallbackNetworks;
+}
+
+// Connect to WiFi using saved credentials or fallbacks
 bool connectToWiFi()
 {
     // Ensure NVS is initialized
@@ -582,19 +661,12 @@ bool connectToWiFi()
         Logger.printf("❌ NVS init failed: %d\n", err);
     }
     
-    if (!wifiPrefs.begin("wifi", true)) // Read-only
-    {
-        Logger.println("ℹ️ No WiFi preferences found (first boot?)");
-        return false;
-    }
-
-    String ssid = wifiPrefs.getString("ssid", DEFAULT_SSID);
-    String password = wifiPrefs.getString("password", DEFAULT_PASSWORD);
-    wifiPrefs.end();
+    // Reset fallback state for fresh attempt
+    resetWiFiFallback();
     
-    if (ssid.length() == 0)
-    {
-        Logger.println("📡 No saved WiFi credentials found");
+    String ssid, password;
+    if (!getNextWiFiCredentials(ssid, password)) {
+        Logger.println("📡 No WiFi credentials found (no saved or default)");
         return false;
     }
     
@@ -674,6 +746,37 @@ bool startConfigPortalSafe()
     server.on("/wifi/scan", HTTP_GET, handleWiFiScan);
     server.on("/wifi/test", HTTP_POST, handleWiFiTest);
     server.on("/logs", handleLogs);
+    
+    // API endpoint for deployment-time WiFi configuration
+    // Usage: curl -X POST -d "ssid=MyNetwork&password=MyPassword" http://192.168.4.1/api/wifi
+    server.on("/api/wifi", HTTP_POST, []() {
+        String ssid = server.arg("ssid");
+        String password = server.arg("password");
+        
+        if (ssid.length() == 0) {
+            server.send(400, "application/json", "{\"ok\":false,\"error\":\"SSID required\"}");
+            return;
+        }
+        
+        Logger.printf("📡 API: Saving WiFi credentials for: %s\n", ssid.c_str());
+        saveWiFiCredentials(ssid, password);
+        
+        server.send(200, "application/json", "{\"ok\":true,\"message\":\"Credentials saved, rebooting...\"}");
+        
+        delay(500);
+        ESP.restart();
+    });
+    
+    // API endpoint to check device status (useful for deployment verification)
+    server.on("/api/status", HTTP_GET, []() {
+        String json = "{";
+        json += "\"ap_name\":\"" + String(WIFI_AP_NAME) + "\",";
+        json += "\"ap_ip\":\"" + WiFi.softAPIP().toString() + "\",";
+        json += "\"config_mode\":" + String(isConfigMode ? "true" : "false") + ",";
+        json += "\"fallback_networks\":" + String(numFallbackNetworks);
+        json += "}";
+        server.send(200, "application/json", json);
+    });
     
     // OTA preparation endpoint - call before OTA to release SD/SPI
     server.on("/prepareota", HTTP_GET, []() {
@@ -1192,25 +1295,37 @@ void handleWiFiLoop()
             connectionStartTime = millis();
         }
         else if (WiFi.status() != WL_CONNECTED && connectionStartTime > 0 && 
-                 (millis() - connectionStartTime) > 30000) // 30 second timeout
+                 (millis() - connectionStartTime) > 15000) // 15 second timeout per network
         {
-            
-            Logger.println("❌ WiFi connection timeout (including fallback) - starting configuration portal");
-            
-            // Stop OTA if it was running in STA mode
-            if (otaStarted)
-            {
-                stopOTA();
-                otaStarted = false;
-            }
-            
-            connectionStartTime = 0;
-            connectionLogged = false;
-            
-            // Start config portal since connection failed
-            if (startConfigPortalSafe()) {
-                portalStartTime = millis();
-                // OTA will be restarted in AP mode above
+            // Try next fallback network if available
+            String nextSsid, nextPassword;
+            if (hasMoreNetworksToTry() && getNextWiFiCredentials(nextSsid, nextPassword)) {
+                Logger.printf("📡 Connection timeout, trying next network: %s\n", nextSsid.c_str());
+                WiFi.disconnect(true);
+                delay(500);
+                WiFi.begin(nextSsid.c_str(), nextPassword.c_str());
+                connectionStartTime = millis();  // Reset timeout for new network
+            } else {
+                Logger.println("❌ WiFi connection timeout (all networks tried) - starting configuration portal");
+                
+                // Stop OTA if it was running in STA mode
+                if (otaStarted)
+                {
+                    stopOTA();
+                    otaStarted = false;
+                }
+                
+                connectionStartTime = 0;
+                connectionLogged = false;
+                
+                // Reset fallback for next attempt
+                resetWiFiFallback();
+                
+                // Start config portal since connection failed
+                if (startConfigPortalSafe()) {
+                    portalStartTime = millis();
+                    // OTA will be restarted in AP mode above
+                }
             }
         }
     }

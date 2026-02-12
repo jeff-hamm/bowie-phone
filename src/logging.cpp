@@ -235,3 +235,17 @@ void LoggerClass::clearLogs() {
     bufferPos = 0;
     messageBuffer[0] = '\0';
 }
+
+void LoggerClass::writeRaw(const char* data, size_t len) {
+    // Write directly to all output streams, bypass log buffer entirely
+    for (int i = 0; i < streamCount; i++) {
+        if (streams[i]) {
+            streams[i]->write((const uint8_t*)data, len);
+        }
+    }
+}
+
+void LoggerClass::writeRawLine(const char* line) {
+    writeRaw(line, strlen(line));
+    writeRaw("\n", 1);
+}

@@ -76,6 +76,9 @@ void setup()
     // Initialize notification system early (before WiFi so we can show status)
     initNotifications();
     
+    // Check if Tailscale/VPN should be enabled (checks compile-time flag and saved state)
+    shouldEnableTailscale();
+    
     // Check if firmware update key (KEY3 / GPIO19) is held during boot
     // This provides a hardware way to enter bootloader mode for flashing
     pinMode(FIRMWARE_UPDATE_KEY, INPUT_PULLUP);

@@ -69,6 +69,11 @@ public:
     void clearLogs();
     int getLogCount() const { return logCount; }
     
+    // Raw data dump - writes directly to streams, bypasses log buffer
+    // Use for large data dumps that would overwhelm the circular log buffer
+    void writeRaw(const char* data, size_t len);
+    void writeRawLine(const char* line);
+    
 private:
     void addMessageToBuffer(const String& message);
 };
