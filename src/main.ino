@@ -143,6 +143,10 @@ void setup()
     // Initialize Goertzel-based DTMF decoder for efficient dial tone detection
     // Goertzel is O(n*k) vs FFT O(n log n), much faster for specific frequencies
     initGoertzelDecoder(goertzel, goertzelCopier);
+    
+    // Start Goertzel processing on separate FreeRTOS task (core 0)
+    // This prevents blocking the main loop (audio runs on core 1)
+    startGoertzelTask(goertzelCopier);
 
     // Initialize WiFi with careful error handling
     Logger.println("🔧 Starting WiFi initialization...");
@@ -258,9 +262,7 @@ void loop()
         }
         
 #ifdef USE_GOERTZEL_ONLY
-        // Use Goertzel for ALL DTMF detection (dial tone, idle, and during audio)
-        goertzelCopier.copy();
-        
+        // Goertzel runs on separate task - just check for detected keys
         char goertzelKey = getGoertzelKey();
         if (goertzelKey != 0) {
             addDtmfDigit(goertzelKey);
@@ -272,10 +274,7 @@ void loop()
         static unsigned long lastDTMFCheck = 0;
         if (isDialTone)
         {
-            // Use Goertzel for dial tone and idle - more efficient
-            goertzelCopier.copy();
-            
-            // Check for Goertzel-detected key
+            // Goertzel runs on separate task - just check for detected keys
             char goertzelKey = getGoertzelKey();
             if (goertzelKey != 0) {
                 // Feed key to sequence processor

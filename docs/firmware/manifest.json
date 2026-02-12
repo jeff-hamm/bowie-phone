@@ -1,27 +1,27 @@
 {
   "name": "Bowie Phone",
-  "version": "1.0.2",
   "builds": [
     {
       "chipFamily": "ESP32",
       "parts": [
         {
-          "offset": 4096,
-          "path": "bootloader.bin"
+          "path": "bootloader.bin",
+          "offset": 4096
         },
         {
-          "offset": 32768,
-          "path": "partitions.bin"
+          "path": "partitions.bin",
+          "offset": 32768
         },
         {
-          "offset": 57344,
-          "path": "boot_app0.bin"
+          "path": "boot_app0.bin",
+          "offset": 57344
         },
         {
-          "offset": 65536,
-          "path": "firmware.bin"
+          "path": "firmware.bin",
+          "offset": 65536
         }
       ]
     }
-  ]
+  ],
+  "version": "1.0.3"
 }

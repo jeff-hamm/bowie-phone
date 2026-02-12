@@ -10,8 +10,7 @@
 // ============================================================================
 // DTMF SEQUENCE STATE
 // ============================================================================
-ExtendedAudioPlayer& audioPlayer = getExtendedAudioPlayer();
-AudioKeyRegistry& registry = getAudioKeyRegistry();
+extern ExtendedAudioPlayer audioPlayer;  // Defined in main.ino
 static char dtmfSequence[MAX_SEQUENCE_LENGTH + 1]; // +1 for null terminator
 static int sequenceIndex = 0;
 static unsigned long lastDigitTime = 0;
@@ -91,7 +90,7 @@ static bool addDigitToSequence(char digit)
         for (int start = 0; start < sequenceIndex; start++)
         {
             const char* substring = &dtmfSequence[start];
-            if (registry.hasKey(substring))
+            if (getAudioKeyRegistry().hasKey(substring))
             {
                 Logger.debugf("✅ Found matching substring '%s' in sequence '%s'\n", substring, dtmfSequence);
                 // Move the matched portion to the beginning for processing
@@ -221,7 +220,7 @@ bool processNumberSequence(const char *sequence)
     {
         processSpecialCommand(sequence);
     }
-    else if (registry.hasKey(sequence))
+    else if (getAudioKeyRegistry().hasKey(sequence))
     {
         // Play the playlist for this audio key (includes ringback, audio, click)
         audioStarted = audioPlayer.playPlaylist(sequence);

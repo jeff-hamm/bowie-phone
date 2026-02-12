@@ -67,21 +67,20 @@ if (-not $SkipBuild) {
 # Verify build outputs exist
 $FirmwareBin = Join-Path $BuildDir "firmware.bin"
 $PartitionsBin = Join-Path $BuildDir "partitions.bin"
+$BootloaderBin = Join-Path $BuildDir "bootloader.bin"
 if (-not (Test-Path $FirmwareBin)) {
     throw "firmware.bin not found at $FirmwareBin - run build first"
 }
 if (-not (Test-Path $PartitionsBin)) {
     throw "partitions.bin not found at $PartitionsBin - run build first"
 }
-
-# Locate bootloader and boot_app0 from PlatformIO framework
-# ESP32 with DIO flash mode @ 40MHz
-$BootloaderSrc = Join-Path $FrameworkDir "tools\sdk\esp32\bin\bootloader_dio_40m.bin"
-$BootApp0Src = Join-Path $FrameworkDir "tools\partitions\boot_app0.bin"
-
-if (-not (Test-Path $BootloaderSrc)) {
-    throw "Bootloader not found at $BootloaderSrc"
+if (-not (Test-Path $BootloaderBin)) {
+    throw "bootloader.bin not found at $BootloaderBin - run build first"
 }
+
+# Locate boot_app0 from PlatformIO framework
+$BootloaderSrc = $BootloaderBin
+$BootApp0Src = Join-Path $FrameworkDir "tools\partitions\boot_app0.bin"
 if (-not (Test-Path $BootApp0Src)) {
     throw "boot_app0.bin not found at $BootApp0Src"
 }

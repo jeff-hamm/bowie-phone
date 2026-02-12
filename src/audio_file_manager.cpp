@@ -674,7 +674,7 @@ static int parseAndRegisterAudioFiles(const String& jsonString, AudioFileProcess
         }
         
         // Parse "previous" array and prepend to playlist (in reverse order)
-        if (entryData.containsKey("previous") && entryData["previous"].is<JsonArray>()) {
+        if (entryData["previous"].is<JsonArray>()) {
             JsonArray prevArray = entryData["previous"].as<JsonArray>();
             // Prepend in reverse order so they play in correct order
             for (int i = prevArray.size() - 1; i >= 0; i--) {
@@ -696,7 +696,7 @@ static int parseAndRegisterAudioFiles(const String& jsonString, AudioFileProcess
         playlist->append("click", 0);
         
         // Parse "next" array and append to playlist
-        if (entryData.containsKey("next") && entryData["next"].is<JsonArray>()) {
+        if (entryData["next"].is<JsonArray>()) {
             JsonArray nextArray = entryData["next"].as<JsonArray>();
             for (JsonVariant item : nextArray) {
                 const char* nextKey = item.as<const char*>();
