@@ -11,6 +11,7 @@
 #include <config.h>
 #include "audio_player.h"
 #include "audio_file_manager.h"
+#include "file_utils.h"
 #include "logging.h"
 #include <Preferences.h>
 #include <SD.h>
@@ -56,7 +57,7 @@ static DualToneGenerator ringbackToneGenerator(440.0f, 480.0f, 16000.0f);
 static RepeatingToneGenerator<int16_t> ringbackRepeater(ringbackToneGenerator, 2000, 4000);
 
 // ============================================================================
-// GLOBAL VARIABLES
+// GLOBAL VARIABLESs
 // ============================================================================
 
 static AudioPlayer* audioPlayer = nullptr;
@@ -307,6 +308,11 @@ void initAudioPlayer(AudioSource &source, AudioStream &output, AudioDecoder &dec
     // begin() resets autonext from the source, so we must set it after
     // We want to play only the requested file, not iterate through all files
     audioPlayer->setAutoNext(false);
+    
+    // IMPORTANT: Stop any auto-started playback
+    // Some AudioPlayer configurations auto-start on begin()
+    audioPlayer->stop();
+    
     initOutput(output);
     Logger.println("✅ Audio player initialized");
 }
@@ -396,7 +402,7 @@ bool playAudioPath(const char* filePath)
     // In URL streaming mode, check if this is actually a URL
     if (urlStream)
     {
-        if (strncmp(filePath, "http://", 7) == 0 || strncmp(filePath, "https://", 8) == 0)
+        if (isUrl(filePath))
         {
             return playAudioFromURL(filePath);
         }
@@ -420,7 +426,6 @@ bool playAudioPath(const char* filePath)
     disposeActiveStream();
     
     Logger.printf("🎵 Starting audio playback: %s\n", filePath);
-    
     if (!audioPlayer->setPath(filePath))
     {
         Logger.printf("❌ Failed to set path: %s\n", filePath);

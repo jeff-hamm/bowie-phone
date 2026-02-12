@@ -73,6 +73,12 @@ static const PhoneConfig BOWIE_PHONE_CONFIG = {
     .gapThreshold = 150,                     // 150ms silence = new button press (~2 FFT frames)
     .requiredConsecutive = 3,                // Require 3 consecutive matches for solid debounce
     
+    // Goertzel-specific timing
+    .goertzelBlockTimeoutMs = 5,             // Row+Col must arrive within 5ms
+    .goertzelReleaseMs = 80,                 // Key released after 80ms silence
+    .goertzelBlockSize = 512,                // ~11.6ms blocks @ 44100Hz
+    .goertzelCopierBufferSize = 512,         // StreamCopy buffer size
+    
     // Detection mode
     .useSummedFreqDetection = true,          // Primary: use summed frequencies for COLUMN
     .useFundamentalDetection = true,         // Also try fundamentals when strong enough

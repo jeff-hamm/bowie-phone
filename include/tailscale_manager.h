@@ -108,6 +108,21 @@ void handleTailscaleLoop();
 // Set callback to check if reconnection should be skipped (e.g., during active call)
 void setTailscaleSkipCallback(bool (*callback)());
 
+// Type definition for Tailscale connection state callbacks
+typedef void (*TailscaleStateCallback)();
+
+/**
+ * Set callback to be called when Tailscale/WireGuard connects
+ * @param callback Function to call on connect (nullptr to clear)
+ */
+void setTailscaleConnectCallback(TailscaleStateCallback callback);
+
+/**
+ * Set callback to be called when Tailscale/WireGuard disconnects
+ * @param callback Function to call on disconnect (nullptr to clear)
+ */
+void setTailscaleDisconnectCallback(TailscaleStateCallback callback);
+
 /**
  * Get connection status string for debugging
  * @return Human-readable status string

@@ -7,8 +7,15 @@
 #include <Preferences.h>
 #include <ArduinoOTA.h>
 
-// Type definition for WiFi connection callback
+// Type definition for WiFi connection callbacks
 typedef void (*WiFiConnectedCallback)();
+typedef void (*WiFiDisconnectedCallback)();
+
+/**
+ * Set callback for WiFi disconnect events
+ * @param callback Function to call when WiFi disconnects
+ */
+void setWiFiDisconnectCallback(WiFiDisconnectedCallback callback);
 
 // WiFi configuration - Use build flags or defaults
 #ifndef WIFI_AP_NAME

@@ -2,7 +2,8 @@
 #include "logging.h"
 #include "tailscale_manager.h"
 #include "audio_file_manager.h"
-#include "audio_player.h"
+#include "audio_key_registry.h"
+#include "extended_audio_player.h"
 #include "wifi_manager.h"
 #include "phone_service.h"
 #include "sequence_processor.h"
@@ -62,7 +63,7 @@ void shutdownAudioForOTA() {
     Logger.println("🔇 Shutting down audio for OTA...");
     
     // Stop any playing audio
-    stopAudio();
+    getExtendedAudioPlayer().stop();
     delay(50);
     
     // Note: We intentionally do NOT call kit.end() here because:
@@ -167,7 +168,7 @@ void processDebugCommand(const String& cmd) {
     else if (cmd.equalsIgnoreCase("state")) {
         Logger.printf("🔧 [DEBUG] State: Hook=%s, Audio=%s\n", 
             Phone.isOffHook() ? "OFF_HOOK" : "ON_HOOK",
-            isAudioActive() ? "PLAYING" : "IDLE");
+            getExtendedAudioPlayer().isActive() ? "PLAYING" : "IDLE");
         Logger.printf("   WiFi: %s, IP: %s\n",
             WiFi.isConnected() ? "Connected" : "Disconnected",
             WiFi.localIP().toString().c_str());
@@ -224,7 +225,7 @@ void processDebugCommand(const String& cmd) {
         if (validSequence && cmd.length() > 0) {
             Logger.printf("🔧 [DEBUG] Simulating DTMF sequence: %s\n", cmd.c_str());
             for (size_t i = 0; i < cmd.length(); i++) {
-                simulateDTMFDigit(cmd.charAt(i));
+                addDtmfDigit(cmd.charAt(i));
             }
         } else if (cmd.length() > 0) {
             Logger.printf("🔧 [DEBUG] Unknown command: %s (type 'help' for list)\n", cmd.c_str());
@@ -664,7 +665,7 @@ void executeSystemStatus()
     Logger.printf("   IP: %s\n", WiFi.localIP().toString().c_str());
     Logger.printf("   Free Heap: %d bytes\n", ESP.getFreeHeap());
     Logger.printf("   Uptime: %lu seconds\n", millis() / 1000);
-    Logger.printf("   Audio: %s\n", isAudioActive() ? "Playing" : "Idle");
+    Logger.printf("   Audio: %s\n", getExtendedAudioPlayer().isActive() ? "Playing" : "Idle");
     if (isTailscaleConnected()) {
         Logger.printf("   VPN: Connected (%s)\n", getTailscaleIP());
     }
@@ -673,7 +674,7 @@ void executeSystemStatus()
 void executeReboot()
 {
     Logger.printf("🔄 Rebooting device in 2 seconds...\n");
-    stopAudio();  // Stop any playing audio
+    getExtendedAudioPlayer().stop();  // Stop any playing audio
     delay(2000);
     ESP.restart();
 }
@@ -704,7 +705,7 @@ void executeRefreshAudio()
     invalidateAudioCache();  // Force fresh download
     if (downloadAudio()) {
         Logger.printf("✅ Audio catalog refreshed successfully\n");
-        listAudioKeys();  // Show what was loaded
+        getAudioKeyRegistry().listKeys();  // Show what was loaded
     } else {
         Logger.printf("❌ Audio catalog refresh failed\n");
     }
@@ -715,7 +716,7 @@ void executePrepareOTA()
     Logger.printf("🔄 Preparing for OTA update...\n");
     
     // Stop any playing audio
-    stopAudio();
+    getExtendedAudioPlayer().stop();
     delay(100);
     
     // Release SD card
@@ -819,10 +820,10 @@ void performFFTCPULoadTest()
     Logger.println("============================================");
     Logger.println("Starting dial tone playback...");
     
-    playAudioKey("dialtone");
+    getExtendedAudioPlayer().playAudioKey("dialtone");
     delay(100);  // Let audio start
     
-    if (!isAudioActive()) {
+    if (!getExtendedAudioPlayer().isActive()) {
         Logger.println("❌ Failed to start audio - test aborted");
         return;
     }
@@ -852,12 +853,12 @@ void performFFTCPULoadTest()
         unsigned long loopStart = micros();
         
         // Process audio (what normally happens in loop)
-        if (isAudioActive()) {
-            processAudio();
+        if (getExtendedAudioPlayer().isActive()) {
+            getExtendedAudioPlayer().copy();
         } else {
             audioUnderrunCount++;
             // Restart dial tone if it stopped unexpectedly
-            playAudioKey("dialtone");
+            getExtendedAudioPlayer().playAudioKey("dialtone");
         }
         
         // Sample I2S output buffer status
@@ -896,7 +897,7 @@ void performFFTCPULoadTest()
     }
     
     // Stop audio
-    stopAudio();
+    getExtendedAudioPlayer().stop();
     
     // Calculate statistics
     unsigned long avgLoopTime = loopCount > 0 ? totalLoopTime / loopCount : 0;
@@ -985,10 +986,10 @@ void performGoertzelCPULoadTest()
     delay(50);  // Let task start
     
     Logger.println("Starting dial tone playback...");
-    playAudioKey("dialtone");
+    getExtendedAudioPlayer().playAudioKey("dialtone");
     delay(100);  // Let audio start
     
-    if (!isAudioActive()) {
+    if (!getExtendedAudioPlayer().isActive()) {
         Logger.println("❌ Failed to start audio - test aborted");
         stopGoertzelTask();
         return;
@@ -1019,12 +1020,12 @@ void performGoertzelCPULoadTest()
         unsigned long loopStart = micros();
         
         // Process audio output ONLY (Goertzel runs in separate task)
-        if (isAudioActive()) {
-            processAudio();
+        if (getExtendedAudioPlayer().isActive()) {
+            getExtendedAudioPlayer().copy();
         } else {
             audioUnderrunCount++;
             // Restart dial tone if it stopped unexpectedly
-            playAudioKey("dialtone");
+            getExtendedAudioPlayer().playAudioKey("dialtone");
         }
         
         // Sample I2S output buffer status
@@ -1061,7 +1062,7 @@ void performGoertzelCPULoadTest()
     
     // Stop Goertzel task and audio
     stopGoertzelTask();
-    stopAudio();
+    getExtendedAudioPlayer().stop();
     
     // Calculate statistics
     unsigned long avgLoopTime = loopCount > 0 ? totalLoopTime / loopCount : 0;

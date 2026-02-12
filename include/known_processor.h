@@ -30,8 +30,8 @@
 #ifndef CACHE_VALIDITY_HOURS
 #define CACHE_VALIDITY_HOURS 24     ///< Cache validity in hours
 #endif
-#ifndef MAX_KNOWN_SEQUENCES
-#define MAX_KNOWN_SEQUENCES 50      ///< Maximum number of known sequences
+#ifndef MAX_AUDIO_FILES
+#define MAX_AUDIO_FILES 50      ///< Maximum number of known sequences
 #endif
 #ifndef MAX_HTTP_RESPONSE_SIZE
 #define MAX_HTTP_RESPONSE_SIZE 8192 ///< Maximum HTTP response size

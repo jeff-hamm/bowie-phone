@@ -2,33 +2,39 @@
 .SYNOPSIS
     Build firmware and publish to docs/firmware for web installer
 .DESCRIPTION
-    Builds the esp32dev firmware using PlatformIO, then copies all required
+    Builds firmware for a specific device using PlatformIO, then copies all required
     binary files to docs/firmware/ and updates the manifest.json with the
     version from platformio.ini.
+.PARAMETER Environment
+    PlatformIO environment to build (default: bowie-phone-1)
+    Valid options: bowie-phone-1, dream-phone-1, brophone, base
 .PARAMETER Version
     Override the version string (default: reads from platformio.ini FIRMWARE_VERSION)
 .PARAMETER SkipBuild
     Skip the build step and just copy existing binaries
 .EXAMPLE
     .\publish-firmware.ps1
-    .\publish-firmware.ps1 -Version "1.2.3"
+    .\publish-firmware.ps1 -Environment bowie-phone-1
+    .\publish-firmware.ps1 -Version "1.2.3" -Environment dream-phone-1
     .\publish-firmware.ps1 -SkipBuild
 #>
 
 param(
+    [string]$Environment = "bowie-phone-1",
     [string]$Version,
     [switch]$SkipBuild
 )
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
-$BuildDir = Join-Path $ProjectRoot ".pio\build\esp32dev"
+$BuildDir = Join-Path $ProjectRoot ".pio\build\$Environment"
 $FirmwareDir = Join-Path $ProjectRoot "docs\firmware"
 $PioExe = "$env:USERPROFILE\.platformio\penv\Scripts\platformio.exe"
 $FrameworkDir = "$env:USERPROFILE\.platformio\packages\framework-arduinoespressif32"
 
 Write-Host "🔧 Bowie Phone Firmware Publisher" -ForegroundColor Cyan
 Write-Host "=" * 40
+Write-Host "🎯 Environment: $Environment" -ForegroundColor Cyan
 
 # Extract version from platformio.ini if not provided
 if (-not $Version) {
@@ -43,10 +49,10 @@ Write-Host "📦 Version: $Version" -ForegroundColor Green
 
 # Build firmware
 if (-not $SkipBuild) {
-    Write-Host "`n🔨 Building firmware..." -ForegroundColor Yellow
+    Write-Host "`n🔨 Building firmware for $Environment..." -ForegroundColor Yellow
     Push-Location $ProjectRoot
     try {
-        & $PioExe run -e esp32dev
+        & $PioExe run -e $Environment
         if ($LASTEXITCODE -ne 0) {
             throw "Build failed with exit code $LASTEXITCODE"
         }

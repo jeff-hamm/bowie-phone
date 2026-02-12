@@ -2,6 +2,7 @@
 #include "logging.h"
 #include "config.h"
 #include "remote_logger.h"
+#include "notifications.h"
 #include <WireGuard-ESP32.h>
 #include <Preferences.h>
 #include <WebServer.h>
@@ -32,6 +33,13 @@ static char storedPeerEndpoint[128] = {0};
 static char storedPeerPublicKey[64] = {0};
 static uint16_t storedPeerPort = 51820;
 static bool tailscaleEnabled = false;  // Set by shouldEnableTailscale()
+
+// Callback to check if reconnection should be skipped (e.g., phone is off hook)
+static bool (*shouldSkipReconnect)() = nullptr;
+
+// Callbacks for Tailscale connection state changes
+static TailscaleStateCallback onTailscaleConnect = nullptr;
+static TailscaleStateCallback onTailscaleDisconnect = nullptr;
 
 // NVS namespace for Tailscale enable state
 #define TAILSCALE_NVS_NAMESPACE "tailscale"
@@ -193,6 +201,14 @@ bool initTailscale(const char* localIp,
         Logger.printf("✅ Tailscale: Connected! Local IP: %s\n", localIp);
         snprintf(statusBuffer, sizeof(statusBuffer), "Connected: %s", localIp);
         
+        // Notify Tailscale connected (turns on red LED)
+        notify(NotificationType::TailscaleConnected, true);
+        
+        // Call connect callback if set
+        if (onTailscaleConnect) {
+            onTailscaleConnect();
+        }
+        
         // Use WireGuard server's DNS forwarder (10.253.0.1) as primary
         // This ensures DNS works through the VPN tunnel
         // Fallback to public DNS in case WireGuard server DNS is down
@@ -264,14 +280,27 @@ void disconnectTailscale() {
         vpnConnected = false;
         vpnInitialized = false;
         strcpy(statusBuffer, "Disconnected");
+        
+        // Notify Tailscale disconnected (turns off red LED)
+        notify(NotificationType::TailscaleConnected, false);
+        
+        // Call disconnect callback if set
+        if (onTailscaleDisconnect) {
+            onTailscaleDisconnect();
+        }
     }
 }
 
-// Callback to check if reconnection should be skipped (e.g., phone is off hook)
-static bool (*shouldSkipReconnect)() = nullptr;
-
 void setTailscaleSkipCallback(bool (*callback)()) {
     shouldSkipReconnect = callback;
+}
+
+void setTailscaleConnectCallback(TailscaleStateCallback callback) {
+    onTailscaleConnect = callback;
+}
+
+void setTailscaleDisconnectCallback(TailscaleStateCallback callback) {
+    onTailscaleDisconnect = callback;
 }
 
 void handleTailscaleLoop() {
@@ -315,6 +344,14 @@ void handleTailscaleLoop() {
                     vpnConnected = true;
                     Logger.println("✅ Tailscale: Reconnected!");
                     snprintf(statusBuffer, sizeof(statusBuffer), "Connected: %s", tailscaleIp);
+                    
+                    // Notify Tailscale connected (turns on red LED)
+                    notify(NotificationType::TailscaleConnected, true);
+                    
+                    // Call connect callback if set
+                    if (onTailscaleConnect) {
+                        onTailscaleConnect();
+                    }
                 }
             }
         }

@@ -11,6 +11,11 @@
 #define MAX_SEQUENCE_LENGTH 20
 #endif
 
+// Off-hook timeout - play warning tone after this many milliseconds of inactivity
+#ifndef OFF_HOOK_TIMEOUT_MS
+#define OFF_HOOK_TIMEOUT_MS 30000  // 30 seconds
+#endif
+
 // ============================================================================
 // AUDIO CONFIGURATION
 // ============================================================================
@@ -29,6 +34,11 @@
 #endif
 #ifndef DEFAULT_AUDIO_VOLUME
 #define DEFAULT_AUDIO_VOLUME 1.0f
+#endif
+
+// Default file extension for audio files when not specified
+#ifndef DEFAULT_EXTENSION
+#define DEFAULT_EXTENSION "wav"
 #endif
 
 // Input volume/gain for DTMF detection (0-100 percentage)
@@ -125,3 +135,21 @@
 // 5, for sure, works as input. Maybe not for SD?
 
 // 21 SHK works
+
+// ============================================================================
+// STATUS LED CONFIGURATION
+// ============================================================================
+// LED pins on AudioKit boards (active LOW on most boards)
+// GREEN_LED_GPIO: 22 - used for WiFi connected status
+// RED_LED_GPIO:   19 - used for WireGuard/Tailscale connected status
+// Note: GPIO 22 conflicts with CAN_RING (F_R pin) - LEDs disabled when ringing enabled
+#ifndef GREEN_LED_GPIO
+#define GREEN_LED_GPIO 22
+#endif
+#ifndef RED_LED_GPIO
+#define RED_LED_GPIO 19
+#endif
+// LEDs are active LOW on AudioKit boards
+#ifndef LED_ACTIVE_LOW
+#define LED_ACTIVE_LOW 1
+#endif

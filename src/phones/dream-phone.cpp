@@ -59,17 +59,22 @@ static const PhoneConfig DREAM_PHONE_CONFIG = {
     .freqScale = 1.0f,
     
     // Detection thresholds
-    // INCREASED thresholds to reject dial tone harmonics (350/440Hz generate harmonics at 700/880Hz)
-    // From logs: good DTMF has col mag 100-200, dial tone harmonics are 20-50
-    .fundamentalMagnitudeThreshold = 40.0f,  // Raised to reject dial tone harmonics
+    // Try lower threshold with standard frequencies
+    .fundamentalMagnitudeThreshold = 20.0f,  // Lower threshold for standard DTMF
     .summedMagnitudeThreshold = 100.0f,      // Strong signals (200-500 observed)
-    .freqTolerance = 40.0f,                  // Wider tolerance for shifted frequencies
+    .freqTolerance = 50.0f,                  // Standard tolerance
     .summedFreqTolerance = 70.0f,            // Hz tolerance for summed frequency
     
     // Detection timing
     .detectionCooldown = 300,                // 300ms between detections
     .gapThreshold = 150,                     // 150ms silence = new button press
     .requiredConsecutive = 4,                // Increased from 3 - more samples for reliability
+    
+    // Goertzel-specific timing
+    .goertzelBlockTimeoutMs = 5,             // Row+Col must arrive within 5ms
+    .goertzelReleaseMs = 80,                 // Key released after 80ms silence
+    .goertzelBlockSize = 512,                // ~11.6ms blocks @ 44100Hz
+    .goertzelCopierBufferSize = 512,         // StreamCopy buffer size
     
     // Detection mode
     .useSummedFreqDetection = true,          // Use summed frequencies for COLUMN
@@ -80,15 +85,16 @@ static const PhoneConfig DREAM_PHONE_CONFIG = {
     .summedFreqTable = DREAM_SUMMED_FREQ_TABLE,
     .summedFreqTableSize = DREAM_SUMMED_FREQ_TABLE_SIZE,
     
-    // Row frequencies - ADJUSTED for this phone's actual output
+    // Row frequencies - TRY STANDARD DTMF first
     // Standard: 697, 770, 852, 941 Hz
-    // This phone outputs ~8-15Hz higher
-    .rowFreqs = {705.0f, 779.0f, 867.0f, 950.0f},
+    // Previous calibration was: 705, 779, 867, 950 (shifted +8-15Hz)
+    // Goertzel is more precise - try standard first
+    .rowFreqs = {697.0f, 770.0f, 852.0f, 941.0f},
     
-    // Column frequencies - ADJUSTED for this phone's actual output  
+    // Column frequencies - TRY STANDARD DTMF first
     // Standard: 1209, 1336, 1477, 1633 Hz
-    // This phone outputs ~22-25Hz higher
-    .colFreqs = {1232.0f, 1358.0f, 1500.0f, 1658.0f},
+    // Previous calibration was: 1232, 1358, 1500, 1658 (shifted +22-25Hz)
+    .colFreqs = {1209.0f, 1336.0f, 1477.0f, 1633.0f},
 };
 
 const PhoneConfig& getPhoneConfig() {

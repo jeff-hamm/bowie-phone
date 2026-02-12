@@ -10,7 +10,10 @@
  */
 
 #include "audio_file_manager.h"
-#include "audio_player.h"  // For isURLStreamingMode()
+#include "extended_audio_player.h"
+#include "audio_key_registry.h"
+#include "audio_playlist_registry.h"
+#include "file_utils.h"
 #include "logging.h"
 #include <WiFi.h>
 #include <HTTPClient.h>
@@ -19,6 +22,7 @@
 #include <SD_MMC.h>
 #include <FS.h>
 #include <SPI.h>
+#include <set>
 #include "AudioTools/Disk/AudioSourceSD.h"
 
 // Helper macros for SD vs SD_MMC abstraction
@@ -48,9 +52,11 @@ struct AudioDownloadItem
 // GLOBAL VARIABLES
 // ============================================================================
 
-static AudioFile audioFiles[MAX_KNOWN_SEQUENCES];
-static int audioFileCount = 0;
+//static AudioFile audioFiles[MAX_AUDIO_FILES];
+//static int audioFileCount = 0;
 static unsigned long lastCacheTime = 0;
+static unsigned long lastCacheCheck = 0;  // Last lightweight cache check time
+static char cachedEtag[64] = {0};         // Cached ETag/lastModified for quick validation
 static bool sdCardAvailable = false;  // True if SD card is mounted and accessible
 static bool sdCardInitFailed = false; // True if SD init was attempted and failed (don't retry)
 static int sdCardCsPin = 13; // SD card chip select pin
@@ -64,6 +70,10 @@ static bool dnsPreCached = false;
 static AudioDownloadItem downloadQueue[MAX_DOWNLOAD_QUEUE];
 static int downloadQueueCount = 0;
 static int downloadQueueIndex = 0; // Current processing index
+
+// Registry references (initialized on first use)
+static AudioKeyRegistry& keyRegistry = getAudioKeyRegistry();
+static AudioPlaylistRegistry& playlistRegistry = getAudioPlaylistRegistry();
 
 // ============================================================================
 // HELPER FUNCTIONS
@@ -130,180 +140,6 @@ static bool initializeSDCard()
 }
 
 /**
- * @brief Convert URL to filesystem-safe filename (base hash only, no collision avoidance)
- * @param url Original URL
- * @param filename Output buffer for filename (should be at least MAX_FILENAME_LENGTH)
- * @param ext File extension to use (e.g., "wav", "mp3") - can be NULL to use default
- * @return true if conversion successful, false otherwise
- */
-static bool urlToBaseFilename(const char* url, char* filename, const char* ext = nullptr)
-{
-    if (!url || !filename)
-    {
-        return false;
-    }
-    
-    // Determine extension to use (default to mp3 if not specified)
-    const char* extension = (ext && strlen(ext) > 0) ? ext : "mp3";
-    
-    // Extract filename from URL path or generate from URL hash
-    const char* lastSlash = strrchr(url, '/');
-    const char* urlFilename = lastSlash ? (lastSlash + 1) : url;
-    
-    // If we have a proper filename with extension, use it
-    if (strlen(urlFilename) > 0 && strchr(urlFilename, '.'))
-    {
-        // Clean the filename - replace invalid characters
-        int j = 0;
-        for (int i = 0; urlFilename[i] && j < MAX_FILENAME_LENGTH - 1; i++)
-        {
-            char c = urlFilename[i];
-            // Allow alphanumeric, dots, hyphens, underscores
-            if (isalnum(c) || c == '.' || c == '-' || c == '_')
-            {
-                filename[j++] = c;
-            }
-            else if (c == ' ')
-            {
-                filename[j++] = '_';
-            }
-            // Skip other invalid characters
-        }
-        filename[j] = '\0';
-        
-        if (strlen(filename) > 0)
-        {
-            return true;
-        }
-    }
-    
-    // Generate filename from URL hash if no suitable filename found
-    unsigned long hash = 5381;
-    for (int i = 0; url[i]; i++)
-    {
-        hash = ((hash << 5) + hash) + url[i];
-    }
-    
-    // Just use the base filename without collision avoidance
-    snprintf(filename, MAX_FILENAME_LENGTH, "audio_%08lx.%s", hash, extension);
-    return true;
-}
-
-/**
- * @brief Convert URL to filesystem-safe filename (with collision avoidance for new downloads)
- * @param url Original URL
- * @param filename Output buffer for filename (should be at least MAX_FILENAME_LENGTH)
- * @param ext File extension to use (e.g., "wav", "mp3") - can be NULL to use default
- * @return true if conversion successful, false otherwise
- */
-static bool urlToFilename(const char* url, char* filename, const char* ext = nullptr)
-{
-    if (!url || !filename)
-    {
-        return false;
-    }
-    
-    // Determine extension to use (default to mp3 if not specified)
-    const char* extension = (ext && strlen(ext) > 0) ? ext : "mp3";
-    
-    // Extract filename from URL path or generate from URL hash
-    const char* lastSlash = strrchr(url, '/');
-    const char* urlFilename = lastSlash ? (lastSlash + 1) : url;
-    
-    // If we have a proper filename with extension, use it
-    if (strlen(urlFilename) > 0 && strchr(urlFilename, '.'))
-    {
-        // Clean the filename - replace invalid characters
-        int j = 0;
-        for (int i = 0; urlFilename[i] && j < MAX_FILENAME_LENGTH - 1; i++)
-        {
-            char c = urlFilename[i];
-            // Allow alphanumeric, dots, hyphens, underscores
-            if (isalnum(c) || c == '.' || c == '-' || c == '_')
-            {
-                filename[j++] = c;
-            }
-            else if (c == ' ')
-            {
-                filename[j++] = '_';
-            }
-            // Skip other invalid characters
-        }
-        filename[j] = '\0';
-        
-        if (strlen(filename) > 0)
-        {
-            return true;
-        }
-    }
-    
-    // Generate filename from URL hash if no suitable filename found
-    unsigned long hash = 5381;
-    for (int i = 0; url[i]; i++)
-    {
-        hash = ((hash << 5) + hash) + url[i];
-    }
-    
-    // Check if file with this hash already exists; if so, add counter
-    char baseFilename[MAX_FILENAME_LENGTH];
-    snprintf(baseFilename, MAX_FILENAME_LENGTH, "audio_%08lx.%s", hash, extension);
-    
-    // Check for hash collision by testing if file exists
-    if (initializeSDCard())
-    {
-        char testPath[128];
-        snprintf(testPath, sizeof(testPath), "%s/%s", AUDIO_FILES_DIR, baseFilename);
-        
-        if (SD_EXISTS(testPath))
-        {
-            // File exists, add a counter suffix
-            for (int counter = 1; counter < 1000; counter++)
-            {
-                snprintf(filename, MAX_FILENAME_LENGTH, "audio_%08lx_%d.%s", hash, counter, extension);
-                snprintf(testPath, sizeof(testPath), "%s/%s", AUDIO_FILES_DIR, filename);
-                
-                if (!SD_EXISTS(testPath))
-                {
-                    // Found an unused filename
-                    return true;
-                }
-            }
-            
-            // Too many collisions, just use the base name and overwrite
-            Logger.println("⚠️ Too many hash collisions, using base filename");
-        }
-    }
-    
-    snprintf(filename, MAX_FILENAME_LENGTH, "%s", baseFilename);
-    return true;
-}
-
-/**
- * @brief Get local audio file path for a URL (uses base filename for lookups)
- * @param url Original URL
- * @param localPath Output buffer for local path
- * @param ext File extension to use (e.g., "wav", "mp3") - can be NULL
- * @return true if path generated successfully, false otherwise
- */
-static bool getLocalAudioPath(const char* url, char* localPath, const char* ext = nullptr)
-{
-    if (!url || !localPath)
-    {
-        return false;
-    }
-    
-    char filename[MAX_FILENAME_LENGTH];
-    // Use base filename (without collision avoidance) for path lookups
-    if (!urlToBaseFilename(url, filename, ext))
-    {
-        return false;
-    }
-    
-    snprintf(localPath, 128, "%s/%s", AUDIO_FILES_DIR, filename);
-    return true;
-}
-
-/**
  * @brief Check if audio file exists locally on SD card
  * @param url Original URL
  * @param ext File extension (e.g., "wav", "mp3") - can be NULL
@@ -317,7 +153,7 @@ static bool audioFileExists(const char* url, const char* ext = nullptr)
     }
     
     char localPath[128];
-    if (!getLocalAudioPath(url, localPath, ext))
+    if (!getLocalPathForUrl(url, localPath, ext))
     {
         return false;
     }
@@ -423,7 +259,7 @@ static bool addToDownloadQueue(const char *url, const char *description, const c
         item->ext[0] = '\0';
     }
 
-    if (!getLocalAudioPath(url, item->localPath, ext))
+    if (!getLocalPathForUrl(url, item->localPath, ext))
     {
         Logger.printf("❌ Failed to generate local path for: %s\n", url);
         return false;
@@ -440,11 +276,11 @@ static bool addToDownloadQueue(const char *url, const char *description, const c
 }
 
 /**
- * @brief Queue downloads for any missing HTTP/HTTPS audio files
+ * @brief Queue downloads for any missing HTTP/HTTPS audio files from the registry
  */
-static void enqueueMissingAudioFiles()
+static void enqueueMissingAudioFilesFromRegistry()
 {
-    if (audioFileCount == 0)
+    if (keyRegistry.size() == 0)
     {
         return;
     }
@@ -458,36 +294,25 @@ static void enqueueMissingAudioFiles()
 
     int queued = 0;
 
-    for (int i = 0; i < audioFileCount; i++)
+    for (const auto& pair : keyRegistry)
     {
-        const char* type = audioFiles[i].type;
-        const char* path = audioFiles[i].path;
-        const char* ext = audioFiles[i].ext;
-
-        if (!type || strcmp(type, "audio") != 0)
+        const KeyEntry& entry = pair.second;
+        
+        // Only queue entries that have a streaming URL (means original was a URL)
+        if (!entry.getUrl())
         {
-            continue; // Only queue audio entries
+            continue;
         }
-
-        if (!path || strlen(path) == 0)
-        {
-            continue; // Nothing to fetch
-        }
-
-        bool isHttp = strncmp(path, "http://", 7) == 0;
-        bool isHttps = strncmp(path, "https://", 8) == 0;
-
-        if (!isHttp && !isHttps)
-        {
-            continue; // Local paths are already available
-        }
-
-        if (audioFileExists(path, ext))
+        
+        const char* downloadPath = entry.getUrl();
+        const char* ext = entry.getExt();
+        
+        if (audioFileExists(downloadPath, ext))
         {
             continue; // Already cached
         }
 
-        if (addToDownloadQueue(path, audioFiles[i].description, ext))
+        if (addToDownloadQueue(downloadPath, entry.audioKey.c_str(), ext))
         {
             queued++;
         }
@@ -561,8 +386,8 @@ static bool processDownloadQueueInternal()
         // Clean up any old files with different extensions for the same URL
         // This handles cases where a file was previously downloaded with .mp3 but should now be .wav
         char filenameBase[64];
-        urlToFilename(item->url, filenameBase, nullptr);  // Get base filename without extension
-        // Remove the .mp3 that urlToFilename adds when ext is null
+        urlToBaseFilename(item->url, filenameBase, nullptr);  // Get base filename without extension
+        // Remove the .mp3 that urlToBaseFilename adds when ext is null
         char* dot = strrchr(filenameBase, '.');
         if (dot) *dot = '\0';
         
@@ -635,11 +460,276 @@ static bool processDownloadQueueInternal()
 }
 
 /**
- * @brief Check if cache is stale
+ * @brief Load cached ETag from SD card
+ * @return true if ETag was loaded, false otherwise
+ */
+static bool loadCachedEtag()
+{
+    if (!initializeSDCard())
+    {
+        return false;
+    }
+    
+    File etagFile = SD_OPEN(CACHE_ETAG_FILE, FILE_READ);
+    if (!etagFile)
+    {
+        cachedEtag[0] = '\0';
+        return false;
+    }
+    
+    String etagStr = etagFile.readString();
+    etagFile.close();
+    
+    strncpy(cachedEtag, etagStr.c_str(), sizeof(cachedEtag) - 1);
+    cachedEtag[sizeof(cachedEtag) - 1] = '\0';
+    
+    return strlen(cachedEtag) > 0;
+}
+
+/**
+ * @brief Save ETag to SD card for future cache validation
+ * @param etag The ETag or lastModified string to save
+ * @return true if saved successfully
+ */
+static bool saveCachedEtag(const char* etag)
+{
+    if (!initializeSDCard() || !etag)
+    {
+        return false;
+    }
+    
+    File etagFile = SD_OPEN(CACHE_ETAG_FILE, FILE_WRITE);
+    if (!etagFile)
+    {
+        Logger.println("⚠️ Failed to save ETag file");
+        return false;
+    }
+    
+    etagFile.print(etag);
+    etagFile.close();
+    
+    strncpy(cachedEtag, etag, sizeof(cachedEtag) - 1);
+    cachedEtag[sizeof(cachedEtag) - 1] = '\0';
+    
+    return true;
+}
+
+/**
+ * @brief Perform lightweight cache validation check via HTTP HEAD or lastModified endpoint
+ * @return true if remote data has changed (cache is stale), false if unchanged
+ */
+static bool checkRemoteCacheValid()
+{
+    if (WiFi.status() != WL_CONNECTED)
+    {
+        return false; // Can't check, assume cache is valid
+    }
+    
+    // Load cached ETag if not already loaded
+    if (cachedEtag[0] == '\0')
+    {
+        loadCachedEtag();
+    }
+    
+    // If no cached ETag, we need a full refresh
+    if (cachedEtag[0] == '\0')
+    {
+        Logger.println("ℹ️ No cached ETag - full refresh needed");
+        return true;
+    }
+    
+    // Build the check URL - add lastModified query parameter
+    String checkUrl = KNOWN_SEQUENCES_URL;
+    if (checkUrl.indexOf('?') >= 0)
+    {
+        checkUrl += "&action=getLastModified";
+    }
+    else
+    {
+        checkUrl += "?action=getLastModified";
+    }
+    
+    HTTPClient http;
+    http.begin(checkUrl);
+    http.addHeader("User-Agent", USER_AGENT_HEADER);
+    http.setTimeout(5000);  // Short timeout for lightweight check
+    
+    int httpCode = http.GET();
+    
+    if (httpCode != 200)
+    {
+        Logger.printf("⚠️ Cache check failed (HTTP %d) - assuming valid\n", httpCode);
+        http.end();
+        return false; // Can't verify, assume valid
+    }
+    
+    String response = http.getString();
+    http.end();
+    
+    // Parse the lastModified from response
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, response);
+    
+    if (error)
+    {
+        // Response might be plain text lastModified
+        response.trim();
+        if (response.length() > 0 && response != cachedEtag)
+        {
+            Logger.printf("📡 Remote changed: '%s' != '%s'\n", response.c_str(), cachedEtag);
+            return true; // Changed
+        }
+        return false; // Same or parse error
+    }
+    
+    // Check for lastModified field in JSON response
+    const char* remoteLastModified = doc["lastModified"] | doc["etag"] | "";
+    
+    if (strlen(remoteLastModified) > 0 && strcmp(remoteLastModified, cachedEtag) != 0)
+    {
+        Logger.printf("📡 Remote lastModified changed: '%s' != '%s'\n", remoteLastModified, cachedEtag);
+        return true; // Data has changed
+    }
+    
+    Logger.println("✅ Cache still valid (lastModified unchanged)");
+    return false; // Cache is still valid
+}
+
+/**
+ * @brief Callback type for processing audio files during JSON parsing
+ * @param file The audio file to process
+ * @param userData Optional user data pointer for context
+ * @return true if processing was successful
+ */
+typedef void (*AudioFileProcessCallback)(const AudioFile* file, void* userData);
+
+/**
+ * @brief Parse JSON string and process audio files with a callback
+ * @param jsonString JSON string containing audio file entries
+ * @param callback Function to call for each audio file entry
+ * @param userData Optional user data to pass to callback
+ * @return Number of files successfully processed, -1 on parse error
+ */
+static int parseAndRegisterAudioFiles(const String& jsonString, AudioFileProcessCallback callback=nullptr, void* userData = nullptr)
+{
+    // Parse JSON response
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, jsonString);
+    
+    if (error)
+    {
+        Logger.printf("❌ JSON parse error: %s\n", error.c_str());
+        return -1;
+    }
+    
+    // Extract lastModified for cache validation (if present at root level)
+    const char* lastModified = doc["lastModified"] | "";
+    if (strlen(lastModified) > 0)
+    {
+        saveCachedEtag(lastModified);
+        Logger.printf("📋 Cached lastModified: %s\n", lastModified);
+    }
+    else
+    {
+        // Generate a timestamp-based etag if server doesn't provide one
+        char timestampEtag[32];
+        snprintf(timestampEtag, sizeof(timestampEtag), "ts-%lu", millis());
+        saveCachedEtag(timestampEtag);
+    }
+    
+    JsonObject root = doc.as<JsonObject>();
+    int processedCount = 0;
+
+    for (JsonPair kv : root)
+    {
+        if (processedCount >= MAX_AUDIO_FILES)
+        {
+            Logger.println("⚠️ Maximum audio files limit reached");
+            break;
+        }
+        
+        JsonObject entryData = kv.value().as<JsonObject>();
+        const char* key = kv.key().c_str();
+
+        // Create temporary AudioFile on stack
+        AudioFile file;
+        file.audioKey = key;
+        file.description = entryData["description"] | "Unknown";
+        file.type = entryData["type"] | "unknown";
+        file.data = entryData["path"] | entryData["data"]  | "";
+        file.ext = entryData["ext"] | "";
+        file.gap = entryData["gap"] | 0;
+        file.duration = entryData["duration"] | 0;
+        file.ringDuration = entryData["ring_duration"] | 0;
+        
+        // Register the main audio file
+        registerAudioFile(&file);
+        
+        // Create playlist for this audio key
+        Playlist *playlist = playlistRegistry.createPlaylist(key, true);
+        if (!playlist)
+        {
+            Logger.printf("❌ Failed to create playlist for: %s\n", file.audioKey);
+            continue;
+        }
+        
+        // Parse "previous" array and prepend to playlist (in reverse order)
+        if (entryData.containsKey("previous") && entryData["previous"].is<JsonArray>()) {
+            JsonArray prevArray = entryData["previous"].as<JsonArray>();
+            // Prepend in reverse order so they play in correct order
+            for (int i = prevArray.size() - 1; i >= 0; i--) {
+                const char* prevKey = prevArray[i].as<const char*>();
+                if (prevKey && strlen(prevKey) > 0) {
+                    playlist->prepend(prevKey, 0);
+                }
+            }
+        }
+        
+        // Add ringback if specified
+        if (file.ringDuration > 0)
+            playlist->append("ringback", file.ringDuration);
+        
+        // Add the main audio file
+        playlist->append(PlaylistNode(file.audioKey, file.gap, file.duration));
+        
+        // Add click after main audio
+        playlist->append("click", 0);
+        
+        // Parse "next" array and append to playlist
+        if (entryData.containsKey("next") && entryData["next"].is<JsonArray>()) {
+            JsonArray nextArray = entryData["next"].as<JsonArray>();
+            for (JsonVariant item : nextArray) {
+                const char* nextKey = item.as<const char*>();
+                if (nextKey && strlen(nextKey) > 0) {
+                    playlist->append(nextKey, 0);
+                }
+            }
+        }
+        
+        // Invoke callback if provided
+        if (callback)
+            callback(&file, userData);
+    }
+
+    return processedCount;
+}
+
+/**
+ * @brief Check if cache is stale (needs refresh)
+ * 
+ * Uses a two-tier caching strategy:
+ * 1. Lightweight check (every CACHE_CHECK_INTERVAL_MS): Quick lastModified comparison
+ * 2. Full refresh (every CACHE_VALIDITY_HOURS): Force complete re-download
+ * 
+ * @param audioFileCount Optional count - if not provided, uses registry size
  * @return true if cache needs refresh, false otherwise
  */
-static bool isCacheStale()
+static bool isCacheStale(int audioFileCount = -1)
 {
+    // Use registry size if count not provided
+    if (audioFileCount < 0)
+        audioFileCount = keyRegistry.size();
+    
     if (audioFileCount == 0)
     {
         return true;
@@ -684,99 +774,48 @@ static bool isCacheStale()
         cacheAge = (0xFFFFFFFF - savedTime) + currentTime + 1;
     }
     
-    return (cacheAge > maxAge);
-}
-
-/**
- * @brief Save audio files to SD card
- * @return true if successful, false otherwise
- */
-static bool saveAudioFilesToSDCard()
-{
-    Logger.println("💾 Saving audio files to SD card...");
-    
-    if (!initializeSDCard())
+    // TIER 2: Force full refresh after CACHE_VALIDITY_HOURS
+    if (cacheAge > maxAge)
     {
-        Logger.println("❌ SD card not available for writing");
-        return false;
+        Logger.printf("⏰ Cache expired (age: %lu ms > max: %lu ms)\n", cacheAge, maxAge);
+        return true;
     }
     
-    // Create JSON document for storage
-    JsonDocument doc;
-    JsonObject root = doc.to<JsonObject>();
-    
-    for (int i = 0; i < audioFileCount; i++)
+    // TIER 1: Lightweight check if WiFi connected and enough time has passed
+    unsigned long timeSinceLastCheck = currentTime - lastCacheCheck;
+    if (timeSinceLastCheck > CACHE_CHECK_INTERVAL_MS && WiFi.status() == WL_CONNECTED)
     {
-        JsonObject entry = root[audioFiles[i].audioKey].to<JsonObject>();
-        entry["description"] = audioFiles[i].description;
-        entry["type"] = audioFiles[i].type;
-        entry["path"] = audioFiles[i].path;
-        if (audioFiles[i].ext && strlen(audioFiles[i].ext) > 0)
+        lastCacheCheck = currentTime;
+        Logger.println("🔍 Performing lightweight cache validation...");
+        
+        if (checkRemoteCacheValid())
         {
-            entry["ext"] = audioFiles[i].ext;
-        }
-        if (audioFiles[i].ringDuration > 0)
-        {
-            entry["ring_duration"] = audioFiles[i].ringDuration;
+            return true; // Remote data has changed
         }
     }
     
-    // Open file for writing
-    File audioJsonFile = SD_OPEN(AUDIO_JSON_FILE, FILE_WRITE);
-    if (!audioJsonFile)
-    {
-        Logger.println("❌ Failed to open audio files JSON for writing");
-        return false;
-    }
-    
-    // Write JSON to file
-    size_t bytesWritten = serializeJson(doc, audioJsonFile);
-    audioJsonFile.close();
-    
-    if (bytesWritten == 0)
-    {
-        Logger.println("❌ Failed to write audio files to JSON");
-        return false;
-    }
-    
-    // Save timestamp to separate file
-    File timestampFile = SD_OPEN(CACHE_TIMESTAMP_FILE, FILE_WRITE);
-    if (timestampFile)
-    {
-        timestampFile.print(millis());
-        timestampFile.close();
-        lastCacheTime = millis();
-    }
-    else
-    {
-        Logger.println("⚠️ Failed to save cache timestamp");
-    }
-    
-    Logger.printf("✅ Saved %d audio files to SD card (%d bytes)\n", 
-                 audioFileCount, bytesWritten);
-    
-    return true;
+    return false; // Cache is still valid
 }
 
 /**
- * @brief Load audio files from SD card
- * @return true if successful, false otherwise
+ * @brief Load audio files from SD card and register with AudioKeyRegistry
+ * @return Number of files registered, 0 if failed or no cache
  */
-static bool loadAudioFilesFromSDCard()
+static int loadAudioFilesFromSDCard()
 {
     Logger.println("📖 Loading audio files from SD card...");
     
     if (!initializeSDCard())
     {
         Logger.println("❌ SD card not available for reading");
-        return false;
+        return 0;
     }
     
     // Check if audio files JSON exists
     if (!SD_EXISTS(AUDIO_JSON_FILE))
     {
         Logger.println("ℹ️ No cached audio files found on SD card");
-        return false;
+        return 0;
     }
     
     // Open audio files JSON
@@ -784,7 +823,7 @@ static bool loadAudioFilesFromSDCard()
     if (!audioJsonFile)
     {
         Logger.println("❌ Failed to open audio files JSON for reading");
-        return false;
+        return 0;
     }
     
     // Read file content
@@ -794,7 +833,7 @@ static bool loadAudioFilesFromSDCard()
     if (jsonString.length() == 0)
     {
         Logger.println("❌ Empty audio files JSON on SD card");
-        return false;
+        return 0;
     }
     
     // Load cache timestamp
@@ -811,45 +850,18 @@ static bool loadAudioFilesFromSDCard()
         Logger.println("⚠️ No cache timestamp found");
     }
     
-    // Parse JSON
-    JsonDocument doc;
-    DeserializationError error = deserializeJson(doc, jsonString);
+    // Parse and register audio files from JSON
+    int registeredCount = parseAndRegisterAudioFiles(jsonString);
     
-    if (error)
-    {
-        Logger.printf("❌ JSON parse error: %s\n", error.c_str());
-        return false;
+    if (registeredCount < 0) {
+        return 0; // Parse error
     }
     
-    // Clear existing audio files
-    audioFileCount = 0;
+    // Resolve all playlists after registration
+    playlistRegistry.resolveAllPlaylists();
     
-    // Load audio files from JSON
-    JsonObject root = doc.as<JsonObject>();
-    for (JsonPair kv : root)
-    {
-        if (audioFileCount >= MAX_KNOWN_SEQUENCES)
-        {
-            Logger.println("⚠️ Maximum audio files limit reached");
-            break;
-        }
-        
-        const char* key = kv.key().c_str();
-        JsonObject entryData = kv.value().as<JsonObject>();
-        
-        // Allocate and copy strings
-        audioFiles[audioFileCount].audioKey = strdup(key);
-        audioFiles[audioFileCount].description = strdup(entryData["description"] | "Unknown");
-        audioFiles[audioFileCount].type = strdup(entryData["type"] | "unknown");
-        audioFiles[audioFileCount].path = strdup(entryData["path"] | "");
-        audioFiles[audioFileCount].ext = strdup(entryData["ext"] | "");
-        audioFiles[audioFileCount].ringDuration = entryData["ring_duration"] | 0;
-        
-        audioFileCount++;;
-    }
-    
-    Logger.printf("✅ Loaded %d audio files from SD card\n", audioFileCount);
-    return true;
+    Logger.printf("✅ Loaded and registered %d audio files from SD card\n", registeredCount);
+    return registeredCount;
 }
 
 // ============================================================================
@@ -866,7 +878,6 @@ AudioSource *initializeAudioFileManager(int sdCsPin, bool mmcSupport,
     // Initialize variables
     sdMmmcSupport = mmcSupport;
     sdCardCsPin = sdCsPin;
-    audioFileCount = 0;
     lastCacheTime = 0;
     sdCardAvailable = false;
 
@@ -916,26 +927,27 @@ AudioSource *initializeAudioFileManager(int sdCsPin, bool mmcSupport,
         Logger.println("ℹ️ Audio catalog will be downloaded when WiFi is available");
         return source;
     }
-    
-    // Try to load from SD card first
-    if (loadAudioFilesFromSDCard())
+
+    // Try to load from SD card first - registers directly with AudioKeyRegistry
+    int audioFileCount = loadAudioFilesFromSDCard();
+    if (audioFileCount > 0)
     {
         Logger.println("✅ Audio files loaded from SD card cache");
         
         // Check if cache is stale
-        bool stale = isCacheStale();
+        bool stale = isCacheStale(audioFileCount);
         if (stale)
         {
             Logger.println("⏰ Cache is stale, will refresh when WiFi is available");
         }
-        listAudioKeys();
+        keyRegistry.listKeys();
         
         // Only queue downloads from cache if it's NOT stale
         // If stale, we'll get a fresh catalog with correct extensions first
         if (!stale)
         {
             // Queue any missing remote audio files so downloads can start immediately
-            enqueueMissingAudioFiles();
+            enqueueMissingAudioFilesFromRegistry();
         }
         else
         {
@@ -1069,80 +1081,83 @@ static bool downloadAudioInternal()
         return false;
     }
     
-    // Parse JSON response
-    JsonDocument doc;
-    DeserializationError error = deserializeJson(doc, payload);
-    
-    if (error)
-    {
-        Logger.printf("❌ JSON parse error: %s\n", error.c_str());
-        return false;
-    }
-    
-    // Clear existing audio files (free memory first)
-    for (int i = 0; i < audioFileCount; i++)
-    {
-        free((void*)audioFiles[i].audioKey);
-        free((void*)audioFiles[i].description);
-        free((void*)audioFiles[i].type);
-        free((void*)audioFiles[i].path);
-        free((void*)audioFiles[i].ext);
-    }
-    audioFileCount = 0;
-    
-    // Load new audio files
-    JsonObject root = doc.as<JsonObject>();
-    for (JsonPair kv : root)
-    {
-        if (audioFileCount >= MAX_KNOWN_SEQUENCES)
-        {
-            Logger.println("⚠️ Maximum audio files limit reached");
-            break;
+    // Local mark-and-sweep: collect existing non-generator keys, then remove
+    // any that weren't in the new catalog
+    std::set<std::string> existingKeys;
+    for (const auto& pair : keyRegistry) {
+        // Only track non-generator keys for pruning
+        if (pair.second.type != AudioStreamType::GENERATOR) {
+            existingKeys.insert(pair.first);
         }
-        
-        const char* key = kv.key().c_str();
-        JsonObject entryData = kv.value().as<JsonObject>();
-        
-        // Allocate and copy strings
-        audioFiles[audioFileCount].audioKey = strdup(key);
-        audioFiles[audioFileCount].description = strdup(entryData["description"] | "Unknown");
-        audioFiles[audioFileCount].type = strdup(entryData["type"] | "unknown");
-        audioFiles[audioFileCount].path = strdup(entryData["path"] | "");
-        audioFiles[audioFileCount].ext = strdup(entryData["ext"] | "");
-        audioFiles[audioFileCount].ringDuration = entryData["ring_duration"] | 0;
-        
-        const char* extInfo = audioFiles[audioFileCount].ext;
-        Logger.printf("📝 Added: %s -> %s (%s%s%s)\n", 
-                     audioFiles[audioFileCount].audioKey,
-                     audioFiles[audioFileCount].description,
-                     audioFiles[audioFileCount].type,
-                     (extInfo && strlen(extInfo) > 0) ? ", ." : "",
-                     (extInfo && strlen(extInfo) > 0) ? extInfo : "");
-        
-        audioFileCount++;
     }
     
-    Logger.printf("✅ Downloaded and parsed %d file list entries\n", audioFileCount);
+    // Track which keys we see in the new catalog
+    std::set<std::string> seenKeys;
+    
+    // Parse and register audio files directly with registry
+    int registeredCount = parseAndRegisterAudioFiles(payload, 
+            [](const AudioFile* file, void* userData) -> void {
+        auto* seenKeys = static_cast<std::set<std::string>*>(userData);
+            if (seenKeys) {
+                seenKeys->insert(file->audioKey);
+            }
+    }, &seenKeys);
+    
+    if (registeredCount < 0) {
+        return false; // Parse error
+    }
+    
+    // Sweep: remove keys that existed before but weren't in new catalog
+    int prunedCount = 0;
+    for (const auto& key : existingKeys) {
+        if (seenKeys.find(key) == seenKeys.end()) {
+            Logger.printf("🗑️ Pruning orphaned key: %s\n", key.c_str());
+            keyRegistry.unregisterKey(key.c_str());
+            prunedCount++;
+        }
+    }
+    if (prunedCount > 0) {
+        Logger.printf("✅ Pruned %d orphaned audio keys\n", prunedCount);
+    }
+    
+    // Resolve all playlists after registration
+    playlistRegistry.resolveAllPlaylists();
+    
+    Logger.printf("✅ Downloaded and registered %d audio files%s\n", 
+                  registeredCount,
+                  prunedCount > 0 ? " (pruned orphans)" : "");
     
     // Only save to SD card and queue downloads if SD is available
     if (sdCardAvailable)
     {
-        // Save to SD card for caching
-        if (saveAudioFilesToSDCard())
+        // Save raw JSON payload to SD card for caching
+        File audioJsonFile = SD_OPEN(AUDIO_JSON_FILE, FILE_WRITE);
+        if (audioJsonFile)
         {
-            Logger.println("💾 Files list cached to SD card");
+            audioJsonFile.print(payload);
+            audioJsonFile.close();
+            
+            // Save timestamp
+            File timestampFile = SD_OPEN(CACHE_TIMESTAMP_FILE, FILE_WRITE);
+            if (timestampFile)
+            {
+                timestampFile.print(millis());
+                timestampFile.close();
+                lastCacheTime = millis();
+            }
+            Logger.println("💾 Audio catalog cached to SD card");
         }
         else
         {
-            Logger.println("⚠️ Failed to cache files list to SD card");
+            Logger.println("⚠️ Failed to cache audio catalog to SD card");
         }
 
-        // Clear old download queue before re-populating with new extensions
+        // Clear old download queue before re-populating
         downloadQueueCount = 0;
         downloadQueueIndex = 0;
         
-        // Queue any missing remote audio files now that the list is refreshed
-        enqueueMissingAudioFiles();
+        // Queue any missing remote audio files from the registry
+        enqueueMissingAudioFilesFromRegistry();
     }
     else
     {
@@ -1150,277 +1165,6 @@ static bool downloadAudioInternal()
     }
     
     return true;
-}
-
-bool hasAudioKey(const char *key)
-{
-    if (!key || audioFileCount == 0)
-    {
-        return false;
-    }
-    
-    for (int i = 0; i < audioFileCount; i++)
-    {
-        if (strcmp(audioFiles[i].audioKey, key) == 0)
-        {
-            return true;
-        }
-    }
-    
-    return false;
-}
-
-unsigned long getAudioKeyRingDuration(const char *key)
-{
-    if (!key || audioFileCount == 0)
-    {
-        return 0;
-    }
-    
-    for (int i = 0; i < audioFileCount; i++)
-    {
-        if (strcmp(audioFiles[i].audioKey, key) == 0)
-        {
-            return audioFiles[i].ringDuration;
-        }
-    }
-    
-    return 0;
-}
-
-bool hasAudioKeyWithPrefix(const char *prefix)
-{
-    if (!prefix || audioFileCount == 0)
-    {
-        return false;
-    }
-    
-    size_t prefixLen = strlen(prefix);
-    for (int i = 0; i < audioFileCount; i++)
-    {
-        // Check if any audio key starts with this prefix
-        if (strncmp(audioFiles[i].audioKey, prefix, prefixLen) == 0)
-        {
-            return true;
-        }
-    }
-    
-    return false;
-}
-
-const char* processAudioKey(const char *key)
-{
-    if (!key)
-    {
-        Logger.println("❌ Invalid audio key pointer");
-        return nullptr;
-    }
-    
-    Logger.printf("🔍 Processing audio key: %s\n", key);
-    
-    // Find the audio file entry
-    AudioFile *found = nullptr;
-    for (int i = 0; i < audioFileCount; i++)
-    {
-        if (strcmp(audioFiles[i].audioKey, key) == 0)
-        {
-            found = &audioFiles[i];
-            break;
-        }
-    }
-    
-    if (!found)
-    {
-        Logger.printf("❌ Audio key not found: %s\n", key);
-        return nullptr;
-    }
-    
-    // Log entry info
-    Logger.printf("📋 Audio Entry:\n");
-    Logger.printf("   Key: %s\n", found->audioKey);
-    Logger.printf("   Description: %s\n", found->description);
-    Logger.printf("   Type: %s\n", found->type);
-    Logger.printf("   Path: %s\n", found->path);
-    
-    // Handle different entry types
-    if (!found->type)
-    {
-        Logger.println("❌ Entry type is NULL");
-        return nullptr;
-    }
-    
-    if (strcmp(found->type, "audio") == 0)
-    {
-        Logger.printf("🔊 Processing audio: %s\n", found->description);
-        
-        if (!found->path || strlen(found->path) == 0)
-        {
-            Logger.println("❌ No audio path specified");
-            return nullptr;
-        }
-        
-        // Check if path is a URL
-        if (strncmp(found->path, "http://", 7) == 0 || strncmp(found->path, "https://", 8) == 0)
-        {
-            // In URL streaming mode, return the URL directly for streaming
-            if (isURLStreamingMode())
-            {
-                Logger.printf("🌐 URL streaming mode - returning URL directly: %s\n", found->path);
-                return found->path;
-            }
-            
-            // SD card mode - check for local cached version
-            if (audioFileExists(found->path, found->ext))
-            {
-                // File exists locally - return path for playback
-                static char localPath[128];
-                if (getLocalAudioPath(found->path, localPath, found->ext))
-                {
-                    Logger.printf("🎵 Audio file found locally: %s\n", localPath);
-                    return localPath;
-                }
-                else
-                {
-                    Logger.println("❌ Failed to generate local path");
-                    return nullptr;
-                }
-            }
-            else
-            {
-                // File doesn't exist - add to download queue
-                Logger.printf("📥 Audio file not cached, adding to download queue\n");
-                if (addToDownloadQueue(found->path, found->description, found->ext))
-                {
-                    Logger.printf("✅ Added to download queue: %s\n", found->description);
-                }
-                else
-                {
-                    Logger.printf("❌ Failed to add to download queue: %s\n", found->description);
-                }
-                
-                Logger.printf("ℹ️ Audio will be available after download\n");
-                return nullptr;
-            }
-        }
-        else
-        {
-            // It's a local path - return for direct playback
-            Logger.printf("🎵 Local audio path: %s\n", found->path);
-            return found->path;
-        }
-    }
-    else if (strcmp(found->type, "service") == 0)
-    {
-        Logger.printf("🔧 Service: %s\n", found->description);
-        // TODO: Implement service access logic
-        return nullptr;
-    }
-    else if (strcmp(found->type, "shortcut") == 0)
-    {
-        Logger.printf("⚡ Shortcut: %s\n", found->description);
-        // TODO: Implement shortcut execution logic
-        return nullptr;
-    }
-    else if (strcmp(found->type, "url") == 0)
-    {
-        Logger.printf("🌐 URL: %s\n", found->path ? found->path : "NULL");
-        // TODO: Implement URL opening logic
-        return nullptr;
-    }
-    else
-    {
-        Logger.printf("❓ Unknown type: %s\n", found->type);
-        return nullptr;
-    }
-}
-
-void listAudioKeys()
-{
-    Logger.printf("📋 Audio Files (%d total):\n", audioFileCount);
-    Logger.println("============================================================");
-    
-    if (audioFileCount == 0)
-    {
-        Logger.println("   No audio files loaded.");
-        Logger.println("   Try downloading with downloadAudio()");
-        return;
-    }
-    
-    for (int i = 0; i < audioFileCount; i++)
-    {
-        Logger.printf("%2d. %s\n", i + 1, audioFiles[i].audioKey);
-        Logger.printf("    Description: %s\n", audioFiles[i].description);
-        Logger.printf("    Type: %s\n", audioFiles[i].type);
-        if (strlen(audioFiles[i].path) > 0)
-        {
-            Logger.printf("    Path: %s\n", audioFiles[i].path);
-        }
-        Logger.println();
-    }
-}
-
-int getAudioKeyCount()
-{
-    return audioFileCount;
-}
-
-void clearAudioKeys()
-{
-    Logger.println("🗑️ Clearing audio files...");
-    
-    // Free allocated memory
-    for (int i = 0; i < audioFileCount; i++)
-    {
-        free((void*)audioFiles[i].audioKey);
-        free((void*)audioFiles[i].description);
-        free((void*)audioFiles[i].type);
-        free((void*)audioFiles[i].path);
-        free((void*)audioFiles[i].ext);
-    }
-    
-    int clearedCount = audioFileCount;
-    audioFileCount = 0;
-    lastCacheTime = 0;
-    
-    // Clear SD card cache files (only if SD is available)
-    if (sdCardAvailable && initializeSDCard())
-    {
-        bool jsonRemoved = false;
-        bool timestampRemoved = false;
-        
-        if (SD_EXISTS(AUDIO_JSON_FILE))
-        {
-            jsonRemoved = SD_REMOVE(AUDIO_JSON_FILE);
-        }
-        else
-        {
-            jsonRemoved = true; // File doesn't exist, consider it "removed"
-        }
-        
-        if (SD_EXISTS(CACHE_TIMESTAMP_FILE))
-        {
-            timestampRemoved = SD_REMOVE(CACHE_TIMESTAMP_FILE);
-        }
-        else
-        {
-            timestampRemoved = true; // File doesn't exist, consider it "removed"
-        }
-        
-        if (jsonRemoved && timestampRemoved)
-        {
-            Logger.println("✅ Cleared SD card cache files");
-        }
-        else
-        {
-            Logger.println("⚠️ Some SD card files could not be removed");
-        }
-    }
-    else
-    {
-        Logger.println("⚠️ SD card not available for cache cleanup");
-    }
-    
-    Logger.printf("✅ Cleared %d audio files from memory\n", clearedCount);
 }
 
 void invalidateAudioCache()
@@ -1509,4 +1253,41 @@ void clearDownloadQueue()
 bool isDownloadQueueEmpty()
 {
     return (downloadQueueIndex >= downloadQueueCount);
+}
+
+// ============================================================================
+// REGISTRY INTEGRATION
+// ============================================================================
+
+/**
+ * @brief Register a single audio file with the AudioKeyRegistry and create its playlist
+ * 
+ * This function is idempotent - calling it multiple times with the same AudioFile
+ * will produce the same result. Existing registrations are updated, playlists are
+ * recreated with the same content.
+ * 
+ * @param file Pointer to the AudioFile to register
+ * @return true if registration successful, false if skipped or failed
+ */
+bool registerAudioFile(const AudioFile* file)
+{
+    if (!file || !file->audioKey || !file->type) {
+        return false;
+    }
+    
+    // Only register audio type entries
+    if (strcmp(file->type, "audio") != 0) {
+        Logger.printf("⏭️ Skipping non-audio entry: %s (%s)\n", file->audioKey, file->type);
+        return false;
+    }
+    
+    if (!file->data || strlen(file->data) == 0) {
+        Logger.printf("⚠️ No data for: %s\n", file->audioKey);
+        return false;
+    }
+    // Register the audio key - overload handles stream type detection and URL fallback
+    // registerKey is idempotent - it will update existing entries
+    keyRegistry.registerKey(file->audioKey, file->data, file->ext);
+    
+    return true;
 }

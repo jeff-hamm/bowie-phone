@@ -43,6 +43,12 @@ struct PhoneConfig {
     unsigned long gapThreshold;           // ms silence = new button press
     int requiredConsecutive;              // Required consecutive detections to confirm
     
+    // Goertzel-specific timing
+    unsigned long goertzelBlockTimeoutMs; // Row+Col must arrive within this window
+    unsigned long goertzelReleaseMs;      // Key considered released after this much silence
+    int goertzelBlockSize;                // Goertzel block size (samples)
+    int goertzelCopierBufferSize;         // StreamCopy buffer size
+    
     // Detection mode flags
     bool useSummedFreqDetection;          // Use summed frequency as primary/trigger
     bool useFundamentalDetection;         // Use weak fundamental frequencies

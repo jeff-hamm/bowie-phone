@@ -3,8 +3,10 @@
 #include "config.h"
 #include "tailscale_manager.h"
 #include "remote_logger.h"
+#include "notifications.h"
 #include "nvs_flash.h"
-#include "audio_player.h"
+#include "extended_audio_player.h"
+#include "special_command_processor.h"  // For shutdownAudioForOTA
 #include <SD.h>
 #include <SPI.h>
 #include "driver/spi_common.h"
@@ -76,6 +78,13 @@ static void ensureAPAndDNS()
 
 // WiFi connection callback
 static WiFiConnectedCallback wifiConnectedCallback = nullptr;
+
+// WiFi disconnect callback
+static WiFiDisconnectedCallback wifiDisconnectedCallback = nullptr;
+
+void setWiFiDisconnectCallback(WiFiDisconnectedCallback callback) {
+    wifiDisconnectedCallback = callback;
+}
 
 // Escape JSON strings minimally (quotes and backslashes)
 static String escapeJson(const String& in)
@@ -1137,6 +1146,9 @@ void handleWiFiLoop()
             WiFi.config(WiFi.localIP(), WiFi.gatewayIP(), WiFi.subnetMask(), dns1, dns2);
             Logger.printf("🌐 DNS configured: %s, %s\n", dns1.toString().c_str(), dns2.toString().c_str());
             
+            // Notify WiFi connected (turns on green LED)
+            notify(NotificationType::WiFiConnected, true);
+            
             // Initialize Tailscale VPN FIRST (if enabled) to ensure remote access
             // This ensures we can always reach the device via WireGuard for OTA updates
             if (isTailscaleEnabled()) {
@@ -1167,6 +1179,16 @@ void handleWiFiLoop()
         }
         else if (WiFi.status() != WL_CONNECTED && connectionStartTime == 0)
         {
+            // WiFi just disconnected - call disconnect callback if we were connected
+            if (connectionLogged) {
+                Logger.println("📵 WiFi disconnected");
+                // Notify WiFi disconnected (turns off green LED)
+                notify(NotificationType::WiFiConnected, false);
+                if (wifiDisconnectedCallback != nullptr) {
+                    wifiDisconnectedCallback();
+                }
+                connectionLogged = false;
+            }
             connectionStartTime = millis();
         }
         else if (WiFi.status() != WL_CONNECTED && connectionStartTime > 0 && 

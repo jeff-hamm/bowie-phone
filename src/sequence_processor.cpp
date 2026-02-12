@@ -1,15 +1,18 @@
 #include "sequence_processor.h"
 #include "audio_file_manager.h"
+#include "audio_key_registry.h"
 #include "dtmf_decoder.h"
-#include "audio_player.h"
+#include "extended_audio_player.h"
+#include "notifications.h"
 #include "config.h"
 #include "logging.h"
 
 // ============================================================================
 // DTMF SEQUENCE STATE
 // ============================================================================
-
-static char dtmfSequence[MAX_SEQUENCE_LENGTH + 1];  // +1 for null terminator
+ExtendedAudioPlayer& audioPlayer = getExtendedAudioPlayer();
+AudioKeyRegistry& registry = getAudioKeyRegistry();
+static char dtmfSequence[MAX_SEQUENCE_LENGTH + 1]; // +1 for null terminator
 static int sequenceIndex = 0;
 static unsigned long lastDigitTime = 0;
 static bool sequenceReady = false;  // Flag set when sequence is ready to process
@@ -50,11 +53,14 @@ int getMaxSequenceLength()
  */
 static bool addDigitToSequence(char digit)
 {
+    // Notify DTMF digit detected (pulses green LED)
+    notify(NotificationType::DTMFDetected, digit);
+    
     // Stop dial tone when first digit is pressed
-    if (isAudioKeyPlaying("dialtone"))
+    if (audioPlayer.isAudioKeyPlaying("dialtone"))
     {
         Logger.debugln("🔇 Stopping dial tone - digit detected");
-        stopAudio();
+        audioPlayer.stop();
     }
 
     // Special case: '*' key completes the sequence (excluding the '*')
@@ -72,6 +78,8 @@ static bool addDigitToSequence(char digit)
     // Add digit to sequence
     if (sequenceIndex < maxSequenceLength)
     {
+        // Notify that we're reading/processing a sequence (red LED on)
+        notify(NotificationType::ReadingSequence, true);
         dtmfSequence[sequenceIndex] = digit;
         sequenceIndex++;
         dtmfSequence[sequenceIndex] = '\0'; // Null terminate
@@ -83,7 +91,7 @@ static bool addDigitToSequence(char digit)
         for (int start = 0; start < sequenceIndex; start++)
         {
             const char* substring = &dtmfSequence[start];
-            if (hasAudioKey(substring))
+            if (registry.hasKey(substring))
             {
                 Logger.debugf("✅ Found matching substring '%s' in sequence '%s'\n", substring, dtmfSequence);
                 // Move the matched portion to the beginning for processing
@@ -131,7 +139,7 @@ static bool checkForDTMFSequence(bool skipFFT = false)
     return false; // No complete sequence yet
 }
 
-const char* readDTMFSequence(bool skipFFT)
+bool readDTMFSequence(bool skipFFT)
 {
     // Check for complete DTMF sequences from real audio or simulated input
     bool ready = checkForDTMFSequence(skipFFT) || sequenceReady;
@@ -140,19 +148,17 @@ const char* readDTMFSequence(bool skipFFT)
     {
         sequenceReady = false;  // Clear the flag
         
-        // Process the complete sequence and check for audio playback
-        const char* audioPath = processNumberSequence(dtmfSequence);
         
+        // Process the complete sequence - this handles playback internally
+        bool audioStarted = processNumberSequence(dtmfSequence);
         // Reset sequence buffer for next sequence
         sequenceIndex = 0;
         dtmfSequence[0] = '\0';
         
-        // Return audio path (may be nullptr, URL, or SD path)
-        // Caller doesn't need to check SD.exists() - playAudioPath handles both modes
-        return audioPath;
+        return audioStarted;
     }
     
-    return nullptr; // No complete sequence yet
+    return false; // No complete sequence yet
 }
 
 void resetDTMFSequence()
@@ -162,7 +168,7 @@ void resetDTMFSequence()
     Logger.debugln("🔄 DTMF sequence reset");
 }
 
-void simulateDTMFDigit(char digit)
+void addDtmfDigit(char digit)
 {
     Logger.debugf("🔧 [DEBUG] Simulating DTMF digit: %c\n", digit);
     
@@ -180,40 +186,63 @@ void simulateDTMFDigit(char digit)
     }
 }
 
+const char* getSequence()
+{
+    return dtmfSequence;
+}
+
+bool isReadingSequence()
+{
+    return sequenceIndex > 0;
+}
+
+bool isSequenceReady()
+{
+    return sequenceIndex > 0 && sequenceReady;
+}
+
+unsigned long getLastDigitTime()
+{
+    return lastDigitTime;
+}
+
 // ============================================================================
 // MAIN PROCESSING FUNCTIONS
 // ============================================================================
 
-const char* processNumberSequence(const char *sequence)
+bool processNumberSequence(const char *sequence)
 {
     Logger.printf("=== Processing DTMF Sequence: '%s' (length: %d) ===\n",
                   sequence, strlen(sequence));
 
-    // Check sequence type and route to appropriate handler
-    const char* audioPath = nullptr;
+    bool audioStarted = false;
     
     if (isSpecialCommand(sequence))
     {
         processSpecialCommand(sequence);
     }
-    else if (hasAudioKey(sequence))
+    else if (registry.hasKey(sequence))
     {
-        audioPath = processAudioKey(sequence);
+        // Play the playlist for this audio key (includes ringback, audio, click)
+        audioStarted = audioPlayer.playPlaylist(sequence);
+        if (!audioStarted) {
+            // Fallback to direct audio key playback if no playlist
+            audioStarted = audioPlayer.playAudioKey(sequence);
+        }
     }
-    else
-    {
+    else {
         processUnknownSequence(sequence);
     }
 
     Logger.debugln("=== Sequence Processing Complete ===");
-    return audioPath;
+    return audioStarted;
 }
 
 void processUnknownSequence(const char *sequence)
 {
     Logger.printf("❓ UNKNOWN SEQUENCE: %s\n", sequence);
     Logger.debugln("💡 This sequence doesn't match any known patterns");
-    playAudioKey("wrong_number");
+    audioPlayer.playAudioKey("wrong_number");
     // Unknown sequence handling:
     // - Log for analysis
     // - Check for patterns

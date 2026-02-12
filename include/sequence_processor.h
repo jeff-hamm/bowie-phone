@@ -42,19 +42,19 @@
  * - Stops dial tone on first digit
  * - Checks for matching audio keys in real-time
  * - '*' key completes the current sequence (excluding the '*')
- * - Processes complete sequences
+ * - Processes complete sequences and triggers playback via PlaylistRegistry
  * - Resets internal state after processing
- * - Returns audio path ready for playback (may be URL or SD path)
+ * - Returns true if audio playback was started
  *
  * Usage in main loop:
- *   const char* audioPath = readDTMFSequence();
- *   if (audioPath) {
- *     playAudioPath(audioPath);
+ *   if (readDTMFSequence()) {
+ *     // Audio is now playing via ExtendedAudioPlayer
  *   }
  * 
  * @param skipFFT If true, skip FFT processing (use when Goertzel is active during dial tone)
+ * @return true if a sequence was processed and audio started
  */
-const char* readDTMFSequence(bool skipFFT = false);
+bool readDTMFSequence(bool skipFFT = false);
 
 /**
  * @brief Reset the DTMF sequence buffer
@@ -88,18 +88,43 @@ int getMaxSequenceLength();
  * as if it were detected from audio input. Useful for testing
  * sequence processing without actual DTMF audio.
  */
-void simulateDTMFDigit(char digit);
+void addDtmfDigit(char digit);
+
+/**
+ * @brief Get the current DTMF sequence
+ * @return Pointer to the current sequence string (null-terminated)
+ */
+const char* getSequence();
+
+/**
+ * @brief Check if currently reading/building a sequence
+ * @return true if at least one digit has been entered
+ */
+bool isReadingSequence();
+
+/**
+ * @brief Check if a complete sequence is ready for processing
+ * @return true if sequence has digits and is marked ready
+ */
+bool isSequenceReady();
+
+/**
+ * @brief Get the timestamp of the last detected DTMF digit
+ * @return Timestamp in milliseconds of the last digit detection
+ */
+unsigned long getLastDigitTime();
 
 /**
  * @brief Process a complete DTMF sequence
  * @param sequence Null-terminated string containing DTMF digits
- * @return File path for audio playback, or nullptr if not an audio sequence
+ * @return true if audio playback was started
  *
  * This is the main entry point for sequence processing. It analyzes the
  * sequence and determines the appropriate action (emergency, phone number,
- * command, etc.). Returns a file path if the sequence triggers audio playback.
+ * command, etc.). Uses PlaylistRegistry to trigger audio playback with
+ * ringback and click sounds.
  */
-const char* processNumberSequence(const char *sequence);
+bool processNumberSequence(const char *sequence);
 
 /**
  * @brief Check if a sequence is a known number (phone number)

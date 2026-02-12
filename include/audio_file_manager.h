@@ -33,11 +33,17 @@ using namespace audio_tools;
 #ifndef CACHE_TIMESTAMP_FILE
 #define CACHE_TIMESTAMP_FILE "/audio_cache_time.txt"
 #endif
+#ifndef CACHE_ETAG_FILE
+#define CACHE_ETAG_FILE "/audio_cache_etag.txt"
+#endif
+#ifndef CACHE_CHECK_INTERVAL_MS
+#define CACHE_CHECK_INTERVAL_MS 300000  ///< Lightweight cache check interval (5 minutes)
+#endif
 #ifndef CACHE_VALIDITY_HOURS
 #define CACHE_VALIDITY_HOURS 24     ///< Cache validity in hours
 #endif
-#ifndef MAX_KNOWN_SEQUENCES
-#define MAX_KNOWN_SEQUENCES 50      ///< Maximum number of known sequences
+#ifndef MAX_AUDIO_FILES
+#define MAX_AUDIO_FILES 50      ///< Maximum number of known sequences
 #endif
 #ifndef MAX_HTTP_RESPONSE_SIZE
 #define MAX_HTTP_RESPONSE_SIZE 8192 ///< Maximum HTTP response size
@@ -73,9 +79,11 @@ struct AudioFile
     const char *audioKey;    ///< Audio key (e.g., "dialtone", "busy", or DTMF sequence like "123")
     const char *description; ///< Human-readable description
     const char *type;        ///< Entry type (e.g., "audio", "service", "shortcut", "url")
-    const char *path;        ///< File path or URL
+    const char *data;        ///< File path or URL
     const char *ext;         ///< File extension (e.g., "wav", "mp3") - from server metadata
     unsigned long ringDuration; ///< Ring duration in ms (how long ringback plays before audio)
+    unsigned long gap;          ///< Gap duration in ms between audio files in a playlist
+    unsigned long duration;          ///< Gap duration in ms between audio files in a playlist
 };
 
 // ============================================================================
@@ -124,49 +132,14 @@ AudioSource *initializeAudioFileManager(int sdCsPin = 13, bool mmcSupport = fals
  */
 bool downloadAudio(int maxRetries = 3, unsigned long retryDelayMs = 2000);
 
-/**
- * @brief Check if an audio key exists in the loaded audio files
- * @param key Audio key to check (e.g., "dialtone", "123")
- * @return true if key exists, false otherwise
- */
-bool hasAudioKey(const char *key);
 
 /**
- * @brief Check if any audio key starts with the given prefix
- * @param prefix Prefix to check (e.g., "91" would match "911", "912", etc.)
- * @return true if any key starts with prefix, false otherwise
- */
-bool hasAudioKeyWithPrefix(const char *prefix);
-
-/**
- * @brief Process an audio key and get the local file path
- * @param key Audio key to process
- * @return Local file path for audio playback, or nullptr if not available
- * 
- * Looks up the key in the audio files list. For remote URLs,
- * returns the cached local path if available, or queues for download.
- */
-const char* processAudioKey(const char *key);
-
-/**
- * @brief Get the ring duration for an audio key
+ * @brief Check if an audio key has a playlist (with ringback pattern)
  * @param key Audio key to look up
- * @return Ring duration in milliseconds (0 = no ringback)
+ * @return Non-zero if playlist exists for this key, 0 otherwise
+ * @deprecated Ring duration is now managed by playlists. Check AudioPlaylistRegistry::hasPlaylist() directly.
  */
 unsigned long getAudioKeyRingDuration(const char *key);
-
-/**
- * @brief List all audio keys to serial output
- * 
- * Useful for debugging and configuration verification.
- */
-void listAudioKeys();
-
-/**
- * @brief Get the number of loaded audio files
- * @return Number of audio files currently loaded
- */
-int getAudioKeyCount();
 
 /**
  * @brief Clear all audio files from memory and SD card cache
@@ -235,5 +208,17 @@ bool isDownloadQueueEmpty();
  * Subsequent HTTP requests will use cached IPs if DNS fails.
  */
 void preCacheDNS();
+
+/**
+ * @brief Register a single audio file with the AudioKeyRegistry and create its playlist
+ * 
+ * This function is idempotent - calling it multiple times with the same AudioFile
+ * will produce the same result. If the key is already registered, it will be
+ * updated with the new values.
+ * 
+ * @param file Pointer to the AudioFile to register
+ * @return true if registration successful, false if skipped or failed
+ */
+bool registerAudioFile(const AudioFile* file);
 
 #endif // AUDIO_FILE_MANAGER_H

@@ -12,12 +12,14 @@
 #include "sequence_processor.h"
 #include "special_command_processor.h"
 #include "audio_file_manager.h"
+#include "audio_key_registry.h"
 #include "wifi_manager.h"
 #include "tailscale_manager.h"
 #include "remote_logger.h"
 #include "logging.h"
 #include "phone_service.h"
-#include "audio_player.h"
+#include "extended_audio_player.h"
+#include "notifications.h"
 #include <WiFi.h>
 #include <SPI.h>
 #include <SD.h>
@@ -31,6 +33,7 @@ StreamCopy copier(fft, kit);            // copy mic to FFT
 MultiDecoder multi_decoder;
 MP3DecoderHelix mp3_decoder;
 WAVDecoder wav_decoder;
+ExtendedAudioPlayer audioPlayer = getExtendedAudioPlayer();
 
 // Goertzel-based DTMF detection (more efficient during dial tone)
 GoertzelStream goertzel;                // Goertzel detector
@@ -69,6 +72,9 @@ void setup()
     Logger.addLogger(Serial);
 
     Logger.printf("\n\n=== Bowie Phone Starting ===\n");
+    
+    // Initialize notification system early (before WiFi so we can show status)
+    initNotifications();
     
     // Check if firmware update key (KEY3 / GPIO19) is held during boot
     // This provides a hardware way to enter bootloader mode for flashing
@@ -120,31 +126,17 @@ void setup()
 
     // Initialize Audio Player with event callback
     // Register MP3 decoder
-    multi_decoder.addDecoder(mp3_decoder, "audio/mpeg");
+
+    audioPlayer.setRegistry(&getAudioKeyRegistry());
+    
+    // Register decoders with the audio player
+    audioPlayer.addDecoder(mp3_decoder, "audio/mpeg");
     // Register WAV decoder with all common MIME types
     // WAV files can be detected as audio/wav, audio/wave, or audio/vnd.wave
-    multi_decoder.addDecoder(wav_decoder, "audio/wav");
-    multi_decoder.addDecoder(wav_decoder, "audio/vnd.wave");
-    multi_decoder.addDecoder(wav_decoder, "audio/wave");
-    
-#if FORCE_URL_STREAMING
-    // Force URL streaming mode even if SD card is available
-    Logger.println("🌐 FORCE_URL_STREAMING enabled - using URL streaming mode");
-    initAudioPlayerURLMode(kit, multi_decoder);
-    Logger.println("✅ Audio player initialized (URL streaming mode - forced)");
-#else
-    if (source != nullptr) {
-        initAudioPlayer(*source, kit, multi_decoder);
-        //        setAudioEventCallback(onAudioEvent);
-        Logger.println("✅ Audio player initialized (SD card mode)");
-    } else {
-        // SD card not available - use URL streaming mode
-        Logger.println("🌐 SD card not available - using URL streaming mode");
-        initAudioUrlPlayer(kit, multi_decoder);
-        Logger.println("✅ Audio player initialized (URL streaming mode)");
-    }
-#endif
-
+    audioPlayer.addDecoder(wav_decoder, "audio/wav");
+    audioPlayer.addDecoder(wav_decoder, "audio/vnd.wave");
+    audioPlayer.addDecoder(wav_decoder, "audio/wave");
+    audioPlayer.begin(kit, source != nullptr);
     // Initialize DTMF decoder (FFT and copier configuration)
     initDtmfDecoder(fft, copier);
     
@@ -154,13 +146,11 @@ void setup()
 
     // Initialize WiFi with careful error handling
     Logger.println("🔧 Starting WiFi initialization...");
-    // Check if Tailscale should be enabled based on boot key/saved state
-    // This sets the internal flag in tailscale_manager (wifi_manager uses this)
-    shouldEnableTailscale();
+
 
     initWiFi([]() {
         // This is called when WiFi successfully connects
-        // Note: Tailscale/VPN is now initialized automatically by wifi_manager
+        // Note: WiFi/Tailscale LED notifications are handled in wifi_manager/tailscale_manager
         
         // Start telnet server for remote logging
         telnet.onConnect([](String ip) {
@@ -208,11 +198,11 @@ void setup()
         if (isOffHook) {
             // Handle off-hook event - play dial tone
             Logger.println("⚡ Event: Phone Off Hook - Playing Dial Tone");
-            playAudioKey("dialtone");
+            audioPlayer.playAudioKey("dialtone");
         } else {
             // Handle on-hook event - stop audio, reset state
             Logger.println("⚡ Event: Phone On Hook");
-            stopAudio();
+            audioPlayer.stop();
             resetDTMFSequence(); // Clear any partial DTMF sequence
         }
     });
@@ -227,7 +217,7 @@ void setup()
     if (Phone.isOffHook())
     {
         Logger.println("📞 Phone is off hook at boot - playing dial tone");
-        playAudioKey("dialtone");
+        audioPlayer.playAudioKey("dialtone");
     }
 }
 
@@ -237,41 +227,49 @@ void loop()
     //     Phone.startRinging();
 
     // Process Phone Service
+    static unsigned long lastMaintenanceCheck = 0;
     Phone.loop();
     if (Phone.isOffHook())
     {
-        // Handle audio playback FIRST - highest priority for smooth audio
-        if (isAudioActive())
-        {
-            // For non-dial-tone audio, normal processing with DTMF detection
-            processAudio();
+        // Check for off-hook timeout (play warning tone if inactive too long)
+        static bool offHookWarningPlayed = false;
+        unsigned long now = millis();
+        unsigned long lastActivity = max(getLastDigitTime(), audioPlayer.getLastActive());
+        
+        if (!offHookWarningPlayed && lastActivity > 0 && (now - lastActivity) >= OFF_HOOK_TIMEOUT_MS) {
+            Logger.println("⚠️ Off-hook timeout - playing warning tone");
+            audioPlayer.playAudioKey("off_hook");
+            offHookWarningPlayed = true;
         }
         
-        // Adaptive DTMF detection:
-        // - USE_GOERTZEL_ONLY: Use Goertzel for all DTMF detection (simpler, works better on some phones)
-        // - Otherwise: Use Goertzel during dial tone, FFT otherwise
-        static unsigned long lastDTMFCheck = 0;
-        bool isDialTone = isAudioKeyPlaying("dialtone");
-        bool isOtherAudio = isAudioActive() && !isDialTone;
+        // Reset warning flag when there's activity
+        if (getLastDigitTime() > lastActivity || audioPlayer.isActive()) {
+            offHookWarningPlayed = false;
+        }
+        
+        // Handle audio playback FIRST - highest priority for smooth audio
+        if (audioPlayer.isActive())
+        {
+            // For non-dial-tone audio, normal processing with DTMF detection
+            audioPlayer.copy();
+            if (!audioPlayer.isAudioKeyPlaying("dialtone")) {
+                return;
+            }
+        }
         
 #ifdef USE_GOERTZEL_ONLY
         // Use Goertzel for ALL DTMF detection (dial tone, idle, and during audio)
-        if (!isOtherAudio)
-        {
-            goertzelCopier.copy();
+        goertzelCopier.copy();
+        
+        char goertzelKey = getGoertzelKey();
+        if (goertzelKey != 0) {
+            addDtmfDigit(goertzelKey);
             
-            char goertzelKey = getGoertzelKey();
-            if (goertzelKey != 0) {
-                simulateDTMFDigit(goertzelKey);
-                
-                const char *audioPath = readDTMFSequence(true);
-                if (audioPath)
-                {
-                    playAudioPath(audioPath);
-                }
-            }
+            // readDTMFSequence now handles playback internally
+            readDTMFSequence(true);
         }
 #else
+        static unsigned long lastDTMFCheck = 0;
         if (isDialTone)
         {
             // Use Goertzel for dial tone and idle - more efficient
@@ -281,51 +279,49 @@ void loop()
             char goertzelKey = getGoertzelKey();
             if (goertzelKey != 0) {
                 // Feed key to sequence processor
-                simulateDTMFDigit(goertzelKey);
+                addDtmfDigit(goertzelKey);
                 
-                // Skip FFT processing - we're using Goertzel during dial tone
-                const char *audioPath = readDTMFSequence(true);
-                if (audioPath)
-                {
-                    playAudioPath(audioPath);
-                }
+                // Skip FFT processing - readDTMFSequence handles playback internally
+                readDTMFSequence(true);
             }
         }
-        else if (!isAudioActive())
+        else if (!player.isActive())
         {
             // Use FFT for idle (no audio) - needed for summed frequency detection on some phones
             lastDTMFCheck = millis();
             copier.copy();
 
-            const char *audioPath = readDTMFSequence();
-            if (audioPath)
-            {
-                playAudioPath(audioPath);
-            }
+            // readDTMFSequence handles playback internally via PlaylistRegistry
+            readDTMFSequence();
         }
-#endif
+#endif  
+
+
+    } else {
+        // Handle phone home periodic check-in (for remote OTA, status, etc.)
+        handlePhoneHomeLoop();
     }
 
-    // Handle telnet server (process incoming connections)
-    telnet.loop();
+    auto limit = isReadingSequence() ? 10 : 100;
+    unsigned long now = millis();
+        
+    // Rate limit maintenance operations to every 100ms while not reading sequence
+    if (now - lastMaintenanceCheck >= limit) {
+        lastMaintenanceCheck = now;
+        
+        // Handle telnet server (process incoming connections)
+        telnet.loop();
 
+        // Handle WiFi management (config portal and OTA)
+        handleWiFiLoop();
 #ifdef DEBUG
-    // Process debug commands from Serial and Telnet
-    processDebugInput(Serial);
-    processDebugInput(telnet);
+        // Process debug commands from Serial and Telnet
+        processDebugInput(Serial);
+        processDebugInput(telnet);
 #endif
-
-    // Handle WiFi management (config portal and OTA)
-    handleWiFiLoop();
-
-    // Handle Tailscale VPN keepalive/reconnection and remote logging
-    handleTailscaleLoop();
-
-    // Handle phone home periodic check-in (for remote OTA, status, etc.)
-    handlePhoneHomeLoop();
-
-    // Process audio download queue (non-blocking, rate-limited internally)
-    processAudioDownloadQueue();
+        // Handle Tailscale VPN keepalive/reconnection and remote logging
+        handleTailscaleLoop();
+    }
 }
 
 // or AudioKissFFT

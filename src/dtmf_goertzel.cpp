@@ -1,6 +1,7 @@
 #include "dtmf_goertzel.h"
 #include "logging.h"
 #include "config.h"
+#include "phone.h"  // For phone-specific DTMF frequencies
 
 // Forward declaration for FFT debug mode (from dtmf_decoder.cpp)
 bool isFFTDebugEnabled();
@@ -18,12 +19,11 @@ static int goertzelDetectedRow = -1;
 static int goertzelDetectedCol = -1;
 static char goertzelPendingKey = 0;
 static unsigned long goertzelBlockStartTime = 0;
-static const unsigned long GOERTZEL_BLOCK_TIMEOUT_MS = 5;  // Row+Col must arrive within same block (~5ms)
 
-// Gap detection state for debouncing
-static char goertzelLastEmittedKey = 0;      // Last key that was emitted
-static unsigned long goertzelLastSignalTime = 0;  // When we last saw a valid DTMF signal
-static const unsigned long GOERTZEL_GAP_MS = 100;  // Require 100ms gap before new key can be emitted
+// Debounce state - track the current key being held
+static char goertzelCurrentKey = 0;          // Key currently being detected (held down)
+static unsigned long goertzelKeyStartTime = 0;  // When current key detection started
+static unsigned long goertzelKeyLastSeen = 0;   // When we last saw the current key
 
 // Reference structure for Goertzel DTMF frequencies
 struct GoertzelDTMFRef {
@@ -36,13 +36,14 @@ struct GoertzelDTMFRef {
 void onGoertzelFrequency(float frequency, float magnitude, void* ref) {
     if (ref == nullptr) return;
     
+    const PhoneConfig& config = getPhoneConfig();
     unsigned long now = millis();
     
     // Check if previous detection timed out (row without column = stale)
-    if (goertzelDetectedRow >= 0 && (now - goertzelBlockStartTime) > GOERTZEL_BLOCK_TIMEOUT_MS) {
+    if (goertzelDetectedRow >= 0 && (now - goertzelBlockStartTime) > config.goertzelBlockTimeoutMs) {
         if (isFFTDebugEnabled()) {
             Logger.printf("🎵 Goertzel: row %d timed out (no column within %lums)\n", 
-                         goertzelDetectedRow, GOERTZEL_BLOCK_TIMEOUT_MS);
+                         goertzelDetectedRow, config.goertzelBlockTimeoutMs);
         }
         goertzelDetectedRow = -1;
     }
@@ -59,25 +60,34 @@ void onGoertzelFrequency(float frequency, float magnitude, void* ref) {
         }
     } else {
         // Column detected - check if we have a valid row within timeout
-        if (goertzelDetectedRow >= 0 && (now - goertzelBlockStartTime) <= GOERTZEL_BLOCK_TIMEOUT_MS) {
+        if (goertzelDetectedRow >= 0 && (now - goertzelBlockStartTime) <= config.goertzelBlockTimeoutMs) {
             goertzelDetectedCol = dtmfRef->index;
             char key = GOERTZEL_DTMF_KEYPAD[goertzelDetectedRow][goertzelDetectedCol];
             
-            // Update signal time (we're seeing valid DTMF)
-            goertzelLastSignalTime = now;
+            // Update when we last saw this key
+            goertzelKeyLastSeen = now;
             
-            // Only emit key if:
-            // 1. It's a different key than last emitted, OR
-            // 2. There was a gap since the last key was emitted
-            bool canEmit = (key != goertzelLastEmittedKey) || 
-                          (goertzelPendingKey == 0 && goertzelLastEmittedKey == 0);
-            
-            if (canEmit && goertzelPendingKey == 0) {
-                goertzelPendingKey = key;
+            if (key == goertzelCurrentKey) {
+                // Same key still being held - do nothing, already emitted
+            } else if (goertzelCurrentKey == 0) {
+                // No key was active - this is a new press
+                goertzelCurrentKey = key;
+                goertzelKeyStartTime = now;
+                goertzelPendingKey = key;  // Emit immediately
                 
                 if (isFFTDebugEnabled()) {
-                    Logger.printf("🎵 Goertzel DTMF: %c (col=%d, %.0f Hz, mag=%.1f)\n", 
-                                 key, dtmfRef->index, frequency, magnitude);
+                    Logger.printf("🎵 Goertzel DTMF NEW: %c (row=%d, col=%d)\n", 
+                                 key, goertzelDetectedRow, dtmfRef->index);
+                }
+            } else {
+                // Different key than current - previous must have been released
+                // Start tracking new key
+                goertzelCurrentKey = key;
+                goertzelKeyStartTime = now;
+                goertzelPendingKey = key;  // Emit new key
+                
+                if (isFFTDebugEnabled()) {
+                    Logger.printf("🎵 Goertzel DTMF SWITCH: %c (was %c)\n", key, goertzelCurrentKey);
                 }
             }
             
@@ -106,20 +116,23 @@ static GoertzelDTMFRef colRefs[4] = {
 
 // Initialize Goertzel-based DTMF decoder
 // More efficient than FFT when only detecting specific frequencies
+// Uses phone-specific frequencies from PhoneConfig
 void initGoertzelDecoder(GoertzelStream &goertzel, StreamCopy &copier)
 {
-    // Add DTMF row frequencies (697, 770, 852, 941 Hz)
-    goertzel.addFrequency(697.0f, &rowRefs[0]);
-    goertzel.addFrequency(770.0f, &rowRefs[1]);
-    goertzel.addFrequency(852.0f, &rowRefs[2]);
-    goertzel.addFrequency(941.0f, &rowRefs[3]);
+    const PhoneConfig& config = getPhoneConfig();
     
-    // Add DTMF column frequencies (1209, 1336, 1477 Hz)
-    // Note: 1633 Hz (column D) omitted - rarely used on consumer phones
-    goertzel.addFrequency(1209.0f, &colRefs[0]);
-    goertzel.addFrequency(1336.0f, &colRefs[1]);
-    goertzel.addFrequency(1477.0f, &colRefs[2]);
-    // goertzel.addFrequency(1633.0f, &colRefs[3]);  // Uncomment if 'D' key needed
+    // Add DTMF row frequencies from phone config
+    goertzel.addFrequency(config.rowFreqs[0], &rowRefs[0]);
+    goertzel.addFrequency(config.rowFreqs[1], &rowRefs[1]);
+    goertzel.addFrequency(config.rowFreqs[2], &rowRefs[2]);
+    goertzel.addFrequency(config.rowFreqs[3], &rowRefs[3]);
+    
+    // Add DTMF column frequencies from phone config
+    // Note: Column 3 (1633 Hz / 'D' key) omitted - rarely used on consumer phones
+    goertzel.addFrequency(config.colFreqs[0], &colRefs[0]);
+    goertzel.addFrequency(config.colFreqs[1], &colRefs[1]);
+    goertzel.addFrequency(config.colFreqs[2], &colRefs[2]);
+    // goertzel.addFrequency(config.colFreqs[3], &colRefs[3]);  // Uncomment if 'D' key needed
     
     // Set detection callback
     goertzel.setFrequencyDetectionCallback(onGoertzelFrequency);
@@ -127,31 +140,35 @@ void initGoertzelDecoder(GoertzelStream &goertzel, StreamCopy &copier)
     // Configure Goertzel parameters
     auto cfg = goertzel.defaultConfig();
     cfg.setAudioInfo(AUDIO_INFO_DEFAULT());
-    cfg.threshold = 30.0f;      // High threshold to reject dial tone harmonics (350/440Hz)
-    cfg.block_size = 512;       // ~11.6ms blocks @ 44100Hz - faster response
+    cfg.threshold = config.fundamentalMagnitudeThreshold;  // Use phone-specific threshold
+    cfg.block_size = config.goertzelBlockSize;             // Phone-specific block size
     goertzel.begin(cfg);
     
-    // Use smaller copier buffer for faster response (512 = ~2.9ms @ 44.1kHz stereo)
-    copier.resize(512);
+    // Use phone-specific copier buffer size
+    copier.resize(config.goertzelCopierBufferSize);
     
-    Logger.println("🎵 Goertzel DTMF decoder initialized (7 frequencies, block=512, buf=512, thresh=30)");
+    Logger.printf("🎵 Goertzel DTMF decoder initialized for %s\n", config.name);
+    Logger.debugf("   Rows: %.0f, %.0f, %.0f, %.0f Hz\n", 
+                  config.rowFreqs[0], config.rowFreqs[1], config.rowFreqs[2], config.rowFreqs[3]);
+    Logger.debugf("   Cols: %.0f, %.0f, %.0f Hz (thresh=%.1f, block=%d, release=%lums)\n",
+                  config.colFreqs[0], config.colFreqs[1], config.colFreqs[2],
+                  cfg.threshold, config.goertzelBlockSize, config.goertzelReleaseMs);
 }
 
 // Get pending key from Goertzel decoder
-// Includes gap detection - same key won't be returned until a gap is detected
+// Handles key release detection - if no signal for goertzelReleaseMs, key is considered released
 char getGoertzelKey() {
+    const PhoneConfig& config = getPhoneConfig();
     unsigned long now = millis();
     
-    // Check for gap - if no signal for GOERTZEL_GAP_MS, allow same key to be detected again
-    if (goertzelLastEmittedKey != 0 && (now - goertzelLastSignalTime) > GOERTZEL_GAP_MS) {
-        // Gap detected - reset last emitted key so same key can be detected again
-        goertzelLastEmittedKey = 0;
+    // Check if current key should be considered released (no detection for a while)
+    if (goertzelCurrentKey != 0 && (now - goertzelKeyLastSeen) > config.goertzelReleaseMs) {
+        goertzelCurrentKey = 0;  // Key released, ready for next press
     }
     
     char key = goertzelPendingKey;
     if (key != 0) {
         goertzelPendingKey = 0;
-        goertzelLastEmittedKey = key;  // Track what we emitted
     }
     return key;
 }
@@ -162,8 +179,9 @@ void resetGoertzelState() {
     goertzelDetectedCol = -1;
     goertzelPendingKey = 0;
     goertzelBlockStartTime = 0;
-    goertzelLastEmittedKey = 0;
-    goertzelLastSignalTime = 0;
+    goertzelCurrentKey = 0;
+    goertzelKeyStartTime = 0;
+    goertzelKeyLastSeen = 0;
 }
 
 // ============================================================================
