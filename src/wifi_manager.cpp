@@ -819,8 +819,14 @@ bool startConfigPortalSafe()
             SD.end();
             delay(500);  // Let SD card fully release
             
-            // Start update
-            if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+            // Use firmware size from query param if provided, otherwise UPDATE_SIZE_UNKNOWN
+            size_t firmwareSize = UPDATE_SIZE_UNKNOWN;
+            if (server.hasArg("size")) {
+                firmwareSize = server.arg("size").toInt();
+                Logger.printf("📦 HTTP OTA: Expected firmware size: %u bytes\n", firmwareSize);
+            }
+            
+            if (!Update.begin(firmwareSize)) {
                 Logger.printf("❌ HTTP OTA: Begin failed: %s\n", Update.errorString());
             }
         } else if (upload.status == UPLOAD_FILE_WRITE) {
@@ -829,10 +835,13 @@ bool startConfigPortalSafe()
                 Logger.printf("❌ HTTP OTA: Write failed: %s\n", Update.errorString());
             } else {
                 static int lastPercent = -1;
-                int percent = (Update.progress() * 100) / Update.size();
-                if (percent != lastPercent && percent % 10 == 0) {
-                    Logger.printf("📤 HTTP OTA Progress: %d%%\n", percent);
-                    lastPercent = percent;
+                size_t total = Update.size();
+                if (total > 0) {
+                    int percent = (Update.progress() * 100) / total;
+                    if (percent != lastPercent && percent % 10 == 0) {
+                        Logger.printf("📤 HTTP OTA Progress: %d%%\n", percent);
+                        lastPercent = percent;
+                    }
                 }
             }
         } else if (upload.status == UPLOAD_FILE_END) {
@@ -1041,7 +1050,14 @@ void startOTA()
                 Logger.println("ℹ️ OTA already prepared, skipping shutdown");
             }
             
-            if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
+            // Use firmware size from query param if provided, otherwise UPDATE_SIZE_UNKNOWN
+            size_t firmwareSize = UPDATE_SIZE_UNKNOWN;
+            if (server.hasArg("size")) {
+                firmwareSize = server.arg("size").toInt();
+                Logger.printf("📦 HTTP OTA: Expected firmware size: %u bytes\n", firmwareSize);
+            }
+            
+            if (!Update.begin(firmwareSize)) {
                 Logger.printf("❌ HTTP OTA: Begin failed: %s\n", Update.errorString());
             }
         } else if (upload.status == UPLOAD_FILE_WRITE) {
@@ -1049,10 +1065,13 @@ void startOTA()
                 Logger.printf("❌ HTTP OTA: Write failed: %s\n", Update.errorString());
             } else {
                 static int lastPercent = -1;
-                int percent = (Update.progress() * 100) / Update.size();
-                if (percent != lastPercent && percent % 10 == 0) {
-                    Logger.printf("📤 HTTP OTA Progress: %d%%\n", percent);
-                    lastPercent = percent;
+                size_t total = Update.size();
+                if (total > 0) {
+                    int percent = (Update.progress() * 100) / total;
+                    if (percent != lastPercent && percent % 10 == 0) {
+                        Logger.printf("📤 HTTP OTA Progress: %d%%\n", percent);
+                        lastPercent = percent;
+                    }
                 }
             }
         } else if (upload.status == UPLOAD_FILE_END) {
@@ -1244,6 +1263,12 @@ void handleWiFiLoop()
             Logger.printf("✅ WiFi connected successfully!\n");
             Logger.printf("IP Address: %s\n", WiFi.localIP().toString().c_str());
             Logger.printf("Signal Strength: %d dBm\n", WiFi.RSSI());
+            
+            // OTA rollback protection: confirm this firmware is good
+            // If we booted from a new OTA partition and WiFi works, mark it valid
+            // so the bootloader won't roll back to the previous partition
+            esp_ota_mark_app_valid_cancel_rollback();
+            Logger.println("✅ OTA rollback protection: firmware marked valid");
             
             // Configure public DNS servers (Google + Cloudflare) for reliable resolution
             IPAddress dns1 = DNS_PRIMARY_IPADDRESS;

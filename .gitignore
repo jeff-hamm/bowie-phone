@@ -8,3 +8,4 @@ docs/config.local.js
 build.log
 logs/
 !docs/logs
+compile_commands.json

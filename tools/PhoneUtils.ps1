@@ -69,7 +69,7 @@
 [CmdletBinding()]
 param(
     [string]$Environment = "bowie-phone-1",
-    [ValidateSet("mac", "unraid")]
+    [ValidateSet("mac", "unraid", "local")]
     [string]$Target = "mac",
     [ValidateSet("serial", "ota")]
     [string]$FlashMethod = "serial",
@@ -106,6 +106,14 @@ $Script:Config = @{
             DefaultSerialPort = "/dev/ttyUSB0"
             StagingDir = "/tmp/fw_upload"
             LogFile = "/tmp/fw_deploy.log"
+            ApPassword = "ziggystardust"
+        }
+        local = @{
+            Host = $null  # Local machine, no SSH
+            EsptoolPath = "esptool"  # Assumes esptool is in PATH or will use python -m esptool
+            DefaultSerialPort = "COM3"
+            StagingDir = $null  # Not needed for local
+            LogFile = "$env:TEMP\fw_deploy.log"
             ApPassword = "ziggystardust"
         }
     }
@@ -147,6 +155,11 @@ function Write-Failure {
 function Write-Warning {
     param([string]$Message)
     Write-Host "⚠️  $Message" -ForegroundColor Yellow
+}
+
+function Test-IsLocalTarget {
+    param([string]$Target)
+    return $Target -eq "local"
 }
 
 function Get-BuildFlags {
@@ -237,9 +250,10 @@ function Ensure-RemoteDependencies {
     .DESCRIPTION
         For serial: Checks if esptool exists at the configured path. If not, installs it via pip.
         For OTA: Ensures Python3 and espota.py are available.
+        For local: Checks if esptool is available on Windows PATH or via Python.
     #>
     param(
-        [ValidateSet("mac", "unraid")]
+        [ValidateSet("mac", "unraid", "local")]
         [string]$Target = "mac",
         [ValidateSet("serial", "ota")]
         [string]$FlashMethod = "serial"
@@ -247,6 +261,73 @@ function Ensure-RemoteDependencies {
     
     $targetConfig = $Script:Config.Targets[$Target]
     
+    # Handle local Windows target
+    if (Test-IsLocalTarget -Target $Target) {
+        if ($FlashMethod -eq "ota") {
+            Write-Host "   Local OTA mode - no dependencies to check" -ForegroundColor DarkGray
+            return @{ Success = $true; PythonCmd = "curl" }
+        }
+        
+        # Serial mode - check for esptool locally
+        Write-Host "   Checking esptool on local machine..." -ForegroundColor DarkGray
+        
+        # Try esptool.exe or esptool.py in PATH
+        $esptoolFound = $false
+        $esptoolCmd = $null
+        
+        # Check if esptool.exe exists in PATH
+        $esptoolExe = Get-Command "esptool.exe" -ErrorAction SilentlyContinue
+        if ($esptoolExe) {
+            Write-Host "   esptool.exe found: $($esptoolExe.Source)" -ForegroundColor DarkGray
+            return @{ Success = $true; EsptoolCmd = "esptool.exe" }
+        }
+        
+        # Check if esptool.py exists in PATH
+        $esptoolPy = Get-Command "esptool.py" -ErrorAction SilentlyContinue
+        if ($esptoolPy) {
+            Write-Host "   esptool.py found: $($esptoolPy.Source)" -ForegroundColor DarkGray
+            return @{ Success = $true; EsptoolCmd = "esptool.py" }
+        }
+        
+        # Check if Python is available and can import esptool
+        Write-Host "   Checking for Python module esptool..." -ForegroundColor DarkGray
+        $pythonCheck = & python -c "import esptool; print('OK')" 2>$null
+        if ($LASTEXITCODE -eq 0 -and $pythonCheck -match "OK") {
+            Write-Host "   Python module esptool found" -ForegroundColor DarkGray
+            return @{ Success = $true; EsptoolCmd = "python -m esptool" }
+        }
+        
+        # esptool not found - try to install via pip
+        Write-Host "   esptool not found, attempting to install via pip..." -ForegroundColor Yellow
+        
+        # Check if pip is available
+        $pipCheck = Get-Command "pip" -ErrorAction SilentlyContinue
+        if (-not $pipCheck) {
+            Write-Failure "pip not found - cannot install esptool"
+            Write-Host "   Install Python and pip first: https://www.python.org/downloads/" -ForegroundColor Yellow
+            return $false
+        }
+        
+        Write-Host "   Running: pip install esptool..." -ForegroundColor DarkGray
+        $installOutput = & pip install esptool 2>&1
+        
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "esptool installed successfully"
+            
+            # Verify installation
+            $verifyCheck = & python -c "import esptool; print(esptool.__version__)" 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "   esptool version: $verifyCheck" -ForegroundColor DarkGray
+                return @{ Success = $true; EsptoolCmd = "python -m esptool" }
+            }
+        }
+        
+        Write-Failure "Failed to install esptool"
+        Write-Host "   Try manually: pip install esptool" -ForegroundColor Yellow
+        return $false
+    }
+    
+    # Remote target - use SSH commands
     if ($FlashMethod -eq "ota") {
         # OTA mode - uses HTTP OTA (curl POST to /update endpoint)
         # This works reliably over WireGuard since it uses TCP, unlike espota.py which uses UDP
@@ -331,7 +412,7 @@ function Get-SerialPortPids {
         Returns an array of PIDs (empty if port is free).
     #>
     param(
-        [ValidateSet("mac", "unraid")]
+        [ValidateSet("mac", "unraid", "local")]
         [string]$Target = "mac",
         [string]$SerialPort
     )
@@ -339,6 +420,11 @@ function Get-SerialPortPids {
     $targetConfig = $Script:Config.Targets[$Target]
     if (-not $SerialPort) {
         $SerialPort = $targetConfig.DefaultSerialPort
+    }
+    
+    # Local target doesn't use this function
+    if (Test-IsLocalTarget -Target $Target) {
+        return @()
     }
     
     $checkCmd = "lsof '$SerialPort' 2>/dev/null | grep -v '^COMMAND' | awk '{print `$2}' | head -5"
@@ -359,9 +445,10 @@ function Clear-SerialPort {
     .DESCRIPTION
         Checks for processes (screen, picocom, minicom, etc.) using the serial port
         and kills them to free the port for flashing.
+        On Windows local, checks for processes locking COM ports.
     #>
     param(
-        [ValidateSet("mac", "unraid")]
+        [ValidateSet("mac", "unraid", "local")]
         [string]$Target = "mac",
         [string]$SerialPort
     )
@@ -372,6 +459,24 @@ function Clear-SerialPort {
     }
     
     Write-Host "   Checking if port $SerialPort is in use..." -ForegroundColor DarkGray
+    
+    # Handle local Windows target
+    if (Test-IsLocalTarget -Target $Target) {
+        # On Windows, COM ports auto-release when process closes
+        # Just check if we can open the port briefly
+        try {
+            $port = New-Object System.IO.Ports.SerialPort $SerialPort
+            $port.Open()
+            $port.Close()
+            Write-Host "   Port is free" -ForegroundColor DarkGray
+            return $true
+        }
+        catch {
+            Write-Warning "Port may be in use: $_"
+            Write-Host "   Will attempt flash anyway (esptool can force DTR/RTS)" -ForegroundColor DarkGray
+            return $true  # Proceed anyway - esptool can usually handle it
+        }
+    }
     
     # Check if port is busy
     $pids = Get-SerialPortPids -Target $Target -SerialPort $SerialPort
@@ -559,7 +664,7 @@ function New-RemoteDeployScript {
         
         # HTTP OTA: first prepare device, then upload firmware via /update
         $flashCmd = "curl -s -m 120 http://$deviceIp/prepareota"
-        $httpOtaUploadCmd = "curl -f -m 120 --progress-bar -F 'firmware=@$staging/firmware.bin' http://$deviceIp/update"
+        $httpOtaUploadCmd = "curl -f -m 120 --progress-bar -F 'firmware=@$staging/firmware.bin' 'http://$deviceIp/update?size=`$(stat -c%s $staging/firmware.bin 2>/dev/null || stat -f%z $staging/firmware.bin)'"
         $flashMethodName = "HTTP OTA to $deviceIp"
     } else {
         # Serial flash using esptool
@@ -701,9 +806,10 @@ else
     log "WARNING: Prepare may have timed out - continuing anyway"
 fi
 sleep 3
-log "Uploading firmware via HTTP OTA (~1.7MB)..."
-log "Command: curl -f -m 600 -F firmware=@`$STAGING/firmware.bin http://$deviceIp/update"
-UPLOAD_RESULT=`$(curl -f -m 600 -F "firmware=@`$STAGING/firmware.bin" http://$deviceIp/update 2>&1) || true
+FW_SIZE=`$(stat -c%s "`$STAGING/firmware.bin" 2>/dev/null || stat -f%z "`$STAGING/firmware.bin" 2>/dev/null)
+log "Uploading firmware via HTTP OTA (`$FW_SIZE bytes)..."
+log "Command: curl -f -m 600 -F firmware=@`$STAGING/firmware.bin http://$deviceIp/update?size=`$FW_SIZE"
+UPLOAD_RESULT=`$(curl -f -m 600 -F "firmware=@`$STAGING/firmware.bin" "http://$deviceIp/update?size=`$FW_SIZE" 2>&1) || true
 log "Upload response: `$UPLOAD_RESULT"
 if echo "`$UPLOAD_RESULT" | grep -qi "OK\|success"; then
     log "Flash completed successfully!"
@@ -741,7 +847,7 @@ echo "RESULT:SUCCESS"
 
 function Copy-FirmwareToRemote {
     param(
-        [ValidateSet("mac", "unraid")]
+        [ValidateSet("mac", "unraid", "local")]
         [string]$Target = "mac",
         [string]$Environment = "bowie-phone-1",
         [ValidateSet("serial", "ota")]
@@ -750,6 +856,30 @@ function Copy-FirmwareToRemote {
     
     $targetConfig = $Script:Config.Targets[$Target]
     $buildDir = Join-Path $Script:Config.ProjectRoot ".pio\build\$Environment"
+    
+    # Handle local target - no upload needed, just verify files exist
+    if (Test-IsLocalTarget -Target $Target) {
+        Write-Host "`n✅ Using local firmware files..." -ForegroundColor Cyan
+        
+        $files = @(
+            (Join-Path $buildDir "firmware.bin"),
+            (Join-Path $buildDir "bootloader.bin"),
+            (Join-Path $buildDir "partitions.bin")
+        )
+        
+        foreach ($file in $files) {
+            if (-not (Test-Path $file)) {
+                Write-Failure "Missing: $file"
+                return $false
+            }
+            $fileName = Split-Path $file -Leaf
+            $fileSize = [math]::Round((Get-Item $file).Length / 1KB, 1)
+            Write-Host "   ✓ $fileName ($fileSize KB)" -ForegroundColor DarkGray
+        }
+        
+        Write-Success "All firmware files present"
+        return $true
+    }
     
     Write-Host "`n📤 Uploading firmware to $Target ($($targetConfig.Host))..." -ForegroundColor Cyan
     
@@ -800,13 +930,20 @@ function Monitor-SerialOutput {
         Replay the most recent monitoring session log instead of starting a new session
     #>
     param(
-        [ValidateSet("mac", "unraid")]
+        [ValidateSet("mac", "unraid", "local")]
         [string]$Target = "mac",
         [string]$SerialPort,
         [int]$BaudRate = 115200,
         [switch]$NoReset,
         [switch]$Replay
     )
+    
+    # Local target: not applicable for serial monitoring via SSH
+    if (Test-IsLocalTarget -Target $Target) {
+        Write-Warning "Serial monitoring not supported for local target"
+        Write-Host "   Use PlatformIO monitor or a serial terminal like PuTTY/TeraTerm" -ForegroundColor Yellow
+        return
+    }
     
     $targetConfig = $Script:Config.Targets[$Target]
     $port = if ($SerialPort) { $SerialPort } else { $targetConfig.DefaultSerialPort }
@@ -966,22 +1103,80 @@ function Set-DeviceVpnConfig {
 
 function Start-RemoteDeployment {
     param(
-        [ValidateSet("mac", "unraid")]
+        [ValidateSet("mac", "unraid", "local")]
         [string]$Target = "mac",
         [ValidateSet("serial", "ota")]
         [string]$FlashMethod = "serial",
+        [string]$Environment = "bowie-phone-1",
         [string]$SerialPort,
         [string]$DeviceIp,
         [string]$PythonCmd = "python3",
         [string]$WifiSsid,
         [string]$WifiPassword,
+        [string]$EsptoolCmd,
         [switch]$MonitorAfter,
         [switch]$NoWait
     )
     
     $targetConfig = $Script:Config.Targets[$Target]
     
-    Write-Host "`n🚀 Starting remote deployment..." -ForegroundColor Cyan
+    Write-Host "`n🚀 Starting deployment..." -ForegroundColor Cyan
+    
+    # Handle local Windows deployment
+    if (Test-IsLocalTarget -Target $Target) {
+        if ($FlashMethod -eq "ota") {
+            Write-Failure "Local OTA not yet implemented - use remote target for OTA"
+            return $false
+        }
+        
+        # Local serial flash
+        $buildDir = Join-Path $Script:Config.ProjectRoot ".pio\build\$Environment"
+        $port = if ($SerialPort) { $SerialPort } else { $targetConfig.DefaultSerialPort }
+        
+        $firmwareBin = Join-Path $buildDir "firmware.bin"
+        $bootloaderBin = Join-Path $buildDir "bootloader.bin"
+        $partitionsBin = Join-Path $buildDir "partitions.bin"
+        
+        Write-Host "   Flashing to $port..." -ForegroundColor DarkGray
+        Write-Host ""
+        
+        # Build esptool command
+        $esptool = if ($EsptoolCmd) { $EsptoolCmd } else { "python -m esptool" }
+        $flashCmd = "$esptool --chip esp32 --port $port --baud $($Script:Config.BaudRate) --before default_reset --after hard_reset write_flash -z --flash_mode $($Script:Config.FlashMode) --flash_freq $($Script:Config.FlashFreq) --flash_size detect $($Script:Config.BootloaderOffset) `"$bootloaderBin`" $($Script:Config.PartitionsOffset) `"$partitionsBin`" $($Script:Config.FirmwareOffset) `"$firmwareBin`""
+        
+        Write-Host "   Command: $flashCmd" -ForegroundColor DarkGray
+        Write-Host ""
+        
+        # Execute esptool
+        $output = Invoke-Expression $flashCmd 2>&1
+        $success = $LASTEXITCODE -eq 0
+        
+        # Display output
+        $output | ForEach-Object {
+            $line = $_.ToString()
+            if ($line -match "error|fail|ERROR|FAIL") {
+                Write-Host "   $line" -ForegroundColor Red
+            } elseif ($line -match "Writing|Wrote|Hash|Leaving") {
+                Write-Host "   $line" -ForegroundColor Cyan
+            } else {
+                Write-Host "   $line" -ForegroundColor DarkGray
+            }
+        }
+        
+        Write-Host ""
+        
+        if ($success) {
+            Write-Success "Flash completed successfully!"
+            return $true
+        } else {
+            Write-Failure "Flash failed!"
+            Write-Host "   Check that:" -ForegroundColor Yellow
+            Write-Host "     - Device is connected to $port" -ForegroundColor Yellow
+            Write-Host "     - No other program is using the port" -ForegroundColor Yellow
+            Write-Host "     - USB drivers are installed" -ForegroundColor Yellow
+            return $false
+        }
+    }
     
     # Generate the deployment script
     $configureWifi = $WifiSsid -and $WifiSsid.Length -gt 0
@@ -1085,7 +1280,7 @@ function Start-RemoteDeployment {
 function Deploy-ViaSsh {
     param(
         [string]$Environment = "bowie-phone-1",
-        [ValidateSet("mac", "unraid")]
+        [ValidateSet("mac", "unraid", "local")]
         [string]$Target = "mac",
         [ValidateSet("serial", "ota")]
         [string]$FlashMethod = "serial",
@@ -1103,8 +1298,11 @@ function Deploy-ViaSsh {
     $totalSteps = if ($SkipBuild) { 2 } else { 3 }
     $step = 0
     
+    $isLocal = Test-IsLocalTarget -Target $Target
+    $deployType = if ($isLocal) { "Local" } else { "via SSH" }
+    
     Write-Host "`n" + ("=" * 55) -ForegroundColor Cyan
-    Write-Host "🚀 ESP32 Deployment via SSH (Resilient)" -ForegroundColor Cyan
+    Write-Host "🚀 ESP32 Deployment $deployType" -ForegroundColor Cyan
     Write-Host ("=" * 55) -ForegroundColor Cyan
     Write-Host "   Environment: $Environment"
     Write-Host "   Target: $Target"
@@ -1120,17 +1318,19 @@ function Deploy-ViaSsh {
     # Test SSH connection
     $targetConfig = $Script:Config.Targets[$Target]
     
-    # Ensure required dependencies are installed on remote
+    # Ensure required dependencies are installed on remote/local
     $depsResult = Ensure-RemoteDependencies -Target $Target -FlashMethod $FlashMethod
     if ($depsResult -is [hashtable]) {
         if (-not $depsResult.Success) {
             return $false
         }
         $pythonCmd = if ($depsResult.PythonCmd) { $depsResult.PythonCmd } else { "python3" }
+        $esptoolCmd = if ($depsResult.EsptoolCmd) { $depsResult.EsptoolCmd } else { $null }
     } elseif (-not $depsResult) {
         return $false
     } else {
         $pythonCmd = "python3"
+        $esptoolCmd = $null
     }
     
     # Step 1: Build
@@ -1159,11 +1359,27 @@ function Deploy-ViaSsh {
     
     # Step 3: Run deployment
     $step++
-    Write-Step $step $totalSteps "Running remote deployment"
-    $success = Start-RemoteDeployment -Target $Target -FlashMethod $FlashMethod `
-        -SerialPort $SerialPort -DeviceIp $DeviceIp -PythonCmd $pythonCmd `
-        -WifiSsid $WifiSsid -WifiPassword $WifiPassword `
-        -MonitorAfter:$MonitorAfter -NoWait:$NoWait
+    $deployLabel = if ($isLocal) { "Flashing device" } else { "Running remote deployment" }
+    Write-Step $step $totalSteps $deployLabel
+    $deployParams = @{
+        Target = $Target
+        FlashMethod = $FlashMethod
+        SerialPort = $SerialPort
+        DeviceIp = $DeviceIp
+        PythonCmd = $pythonCmd
+        WifiSsid = $WifiSsid
+        WifiPassword = $WifiPassword
+        MonitorAfter = $MonitorAfter
+        NoWait = $NoWait
+    }
+    if ($esptoolCmd) {
+        $deployParams.EsptoolCmd = $esptoolCmd
+    }
+    if ($isLocal) {
+        # Pass Environment for local builds
+        $deployParams.Environment = $Environment
+    }
+    $success = Start-RemoteDeployment @deployParams
     
     if (-not $success) {
         return $false
@@ -1401,12 +1617,26 @@ function Get-RemoteDeployLog {
         Retrieve deployment log from remote machine
     #>
     param(
-        [ValidateSet("mac", "unraid")]
+        [ValidateSet("mac", "unraid", "local")]
         [string]$Target = "mac",
         [switch]$Follow
     )
     
     $targetConfig = $Script:Config.Targets[$Target]
+    
+    # Local target: use local log file
+    if (Test-IsLocalTarget -Target $Target) {
+        if (Test-Path $targetConfig.LogFile) {
+            if ($Follow) {
+                Get-Content $targetConfig.LogFile -Wait -Tail 50
+            } else {
+                Get-Content $targetConfig.LogFile
+            }
+        } else {
+            Write-Warning "Log file not found: $($targetConfig.LogFile)"
+        }
+        return
+    }
     if($Follow) {
         $Cmd="tail -f"
     } else {
