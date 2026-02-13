@@ -7,3 +7,4 @@
 docs/config.local.js
 build.log
 logs/
+!docs/logs
