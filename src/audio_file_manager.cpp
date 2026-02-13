@@ -23,14 +23,27 @@
 #include <FS.h>
 #include <SPI.h>
 #include <set>
-#include "AudioTools/Disk/AudioSourceSD.h"
+#if SD_USE_MMC
+  #include "AudioTools/Disk/AudioSourceSDMMC.h"
+#else
+  #include "AudioTools/Disk/AudioSourceSD.h"
+#endif
 
 // Helper macros for SD vs SD_MMC abstraction
-#define SD_CARD (sdMmmcSupport ? (fs::FS&)SD_MMC : (fs::FS&)SD)
-#define SD_EXISTS(path) (sdMmmcSupport ? SD_MMC.exists(path) : SD.exists(path))
-#define SD_OPEN(path, mode) (sdMmmcSupport ? SD_MMC.open(path, mode) : SD.open(path, mode))
-#define SD_MKDIR(path) (sdMmmcSupport ? SD_MMC.mkdir(path) : SD.mkdir(path))
-#define SD_REMOVE(path) (sdMmmcSupport ? SD_MMC.remove(path) : SD.remove(path))
+// Controlled by SD_USE_MMC in config.h (compile-time, not runtime)
+#if SD_USE_MMC
+  #define SD_CARD     ((fs::FS&)SD_MMC)
+  #define SD_EXISTS(path)       SD_MMC.exists(path)
+  #define SD_OPEN(path, mode)   SD_MMC.open(path, mode)
+  #define SD_MKDIR(path)        SD_MMC.mkdir(path)
+  #define SD_REMOVE(path)       SD_MMC.remove(path)
+#else
+  #define SD_CARD     ((fs::FS&)SD)
+  #define SD_EXISTS(path)       SD.exists(path)
+  #define SD_OPEN(path, mode)   SD.open(path, mode)
+  #define SD_MKDIR(path)        SD.mkdir(path)
+  #define SD_REMOVE(path)       SD.remove(path)
+#endif
 
 // ============================================================================
 // STRUCTURES
@@ -59,8 +72,7 @@ static unsigned long lastCacheCheck = 0;  // Last lightweight cache check time
 static char cachedEtag[64] = {0};         // Cached ETag/lastModified for quick validation
 static bool sdCardAvailable = false;  // True if SD card is mounted and accessible
 static bool sdCardInitFailed = false; // True if SD init was attempted and failed (don't retry)
-static int sdCardCsPin = 13; // SD card chip select pin
-static bool sdMmmcSupport = false; // MMC support flag
+static bool spiInitialized = false;   // True after SPI.begin() has been called
 
 // DNS cache for use after WireGuard breaks public DNS
 static IPAddress cachedGitHubIP;
@@ -81,6 +93,11 @@ static AudioPlaylistRegistry& playlistRegistry = getAudioPlaylistRegistry();
 
 /**
  * @brief Initialize SD card if not already done
+ * 
+ * Handles both first-time SPI setup and SD card mounting.
+ * Uses pin definitions from config.h (SD_CS_PIN, SD_CLK_PIN, etc.)
+ * Retries up to 3 times on first init, won't retry after permanent failure.
+ * 
  * @return true if SD card is ready, false otherwise
  */
 static bool initializeSDCard()
@@ -98,45 +115,69 @@ static bool initializeSDCard()
     
     Logger.println("🔧 Initializing SD card...");
     
-    if (sdMmmcSupport)
+#if SD_USE_MMC
+    // Using SD_MMC mode (SDMMC 1-bit interface)
+    // Initialize SD_MMC if not already done
+    Logger.println("🔧 Initializing SD_MMC (1-bit mode)...");
+    if (!SD_MMC.begin("/sdcard", true))  // true = 1-bit mode
     {
-        // Using SD_MMC mode (SDMMC interface) - assumes already initialized in main.ino
-        uint8_t cardType = SD_MMC.cardType();
-        if (cardType == CARD_NONE)
-        {
-            Logger.println("❌ No SD_MMC card detected");
-            sdCardInitFailed = true;
-            return false;
-        }
-        
-        uint64_t cardSize = SD_MMC.cardSize() / (1024 * 1024);
-        Logger.printf("✅ SD_MMC Card Size: %lluMB\n", cardSize);
-        sdCardAvailable = true;
-        return true;
+        Logger.println("❌ SD_MMC.begin() failed");
+        sdCardInitFailed = true;
+        return false;
     }
-    else
+    
+    uint8_t cardType = SD_MMC.cardType();
+    if (cardType == CARD_NONE)
     {
-        // Using SD mode (SPI interface)
-        if (!SD.begin(sdCardCsPin))
-        {
-            Logger.println("❌ SD card initialization failed");
-            sdCardInitFailed = true;
-            return false;
-        }
-        delay(1000);
-        uint8_t cardType = SD.cardType();
-        if (cardType == CARD_NONE)
-        {
-            Logger.println("❌ No SD card attached");
-            sdCardInitFailed = true;
-            return false;
-        }
-        
-        uint64_t cardSize = SD.cardSize() / (1024 * 1024);
-        Logger.printf("✅ SD Card Size: %lluMB\n", cardSize);
-        sdCardAvailable = true;
-        return true;
+        Logger.println("❌ No SD_MMC card detected");
+        sdCardInitFailed = true;
+        return false;
     }
+    
+    uint64_t cardSize = SD_MMC.cardSize() / (1024 * 1024);
+    Logger.printf("✅ SD_MMC initialized (1-bit mode, %lluMB)\n", cardSize);
+    sdCardAvailable = true;
+    return true;
+#else
+    // Using SD mode (SPI interface)
+    // Initialize SPI bus once with pins from config.h
+    if (!spiInitialized)
+    {
+        SPI.begin(SD_CLK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
+        spiInitialized = true;
+    }
+    
+    // Try up to 3 times with increasing delays
+    for (int attempt = 1; attempt <= 3; attempt++)
+    {
+        Logger.printf("🔧 SD SPI initialization attempt %d/3...\n", attempt);
+        delay(attempt * 300);
+        
+        if (SD.begin(SD_CS_PIN, SPI))
+        {
+            uint8_t cardType = SD.cardType();
+            if (cardType != CARD_NONE)
+            {
+                uint64_t cardSize = SD.cardSize() / (1024 * 1024);
+                Logger.printf("✅ SD card initialized (SPI mode, %lluMB)\n", cardSize);
+                sdCardAvailable = true;
+                return true;
+            }
+            else
+            {
+                Logger.println("❌ No SD card detected");
+            }
+        }
+        else
+        {
+            Logger.println("❌ SD.begin() failed");
+        }
+    }
+    
+    Logger.println("❌ SD card initialization failed after 3 attempts");
+    sdCardInitFailed = true;
+    return false;
+#endif
 }
 
 /**
@@ -868,60 +909,31 @@ static int loadAudioFilesFromSDCard()
 // PUBLIC FUNCTIONS
 // ============================================================================
 
-AudioSource *initializeAudioFileManager(int sdCsPin, bool mmcSupport,
-                                        int sdClkPin, int sdMosiPin, int sdMisoPin,
-                                        const char *startFilePath,
-                                        bool *sdCardAvailableOut)
+AudioSource *initializeAudioFileManager()
 {
     Logger.println("🔧 Initializing Audio File Manager...");
     
-    // Initialize variables
-    sdMmmcSupport = mmcSupport;
-    sdCardCsPin = sdCsPin;
+    // Reset state for clean initialization
     lastCacheTime = 0;
     sdCardAvailable = false;
+    sdCardInitFailed = false;
+    spiInitialized = false;
 
     AudioSource* source = nullptr;
 
-    // Initialize SD card in SPI mode
-    if (!mmcSupport)
+    // Initialize SD card (handles SPI/MMC setup and retries internally)
+    if (initializeSDCard())
     {
-        SPI.begin(sdClkPin, sdMisoPin, sdMosiPin, sdCsPin);
-        
-        for (int attempt = 1; attempt <= 3 && !sdCardAvailable; attempt++) {
-            Logger.printf("🔧 SD SPI initialization attempt %d/3...\n", attempt);
-            delay(attempt * 300);
-            
-            if (SD.begin(sdCsPin, SPI)) {
-                uint8_t cardType = SD.cardType();
-                if (cardType != CARD_NONE) {
-                    uint64_t cardSize = SD.cardSize() / (1024 * 1024);
-                    Logger.printf("✅ SD card initialized (SPI mode, %lluMB)\n", cardSize);
-                    sdCardAvailable = true;
-                } else {
-                    Logger.println("❌ No SD card detected");
-                }
-            } else {
-                Logger.println("❌ SD.begin() failed");
-            }
-        }
-        
-        if (sdCardAvailable) {
-            // Create AudioSourceSD now that SPI is initialized
-            source = new AudioSourceSD(startFilePath, "wav", sdCsPin, SPI);
-            Logger.println("✅ AudioSourceSD created");
-        } else {
-            Logger.println("⚠️ SD initialization failed - continuing without SD card");
-        }
+        // Create audio source appropriate for the SD mode
+#if SD_USE_MMC
+        source = new AudioSourceSDMMC(SD_AUDIO_PATH, "wav");
+        Logger.println("✅ AudioSourceSDMMC created");
+#else
+        source = new AudioSourceSD(SD_AUDIO_PATH, "wav", SD_CS_PIN, SPI);
+        Logger.println("✅ AudioSourceSD created");
+#endif
     }
-    
-    // Return SD card availability status if requested
-    if (sdCardAvailableOut) {
-        *sdCardAvailableOut = sdCardAvailable;
-    }
-    
-    // Skip SD card operations if not available
-    if (!sdCardAvailable)
+    else
     {
         Logger.println("⚠️ SD card not available - running in memory-only mode");
         Logger.println("ℹ️ Audio catalog will be downloaded when WiFi is available");

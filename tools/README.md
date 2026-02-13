@@ -2,9 +2,25 @@
 
 This directory contains deployment and management scripts for the Bowie Phone ESP32 firmware.
 
-## Main Deployment Script
+## PhoneUtils.ps1 - Unified PowerShell Toolkit
 
-**`deploy_via_ssh.ps1`** - Comprehensive deployment solution for ESP32 firmware
+**`PhoneUtils.ps1`** - All-in-one PowerShell module for Bowie Phone development
+
+### Auto-Loading
+
+When you open a new terminal in this workspace, PhoneUtils is automatically loaded via `.vscode/settings.json`. All functions are immediately available.
+
+### Core Functions
+
+#### Deployment
+- **`Deploy-ViaSsh`** - Deploy firmware to remote machine via SSH
+- **`Build-Firmware`** - Build firmware with PlatformIO
+- **`Watch-SerialOutput`** - Monitor device serial output
+- **`Get-RemoteDeployLog`** - Retrieve deployment logs
+
+#### Version Management
+- **`Bump-Version`** - Increment firmware version across all files
+- **`Publish-Firmware`** - Build and publish firmware to web installer
 
 ### Features
 
@@ -15,27 +31,34 @@ This directory contains deployment and management scripts for the Bowie Phone ES
 - ✅ **Serial monitoring** - Built-in screen-based monitoring
 - ✅ **Real-time logs** - Live deployment progress
 - ✅ **Two targets** - Mac or Unraid deployment hosts
+- ✅ **Version management** - Automated version bumping
+- ✅ **Web installer** - Publish firmware for browser-based flashing
 
 ### Quick Start
 
 ```powershell
-# Deploy and monitor
-.\tools\deploy_via_ssh.ps1 -MonitorAfter
+# Functions are auto-loaded when you open a terminal
+
+# Build and deploy
+Deploy-ViaSsh -MonitorAfter
 
 # Deploy to specific target
-.\tools\deploy_via_ssh.ps1 -Target unraid
+Deploy-ViaSsh -Target unraid
 
 # Deploy with custom WiFi credentials
-.\tools\deploy_via_ssh.ps1 -WifiSsid "MyNetwork" -WifiPassword "secret123"
+Deploy-ViaSsh -WifiSsid "MyNetwork" -WifiPassword "secret123"
 
-# Fire and forget (background deployment)
-.\tools\deploy_via_ssh.ps1 -NoWait
+# Bump version and publish
+Bump-Version
+Publish-Firmware
 
-# Skip build, just flash existing firmware
-.\tools\deploy_via_ssh.ps1 -SkipBuild
+# Just monitor serial
+Watch-SerialOutput
 ```
 
-### Parameters
+### Deployment Parameters
+
+When calling `Deploy-ViaSsh`:
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
@@ -50,13 +73,44 @@ This directory contains deployment and management scripts for the Bowie Phone ES
 | `-Clean` | Clean before build | `$false` |
 | `-NoWait` | Don't wait for completion | `$false` |
 
-### Functions (Dot-Source Usage)
-
-Load functions individually:
+### Version Management
 
 ```powershell
-. .\tools\deploy_via_ssh.ps1
+# Auto-increment patch version (1.0.0 -> 1.0.1)
+Bump-Version
 
+# Set specific version
+Bump-Version -NewVersion "2.0.0"
+```
+
+Updates version in:
+- `platformio.ini` (FIRMWARE_VERSION)
+- `docs/firmware/manifest.json`
+- `docs/update.html`
+
+### Publish Firmware
+
+```powershell
+# Build and publish to web installer
+Publish-Firmware
+
+# Publish specific environment
+Publish-Firmware -Environment dream-phone-1
+
+# Skip build, just copy binaries
+Publish-Firmware -SkipBuild
+
+# Override version
+Publish-Firmware -Version "1.2.3"
+```
+
+Copies firmware to `docs/firmware/` and updates `manifest.json` for the web-based ESP installer.
+
+### Individual Function Usage
+
+All functions are auto-loaded when you open a terminal:
+
+```powershell
 # Build only
 Build-Firmware -Environment bowie-phone-1
 
@@ -86,9 +140,6 @@ Configured in `$Script:Config.Targets`:
 Interactive monitoring with `screen`:
 
 ```powershell
-# Source script
-. .\tools\deploy_via_ssh.ps1
-
 # Monitor with device reset
 Watch-SerialOutput
 
@@ -151,14 +202,8 @@ The PowerShell script generates and uploads an autonomous bash deployment script
 
 ## Other Tools
 
-**`bump-version.ps1`** - Version management
-- Increments firmware version in platformio.ini
-
 **`deploy-phonehome.ps1`** - Phone home deployment
 - Publishes firmware to phone-home server
-
-**`publish-firmware.ps1`** - Firmware publishing
-- Build and publish firmware releases
 
 **`send_command.py`** - Send commands to device
 - Serial/network command utility
@@ -207,8 +252,11 @@ ssh jumper@100.111.120.5 "echo OK"
 
 ### Build Fails
 ```powershell
-# Clean build
-.\tools\deploy_via_ssh.ps1 -Clean
+# Clean build and deploy
+Deploy-ViaSsh -Clean
+
+# Or just clean build
+Build-Firmware -Clean
 
 # Check build log for full details
 Get-Content build.log
@@ -249,42 +297,52 @@ cat ~/.ssh/config
 
 ### Deployment Logs
 ```powershell
-# View remote deployment log
-ssh jumper@100.111.120.5 "cat /tmp/fw_deploy.log"
-
-# Or use helper function
-. .\tools\deploy_via_ssh.ps1
+# View remote deployment log (function auto-loaded)
 Get-RemoteDeployLog -Target mac
+
+# Or direct SSH
+ssh jumper@100.111.120.5 "cat /tmp/fw_deploy.log"
 ```
 
 ## Examples
 
 ### Development Workflow
 ```powershell
-# Dot-source for quick iterations
-. .\tools\deploy_via_ssh.ps1
+# Functions are auto-loaded in new terminals
 
 # Build and flash
 Build-Firmware
-Deploy-ViaSsh -SkipBuild:$false -MonitorAfter
+Deploy-ViaSsh -MonitorAfter
 
 # Just monitor after changes
 Watch-SerialOutput
 ```
 
+### Version and Publish Workflow
+```powershell
+# Bump version
+Bump-Version  # 1.0.0 -> 1.0.1
+
+# Build and publish to web installer
+Publish-Firmware
+
+# Deploy to device
+Deploy-ViaSsh -MonitorAfter
+```
+
 ### Production Deployment
 ```powershell
 # Clean build with monitoring
-.\tools\deploy_via_ssh.ps1 -Clean -MonitorAfter
+Deploy-ViaSsh -Clean -MonitorAfter
 
 # Fire and forget to production
-.\tools\deploy_via_ssh.ps1 -Target unraid -NoWait
+Deploy-ViaSsh -Target unraid -NoWait
 ```
 
 ### WiFi Reconfiguration
 ```powershell
 # Deploy with new WiFi credentials
-.\tools\deploy_via_ssh.ps1 `
+Deploy-ViaSsh `
     -SkipBuild `
     -WifiSsid "NewNetwork" `
     -WifiPassword "newpassword" `
@@ -293,10 +351,7 @@ Watch-SerialOutput
 
 ### Remote Debugging
 ```powershell
-# Source functions
-. .\tools\deploy_via_ssh.ps1
-
-# Monitor device
+# Monitor device (functions auto-loaded)
 Watch-SerialOutput -NoReset
 
 # In screen session, type commands:

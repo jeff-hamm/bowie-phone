@@ -45,19 +45,24 @@
     Monitor serial output after flashing (serial mode only)
 .PARAMETER NoWait
     Don't wait for deployment to complete (fire and forget)
+.PARAMETER BuildArgs
+    Extra build flags to pass to PlatformIO (e.g., "-DRUN_SD_DEBUG_FIRST")
 .EXAMPLE
     # Direct execution (legacy - runs Deploy-ViaSsh)
     .\PhoneUtils.ps1
     .\PhoneUtils.ps1 -Target unraid -FlashMethod ota
     .\PhoneUtils.ps1 -WifiSsid "MyNetwork" -WifiPassword "secret123"
     .\PhoneUtils.ps1 -NoWait
+    .\PhoneUtils.ps1 -BuildArgs "-DRUN_SD_DEBUG_FIRST"
     
     # Dot-source for all utilities
     . .\tools\PhoneUtils.ps1
     Build-Firmware -Environment bowie-phone-1
+    Build-Firmware -Environment bowie-phone-1 -BuildArgs "-DRUN_SD_DEBUG_FIRST"
     Bump-Version
     Publish-Firmware
     Deploy-ViaSsh -MonitorAfter
+    Deploy-ViaSsh -BuildArgs "-DRUN_SD_DEBUG_FIRST" -MonitorAfter
     Watch-SerialOutput
 #>
 
@@ -75,7 +80,8 @@ param(
     [switch]$SkipBuild,
     [switch]$MonitorAfter,
     [switch]$Clean,
-    [switch]$NoWait
+    [switch]$NoWait,
+    [string]$BuildArgs
 )
 
 #region Configuration
@@ -392,7 +398,8 @@ function Clear-SerialPort {
 function Build-Firmware {
     param(
         [string]$Environment = "bowie-phone-1",
-        [switch]$Clean
+        [switch]$Clean,
+        [string]$BuildArgs
     )
     
     $buildDir = Join-Path $Script:Config.ProjectRoot ".pio\build\$Environment"
@@ -406,7 +413,18 @@ function Build-Firmware {
             & $Script:Config.PioExe run -e $Environment -t clean 2>&1 | Out-Null
         }
         
+        # Set extra build flags if provided (appends to existing build_flags)
+        if ($BuildArgs) {
+            Write-Host "   Extra build flags: $BuildArgs" -ForegroundColor DarkGray
+            $env:PLATFORMIO_BUILD_FLAGS = $BuildArgs
+        }
+        
         $output = & $Script:Config.PioExe run -e $Environment 2>&1
+        
+        # Clear the environment variable after build
+        if ($BuildArgs) {
+            Remove-Item Env:\PLATFORMIO_BUILD_FLAGS -ErrorAction SilentlyContinue
+        }
         
         # Save full output to log file
         $logFile = Join-Path $Script:Config.ProjectRoot "build.log"
@@ -956,7 +974,8 @@ function Deploy-ViaSsh {
         [switch]$SkipBuild,
         [switch]$MonitorAfter,
         [switch]$Clean,
-        [switch]$NoWait
+        [switch]$NoWait,
+        [string]$BuildArgs
     )
     
     $totalSteps = if ($SkipBuild) { 2 } else { 3 }
@@ -978,14 +997,6 @@ function Deploy-ViaSsh {
     
     # Test SSH connection
     $targetConfig = $Script:Config.Targets[$Target]
-    Write-Host "🔗 Testing SSH connection to $($targetConfig.Host)..." -ForegroundColor DarkGray
-    if (-not (Test-SshConnection -TargetHost $targetConfig.Host)) {
-        Write-Failure "Cannot connect to $($targetConfig.Host)"
-        Write-Host "   Run: ssh-copy-id $($targetConfig.Host)" -ForegroundColor Yellow
-        return $false
-    }
-    Write-Success "SSH connected"
-    
     # Ensure esptool is installed on remote
     if (-not (Ensure-RemoteEsptool -Target $Target)) {
         return $false
@@ -995,7 +1006,7 @@ function Deploy-ViaSsh {
     if (-not $SkipBuild) {
         $step++
         Write-Step $step $totalSteps "Building firmware"
-        if (-not (Build-Firmware -Environment $Environment -Clean:$Clean)) {
+        if (-not (Build-Firmware -Environment $Environment -Clean:$Clean -BuildArgs $BuildArgs)) {
             return $false
         }
     }
@@ -1036,8 +1047,8 @@ function Deploy-ViaSsh {
     return $true
 }
 
-function Bump-Version {
-    <#
+    
+<#
     .SYNOPSIS
         Increment firmware version in platformio.ini and related files
     .DESCRIPTION
@@ -1051,13 +1062,10 @@ function Bump-Version {
         Bump-Version
         Bump-Version -NewVersion "2.0.0"
     #>
+function Bump-Version {
     param(
         [string]$NewVersion
     )
-    
-    $platformioPath = Join-Path $Script:Config.ProjectRoot "platformio.ini"
-    $manifestPath = Join-Path $Script:Config.ProjectRoot "docs/firmware/manifest.json"
-    $updateHtmlPath = Join-Path $Script:Config.ProjectRoot "docs/update.html"
     
     # Helper to get next patch version
     function Get-NextPatchVersion {
@@ -1084,6 +1092,9 @@ function Bump-Version {
         }
         Set-Content -Path $Path -Value $updated
     }
+    $platformioPath = Join-Path $Script:Config.ProjectRoot "platformio.ini"
+    $manifestPath = Join-Path $Script:Config.ProjectRoot "docs/firmware/manifest.json"
+    $updateHtmlPath = Join-Path $Script:Config.ProjectRoot "docs/update.html"
     
     # Determine target version
     if (-not $NewVersion) {
@@ -1101,7 +1112,7 @@ function Bump-Version {
     Write-Host "   ✓ manifest.json"
     
     Replace-InFile -Path $updateHtmlPath -Pattern '(id="version">)\d+\.\d+\.\d+(<)' -Replacement "$1$NewVersion$2"
-    Replace-InFile -Path $updateHtmlPath -Pattern '(\|\| \')\d+\.\d+\.\d+(\')' -Replacement "$1$NewVersion$2"
+    Replace-InFile -Path $updateHtmlPath -Pattern '(\|\| \'')\d+\.\d+\.\d+(\'')' -Replacement "$1$NewVersion$2"
     Write-Host "   ✓ update.html"
     
     Write-Success "Version bumped to $NewVersion"
@@ -1124,17 +1135,21 @@ function Publish-Firmware {
         Skip the build step and just copy existing binaries
     .PARAMETER Clean
         Clean before building
+    .PARAMETER BuildArgs
+        Extra build flags to pass to PlatformIO (e.g., "-DRUN_SD_DEBUG_FIRST")
     .EXAMPLE
         Publish-Firmware
         Publish-Firmware -Environment dream-phone-1
         Publish-Firmware -Version "1.2.3" -Environment dream-phone-1
         Publish-Firmware -SkipBuild
+        Publish-Firmware -BuildArgs "-DRUN_SD_DEBUG_FIRST"
     #>
     param(
         [string]$Environment = "bowie-phone-1",
         [string]$Version,
         [switch]$SkipBuild,
-        [switch]$Clean
+        [switch]$Clean,
+        [string]$BuildArgs
     )
     
     $BuildDir = Join-Path $Script:Config.ProjectRoot ".pio\build\$Environment"
@@ -1159,7 +1174,7 @@ function Publish-Firmware {
     # Build firmware
     if (-not $SkipBuild) {
         Write-Host "`n🔨 Building firmware for $Environment..." -ForegroundColor Yellow
-        if (-not (Build-Firmware -Environment $Environment -Clean:$Clean)) {
+        if (-not (Build-Firmware -Environment $Environment -Clean:$Clean -BuildArgs $BuildArgs)) {
             Write-Failure "Build failed"
             return $false
         }
@@ -1288,13 +1303,22 @@ if ($MyInvocation.InvocationName -ne '.') {
         -SkipBuild:$SkipBuild `
         -MonitorAfter:$MonitorAfter `
         -Clean:$Clean `
-        -NoWait:$NoWait
+        -NoWait:$NoWait `
+        -BuildArgs $BuildArgs
     
     if (-not $result) {
         exit 1
     }
 }
 else {
-    echo "$PSScriptroot\README.md"
+    Write-Host "🚀 Bowie Phone Utilities Loaded" -ForegroundColor Cyan
+    Write-Host "   Available functions:" -ForegroundColor DarkGray
+    Write-Host "     • Build-Firmware" -ForegroundColor Green
+    Write-Host "     • Deploy-ViaSsh" -ForegroundColor Green
+    Write-Host "     • Bump-Version" -ForegroundColor Green
+    Write-Host "     • Publish-Firmware" -ForegroundColor Green
+    Write-Host "     • Monitor-SerialOutput" -ForegroundColor Green
+    Write-Host "     • Get-RemoteDeployLog" -ForegroundColor Green
+    Write-Host "`n   Type Get-Help <function-name> for details" -ForegroundColor DarkGray
 }
 #endregion

@@ -32,8 +32,11 @@ static char storedPrivateKey[64] = {0};
 static char storedPeerEndpoint[128] = {0};
 static char storedPeerPublicKey[64] = {0};
 static uint16_t storedPeerPort = 51820;
-static bool tailscaleEnabled = false;  // Set by shouldEnableTailscale()
-
+#ifdef TAILSCALE_ALWAYS_ENABLED
+static bool tailscaleEnabled = true;  // Set by shouldEnableTailscale()
+#else
+static bool tailscaleEnabled = false; // Set by shouldEnableTailscale()
+#endif
 // Callback to check if reconnection should be skipped (e.g., phone is off hook)
 static bool (*shouldSkipReconnect)() = nullptr;
 

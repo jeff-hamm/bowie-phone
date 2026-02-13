@@ -1,0 +1,176 @@
+---
+title: "Audio Analysis — Bowie Phone Capture"
+layout: default
+---
+# Audio Analysis — Bowie Phone Capture
+
+**Duration:** {{ "%.2f"|format(duration_sec) }} seconds  
+**Sample Rate:** {{ "{:,}".format(sample_rate) }} Hz  
+**Samples:** {{ "{:,}".format(samples) }}  
+**Bit Depth:** {{ bit_depth }}
+
+## Signal Statistics
+
+- **Min:** {{ min_val }}
+- **Max:** {{ max_val }}
+- **Mean:** {{ "%.1f"|format(mean_val) }}
+- **Std Dev:** {{ "%.1f"|format(std_val) }}
+- **Peak Amplitude:** {{ peak_amplitude }}
+- **Peak:** {{ "%.1f"|format(peak_dbfs) }} dBFS
+- **RMS Level:** {{ "%.1f"|format(rms_level) }}
+- **RMS:** {{ "%.1f"|format(rms_dbfs) }} dBFS
+- **Clipping:** {{ clipped_samples }} samples ({{ "%.2f"|format(clipped_pct) }}%)
+
+---
+
+## Audio Waveforms (by second)
+
+{% for img in waveform_images %}
+### Second {{ img.second }} ({{ img.start_time }} – {{ img.end_time }})
+![Second {{ img.second }}]({{ img.filename }})
+
+{% endfor %}
+
+---
+
+## Tone Regions Detected
+
+Energy gate threshold: **{{ energy_threshold_db }} dBFS**  
+Active windows: **{{ num_active_windows }}** / {{ num_windows }} total
+
+{% if tone_regions %}
+| Region | Start | End | Duration |
+|--------|-------|-----|----------|
+{% for r in tone_regions %}
+| {{ loop.index }} | {{ "%.2f"|format(r.start) }}s | {{ "%.2f"|format(r.end) }}s | {{ "%.2f"|format(r.duration) }}s |
+{% endfor %}
+{% endif %}
+
+---
+
+## Spectrum Analysis — Identified Tone Pairs
+
+These spectrum plots show the FFT of the highest-energy window in each tone region with the **actual peak frequencies labeled** in both the low band (650–1000 Hz, blue) and high band (1150–1700 Hz, red). Dotted lines mark the standard DTMF frequencies.
+
+{% for plot in spectrum_plots %}
+{% set detail = spectrum_details[loop.index0] %}
+### Tone Region {{ detail.tone_region }} — t={{ "%.2f"|format(detail.time) }}s
+
+![Spectrum Tone {{ detail.tone_region }}]({{ plot }})
+
+{% if detail.low_freq_hz is defined and detail.high_freq_hz is defined %}
+- **Low band peak:** {{ "%.1f"|format(detail.low_freq_hz) }} Hz ({{ "%.0f"|format(detail.low_mag_db) }} dB) → nearest DTMF: {{ detail.nearest_dtmf_low }} Hz (offset: {{ detail.low_offset_hz }} Hz)
+- **High band peak:** {{ "%.1f"|format(detail.high_freq_hz) }} Hz ({{ "%.0f"|format(detail.high_mag_db) }} dB) → nearest DTMF: {{ detail.nearest_dtmf_high }} Hz (offset: {{ detail.high_offset_hz }} Hz)
+- **Decoded digit:** `{{ detail.decoded_digit }}`
+{% endif %}
+
+{% endfor %}
+
+---
+
+## Frequency Pair Timeline
+
+Shows the peak frequency in each DTMF band for every analysis window. Color intensity = magnitude. Gray dots are noise windows below the energy gate. DTMF reference frequencies shown as dashed lines.
+
+{% if freq_pair_plot %}
+![Frequency Pair Timeline]({{ freq_pair_plot }})
+{% endif %}
+
+---
+
+## Goertzel Heatmap — All 8 DTMF Frequencies Over Time
+
+Shows the Goertzel filter magnitudes for each of the 8 standard DTMF frequencies across all windows. This is what the firmware detector "sees".
+
+{% if goertzel_heatmap %}
+![Goertzel Heatmap]({{ goertzel_heatmap }})
+{% endif %}
+
+---
+
+## Goertzel Detail — Per Tone Region
+
+Bar charts of all 8 Goertzel magnitudes for the strongest window in each tone region. Blue = low band, red = high band.
+
+{% for plot in goertzel_detail_plots %}
+![Goertzel Detail Tone {{ loop.index }}]({{ plot }})
+
+{% endfor %}
+
+---
+
+## Band Magnitude Comparison
+
+FFT and Goertzel magnitudes for low vs high band across all windows.
+
+{% if band_magnitudes_plot %}
+![Band Magnitudes]({{ band_magnitudes_plot }})
+{% endif %}
+
+---
+
+## Per-Window Detail Table (Active Windows Only)
+
+{% if window_table %}
+| Time (s) | RMS (dBFS) | FFT Low (Hz) | FFT High (Hz) | FFT Digit | FFT Twist | Goertzel Low | Goertzel High | G Digit | G Twist |
+|----------|-----------|---------------|----------------|-----------|-----------|--------------|---------------|---------|---------|
+{% for w in window_table %}
+| {{ "%.2f"|format(w.time) }} | {{ "%.1f"|format(w.rms_db) }} | {{ "%.1f"|format(w.fft_low_hz) }} ({{ "%.0f"|format(w.fft_low_mag) }}) | {{ "%.1f"|format(w.fft_high_hz) }} ({{ "%.0f"|format(w.fft_high_mag) }}) | {{ w.fft_digit }} | {{ "%.1f"|format(w.fft_twist) }} | {{ w.g_low_freq }} Hz ({{ "%.0f"|format(w.g_low_mag) }}) | {{ w.g_high_freq }} Hz ({{ "%.0f"|format(w.g_high_mag) }}) | {{ w.g_digit }} | {{ "%.1f"|format(w.g_twist) }} |
+{% endfor %}
+{% endif %}
+
+---
+
+## Tone Region Consensus Analysis
+
+{% if tone_region_analysis %}
+{% for tr in tone_region_analysis %}
+### Region {{ tr.region }}: {{ "%.2f"|format(tr.start) }}s – {{ "%.2f"|format(tr.end) }}s ({{ "%.2f"|format(tr.duration) }}s, {{ tr.num_windows }} windows)
+
+| Method | Low Freq | Count | High Freq | Count | Decoded Digit |
+|--------|----------|-------|-----------|-------|---------------|
+| FFT | {{ "%.1f"|format(tr.fft_low_hz) }} Hz (≈{{ tr.fft_nearest_low }} Hz) | {{ tr.fft_low_count }}/{{ tr.num_windows }} | {{ "%.1f"|format(tr.fft_high_hz) }} Hz (≈{{ tr.fft_nearest_high }} Hz) | {{ tr.fft_high_count }}/{{ tr.num_windows }} | **{{ tr.fft_digit }}** |
+| Goertzel | {{ tr.g_low_freq }} Hz | {{ tr.g_low_count }}/{{ tr.num_windows }} | {{ tr.g_high_freq }} Hz | {{ tr.g_high_count }}/{{ tr.num_windows }} | **{{ tr.g_digit }}** |
+
+- Average magnitude: Low = {{ "%.0f"|format(tr.avg_low_mag) }}, High = {{ "%.0f"|format(tr.avg_high_mag) }}
+- Twist ratio: {{ "%.1f"|format(tr.twist) }}:1
+
+{% endfor %}
+{% endif %}
+
+---
+
+## Energy-Gated DTMF Detection (Fixed Algorithm)
+
+- **Noise floor (95th pctile Goertzel in noise windows):** {{ "%.0f"|format(noise_floor_goertzel) }}
+- **Absolute threshold (10× noise):** {{ "%.0f"|format(abs_goertzel_threshold) }}
+- **Energy gate:** {{ energy_threshold_db }} dBFS
+- **Max twist ratio:** 4.0
+
+**Detected sequence:** `{{ gated_sequence }}`
+
+{% if gated_detections %}
+| Digit | Start | End | Duration |
+|-------|-------|-----|----------|
+{% for d in gated_detections %}
+| {{ d.digit }} | {{ "%.2f"|format(d.start_time) }}s | {{ "%.2f"|format(d.end_time) }}s | {{ "%.2f"|format(d.duration) }}s |
+{% endfor %}
+{% endif %}
+
+---
+
+## Diagnostics
+
+{% if diagnostics %}
+{% for diag in diagnostics %}
+### {{ diag.title }}
+
+{{ diag.description }}
+
+{% endfor %}
+{% endif %}
+
+---
+
+**Input File:** `{{ input_file }}`  
+**Generated:** {{ generated_date }}

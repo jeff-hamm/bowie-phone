@@ -3,6 +3,12 @@
 #include "logging.h"
 #include "tone_generators.h"
 
+#ifdef AUTO_CAPTURE_ON_OFFHOOK
+#ifdef DEBUG
+extern void performAudioCapture(int durationSec);
+#endif
+#endif
+
 PhoneService Phone;
 
 // Tone generators (owned by this module)
@@ -189,6 +195,12 @@ void PhoneService::setOffHook(bool offHook, bool override) {
                 Logger.println("📞 [DEBUG] Phone set to OFF HOOK");
             } else {
                 Logger.println("📞 Phone picked up (OFF HOOK)");
+#ifdef AUTO_CAPTURE_ON_OFFHOOK
+#ifdef DEBUG
+                Logger.println("🎙️ Auto-triggering audio capture (10 seconds)...");
+                performAudioCapture(10);
+#endif
+#endif
             }
 #ifdef CAN_RING
             if (_isRinging) {

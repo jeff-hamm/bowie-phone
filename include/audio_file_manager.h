@@ -93,22 +93,12 @@ struct AudioFile
 /**
  * @brief Initialize the audio file manager
  *
+ * Initializes SD card using pins from config.h (SD_CS_PIN, SD_CLK_PIN, etc.).
  * Loads cached audio files from SD card if available.
- * Initializes SD card in SPI mode and creates AudioSourceSD if successful.
  *
- * @param sdCsPin CS pin for SPI SD mode (ignored if mmcSupport is true)
- * @param mmcSupport If true, use SD_MMC interface (already initialized). If false, use SPI SD.
- * @param sdClkPin CLK pin for SPI SD mode (default: 14)
- * @param sdMosiPin MOSI pin for SPI SD mode (default: 15)
- * @param sdMisoPin MISO pin for SPI SD mode (default: 2)
- * @param startFilePath Base path for audio files (default: "/audio")
- * @param sdCardAvailableOut Pointer to bool to receive SD card availability status (optional)
  * @return AudioSource pointer if SD card available and initialized, nullptr otherwise
  */
-AudioSource *initializeAudioFileManager(int sdCsPin = 13, bool mmcSupport = false,
-                                        int sdClkPin = 14, int sdMosiPin = 15, int sdMisoPin = 2,
-                                        const char *startFilePath = "/audio",
-                                        bool *sdCardAvailableOut = nullptr);
+AudioSource *initializeAudioFileManager();
 
 /**
  * @brief Download audio file list from remote server

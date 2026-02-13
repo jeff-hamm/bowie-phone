@@ -7,7 +7,11 @@
 #include "AudioTools.h"
 #include "AudioTools/AudioLibs/AudioBoardStream.h"
 #include "AudioTools/AudioLibs/AudioRealFFT.h" // or AudioKissFFT
-#include "AudioTools/Disk/AudioSourceSD.h" // SPI SD mode
+#if SD_USE_MMC
+  #include "AudioTools/Disk/AudioSourceSDMMC.h"
+#else
+  #include "AudioTools/Disk/AudioSourceSD.h"
+#endif
 #include "AudioTools/AudioCodecs/CodecMP3Helix.h"
 #include "sequence_processor.h"
 #include "special_command_processor.h"
@@ -51,14 +55,6 @@ const int FIRMWARE_UPDATE_KEY = 19;  // GPIO 19 = KEY3
 static bool audioKitInitialized = false;
 
 void initDtmfDecoder();
-// SD Card SPI pins for ESP32-A1S AudioKit
-// Working switch config: 2,3,4 UP, 5 DOWN
-#define SD_CS   13
-#define SD_CLK  14
-#define SD_MOSI 15
-#define SD_MISO 2
-
-const char *startFilePath="/audio";
 
 
 // DTMF sequence checking moved to sequence_processor.cpp
@@ -73,12 +69,39 @@ void setup()
 
     Logger.printf("\n\n=== Bowie Phone Starting ===\n");
     
+#ifdef RUN_SD_DEBUG_FIRST
+    // Build flag to run SD debug before ANY other initialization
+    // This helps diagnose SD issues without interference from other systems
+    // Build with: -DRUN_SD_DEBUG_FIRST
+    Logger.println("🔧 RUN_SD_DEBUG_FIRST enabled - running SD diagnostics...");
+    Logger.println("   Waiting 3 seconds for serial connection...");
+    delay(3000);
+    
+    // Minimal AudioKit init for SD testing
+    AudioBoardStream testKit(AudioKitEs8388V1);
+    auto testCfg = testKit.defaultConfig(RXTX_MODE);
+    testCfg.setAudioInfo(AUDIO_INFO_DEFAULT());
+    testCfg.sd_active = false;
+    if (testKit.begin(testCfg)) {
+        Logger.println("   AudioKit initialized for testing");
+    }
+    
+    performSDCardDebug();
+    
+    Logger.println();
+    Logger.println("═══════════════════════════════════════════");
+    Logger.println("SD DEBUG COMPLETE - Device will halt");
+    Logger.println("Review results above, then:");
+    Logger.println("  1. Remove -DRUN_SD_DEBUG_FIRST flag");
+    Logger.println("  2. Update config.h with working pins");
+    Logger.println("  3. Rebuild and flash");
+    Logger.println("═══════════════════════════════════════════");
+    while (true) { delay(1000); }  // Halt here
+#endif
+    
     // Initialize notification system early (before WiFi so we can show status)
     initNotifications();
-    
-    // Check if Tailscale/VPN should be enabled (checks compile-time flag and saved state)
-    shouldEnableTailscale();
-    
+        
     // Check if firmware update key (KEY3 / GPIO19) is held during boot
     // This provides a hardware way to enter bootloader mode for flashing
     pinMode(FIRMWARE_UPDATE_KEY, INPUT_PULLUP);
@@ -125,7 +148,7 @@ void setup()
 
     // Initialize audio file manager (handles SD card initialization internally)
     // Returns AudioSourceSD pointer if SD card is available
-    source = initializeAudioFileManager(SD_CS, false, SD_CLK, SD_MOSI, SD_MISO, startFilePath);
+    source = initializeAudioFileManager();
 
     // Initialize Audio Player with event callback
     // Register MP3 decoder

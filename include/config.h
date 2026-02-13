@@ -17,6 +17,36 @@
 #endif
 
 // ============================================================================
+// SD CARD CONFIGURATION
+// ============================================================================
+
+// SD Card SPI pins for ESP32-A1S AudioKit (only used when SD_USE_MMC=0)
+// Working DIP switch config for SPI mode: 2,3,4 UP, 5 DOWN
+// For SD_MMC (1-bit) mode: different DIP switch config, set SD_USE_MMC=1
+#ifndef SD_CS_PIN
+#define SD_CS_PIN   13
+#endif
+#ifndef SD_CLK_PIN
+#define SD_CLK_PIN  14
+#endif
+#ifndef SD_MOSI_PIN
+#define SD_MOSI_PIN 15
+#endif
+#ifndef SD_MISO_PIN
+#define SD_MISO_PIN 2
+#endif
+
+// Set to 1 to use SD_MMC interface instead of SPI SD
+#ifndef SD_USE_MMC
+#define SD_USE_MMC 0
+#endif
+
+// Base path for audio files on SD card
+#ifndef SD_AUDIO_PATH
+#define SD_AUDIO_PATH "/audio"
+#endif
+
+// ============================================================================
 // AUDIO CONFIGURATION
 // ============================================================================
 

@@ -896,7 +896,9 @@ void startConfigPortal()
 void initWiFi(WiFiConnectedCallback onConnected)
 {
     Logger.printf("🔧 Starting WiFi initialization (non-blocking)...\n");
-    
+    // Check if Tailscale/VPN should be enabled (checks compile-time flag and saved state)
+    shouldEnableTailscale();
+
     // Check for compile-time flag to clear WiFi credentials (once per build)
 #ifdef CLEAR_WIFI_ON_BOOT
     if (shouldClearWiFiForBuild()) {

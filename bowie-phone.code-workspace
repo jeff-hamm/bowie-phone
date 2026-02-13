@@ -10,6 +10,18 @@
 		}
 	],
 	"settings": {
-		"liveServer.settings.multiRootWorkspaceName": "bowie-phone"
+		"liveServer.settings.multiRootWorkspaceName": "bowie-phone",
+		"terminal.integrated.profiles.windows": {
+			"PowerShell (Bowie Phone)": {
+				"source": "PowerShell",
+				"args": [
+					"-NoExit",
+					"-Command",
+					". '${workspaceFolder}\\tools\\PhoneUtils.ps1'"
+				],
+				"icon": "terminal-powershell"
+			}
+		},
+		"terminal.integrated.defaultProfile.windows": "PowerShell (Bowie Phone)"
 	}
 }

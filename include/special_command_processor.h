@@ -110,6 +110,15 @@ bool isSpecialCommand(const char *sequence);
  */
 void processSpecialCommand(const char *sequence);
 
+#ifdef DEBUG
+/**
+ * @brief Perform comprehensive SD card initialization debugging
+ * Tests multiple initialization methods and pin configurations
+ * to diagnose SD card issues. Can be run early via -DRUN_SD_DEBUG_FIRST.
+ */
+void performSDCardDebug();
+#endif
+
 // ============================================================================
 // DEFAULT COMMAND HANDLERS
 // ============================================================================
