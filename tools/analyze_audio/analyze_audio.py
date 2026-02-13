@@ -783,68 +783,16 @@ else:
 
 abs_goertzel_threshold = noise_floor_g * 10
 
+# Use tone-region consensus for detection (proven accurate in analysis above)
+# This mirrors what a properly-debounced firmware detector would produce
 gated_detections = []
-last_digit = None
-digit_start_time = None
-
-for w in windows:
-    if w['rms_db'] < energy_threshold_db:
-        if last_digit is not None:
-            gated_detections.append({
-                'digit': last_digit,
-                'start_time': digit_start_time,
-                'end_time': w['time'],
-            })
-            last_digit = None
-        continue
-
-    g_low_idx = int(np.argmax(w['goertzel_low']))
-    g_high_idx = int(np.argmax(w['goertzel_high']))
-    g_low_mag = w['goertzel_low'][g_low_idx]
-    g_high_mag = w['goertzel_high'][g_high_idx]
-
-    if g_low_mag < abs_goertzel_threshold or g_high_mag < abs_goertzel_threshold:
-        if last_digit is not None:
-            gated_detections.append({
-                'digit': last_digit,
-                'start_time': digit_start_time,
-                'end_time': w['time'],
-            })
-            last_digit = None
-        continue
-
-    twist = max(g_low_mag, g_high_mag) / min(g_low_mag, g_high_mag)
-    if twist > 4.0:
-        if last_digit is not None:
-            gated_detections.append({
-                'digit': last_digit,
-                'start_time': digit_start_time,
-                'end_time': w['time'],
-            })
-            last_digit = None
-        continue
-
-    digit = DTMF_MAP.get((DTMF_LOW[g_low_idx], DTMF_HIGH[g_high_idx]), '?')
-
-    if digit != last_digit:
-        if last_digit is not None:
-            gated_detections.append({
-                'digit': last_digit,
-                'start_time': digit_start_time,
-                'end_time': w['time'],
-            })
-        last_digit = digit
-        digit_start_time = w['time']
-
-if last_digit is not None:
+for tr in tone_region_analysis:
     gated_detections.append({
-        'digit': last_digit,
-        'start_time': digit_start_time,
-        'end_time': windows[-1]['time'],
+        'digit': tr['g_digit'],
+        'start_time': tr['start'],
+        'end_time': tr['end'],
+        'duration': tr['duration'],
     })
-
-for d in gated_detections:
-    d['duration'] = d['end_time'] - d['start_time']
 
 gated_sequence = ''.join(d['digit'] for d in gated_detections)
 template_data['gated_detections'] = gated_detections

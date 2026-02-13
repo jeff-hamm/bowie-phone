@@ -16,23 +16,27 @@
 #include <SD.h>
 #include <SD_MMC.h>
 #include <SPI.h>
-#include "AudioTools/AudioLibs/AudioRealFFT.h"
-#include "AudioTools/CoreAudio/StreamCopy.h"
 #include "AudioTools/CoreAudio/GoerzelStream.h"
+#include "AudioTools/CoreAudio/StreamCopy.h"
 #include "AudioTools/AudioLibs/AudioBoardStream.h"
 #include "dtmf_goertzel.h"
+#include "dtmf_decoder.h"   // isFFTDebugEnabled / setFFTDebugEnabled stubs
 #include "esp_heap_caps.h"
 #include "config.h"
 
-// Forward declarations for FFT debug mode functions (from dtmf_decoder.cpp)
-bool isFFTDebugEnabled();
-void setFFTDebugEnabled(bool enabled);
+// ============================================================================
+// GLOBAL CONFIGURATION
+// ============================================================================
+
+// Preferences namespace for ESP32 NVS storage
+#define PREFERENCES_NAMESPACE "bowiephone"
+
+// Preferences object for ESP32 NVS storage
+static Preferences preferences;
 
 // Forward declaration for audio capture
-#ifdef DEBUG
 void performAudioCapture(int durationSec);
 void performSDCardDebug();
-#endif
 
 // ============================================================================
 // SYSTEM FUNCTIONS
@@ -85,13 +89,83 @@ void shutdownAudioForOTA() {
     Logger.println("✅ Audio stopped for OTA");
 }
 
-#ifdef DEBUG
 // Serial debug mode buffer
 static char debugInputBuffer[64];
 static int debugInputPos = 0;
 
+// Audio capture on next off-hook state
+// Can be set at build time with -DCAPTURE_ON_OFFHOOK=<seconds>
+#ifdef CAPTURE_ON_OFFHOOK
+static bool captureOnNextOffHook = true;
+  #if CAPTURE_ON_OFFHOOK == 1
+    // Flag defined without value, use default 20 seconds
+    static int captureRequestedDuration = 20;
+  #else
+    // Use specified value from build flag
+    static int captureRequestedDuration = CAPTURE_ON_OFFHOOK;
+  #endif
+#else
+static bool captureOnNextOffHook = false;
+static int captureRequestedDuration = 0;
+#endif
+
+// NVS keys for audio capture persistence
+#define NVS_KEY_CAPTURE_ARMED "cap_armed"
+#define NVS_KEY_CAPTURE_DURATION "cap_dur"
+
 // Forward declaration
 void processDebugCommand(const String& cmd);
+
+// Save audio capture state to NVS
+void saveAudioCaptureState() {
+    if (!preferences.begin(PREFERENCES_NAMESPACE, false)) {
+        Logger.println("⚠️  Failed to save audio capture state to NVS");
+        return;
+    }
+    preferences.putBool(NVS_KEY_CAPTURE_ARMED, captureOnNextOffHook);
+    preferences.putInt(NVS_KEY_CAPTURE_DURATION, captureRequestedDuration);
+    preferences.end();
+}
+
+// Load audio capture state from NVS
+void loadAudioCaptureState() {
+    if (!preferences.begin(PREFERENCES_NAMESPACE, true)) {
+        return;
+    }
+    
+    bool hasNVSState = preferences.isKey(NVS_KEY_CAPTURE_ARMED);
+    
+    if (hasNVSState) {
+        // Load from NVS (user has manually configured this before)
+        captureOnNextOffHook = preferences.getBool(NVS_KEY_CAPTURE_ARMED, false);
+        captureRequestedDuration = preferences.getInt(NVS_KEY_CAPTURE_DURATION, 20);
+    }
+    // else: keep static variable values (either defaults or build-flag initialization)
+    
+    preferences.end();
+    
+    if (captureOnNextOffHook) {
+        if (hasNVSState) {
+            Logger.printf("📋 Restored audio capture from NVS: %d seconds on next off-hook\n", captureRequestedDuration);
+        } else {
+#ifdef CAPTURE_ON_OFFHOOK
+            Logger.printf("📋 Audio capture armed from build flag: %d seconds on next off-hook\n", captureRequestedDuration);
+            // Save build flag defaults to NVS for persistence
+            saveAudioCaptureState();
+#endif
+        }
+    }
+}
+
+// Clear audio capture state from NVS
+void clearAudioCaptureState() {
+    if (!preferences.begin(PREFERENCES_NAMESPACE, false)) {
+        return;
+    }
+    preferences.remove(NVS_KEY_CAPTURE_ARMED);
+    preferences.remove(NVS_KEY_CAPTURE_DURATION);
+    preferences.end();
+}
 
 // Process input from a stream for debug commands (Serial or Telnet)
 // Buffers characters until newline, then processes the command
@@ -115,6 +189,28 @@ void processDebugInput(Stream& input) {
     }
 }
 
+// Initialize audio capture state (call during setup)
+void initAudioCaptureState() {
+    loadAudioCaptureState();
+}
+
+// Check if we need to trigger audio capture on this off-hook event
+// Call this from the off-hook handler in main.ino
+// Returns true if capture was triggered (so caller can skip normal behavior)
+bool checkAndExecuteOffHookCapture() {
+    if (captureOnNextOffHook) {
+        Logger.printf("🎙️ Auto-triggering audio capture (%d seconds)...\n", captureRequestedDuration);
+        performAudioCapture(captureRequestedDuration);
+        
+        // Clear the flag - one-time capture only
+        captureOnNextOffHook = false;
+        captureRequestedDuration = 0;
+        clearAudioCaptureState();
+        return true;
+    }
+    return false;
+}
+
 // Process a debug command string (from Serial or Telnet)
 // Serial-only commands that require interactive input/output
 // For phone-accessible commands, use special commands (*#xx#)
@@ -128,11 +224,8 @@ void processDebugCommand(const String& cmd) {
         Phone.resetDebugOverride();
         Logger.println("🔧 [DEBUG] Hook detection reset to automatic");
     }
-    else if (cmd.equalsIgnoreCase("cpuload") || cmd.equalsIgnoreCase("perftest")) {
-        // CPU load test - FFT-based DTMF detection
-        performFFTCPULoadTest();
-    }
-    else if (cmd.equalsIgnoreCase("cpuload-goertzel") || cmd.equalsIgnoreCase("perftest-goertzel")) {
+    else if (cmd.equalsIgnoreCase("cpuload") || cmd.equalsIgnoreCase("perftest")
+          || cmd.equalsIgnoreCase("cpuload-goertzel") || cmd.equalsIgnoreCase("perftest-goertzel")) {
         // CPU load test - Goertzel-based DTMF detection
         performGoertzelCPULoadTest();
     }
@@ -141,11 +234,10 @@ void processDebugCommand(const String& cmd) {
         Logger.println("🔧 [DEBUG] Serial/Telnet Commands:");
         Logger.println("   hook          - Toggle hook state");
         Logger.println("   hook auto     - Reset to automatic hook detection");
-        Logger.println("   cpuload       - Test CPU load (FFT DTMF + audio)");
-        Logger.println("   cpuload-goertzel - Test CPU load (Goertzel DTMF + audio)");
+        Logger.println("   cpuload       - Test CPU load (Goertzel DTMF + audio)");
         Logger.println("   level <0-2>   - Set log level (0=quiet, 1=normal, 2=debug)");
         Logger.println("   state         - Show current state");
-        Logger.println("   debugaudio [s] - Capture raw audio (1-10s, default 2)");
+        Logger.println("   debugaudio [s] - Arm audio capture on next off-hook (1-60s, default 20)");
         Logger.println("   sddebug       - Test SD card initialization methods");
         Logger.println("   scan          - Scan for WiFi networks");
         Logger.println("   dns           - Test DNS resolution");
@@ -228,14 +320,24 @@ void processDebugCommand(const String& cmd) {
         Logger.printf("🎵 FFT debug output: %s\n", newState ? "ENABLED" : "DISABLED");
     }
     else if (cmd.startsWith("debugaudio") || cmd.startsWith("debugAudio") || cmd.equalsIgnoreCase("audiodebug")) {
-        // Parse optional duration: "debugaudio 3" = 3 seconds
+        // Parse optional duration: "debugaudio 30" = arm 30 second capture on next off-hook
         int durationSec = 20; // default
         int spaceIdx = cmd.indexOf(' ');
         if (spaceIdx > 0) {
             int val = cmd.substring(spaceIdx + 1).toInt();
-            if (val >= 1 && val <= 20) durationSec = val;
+            if (val >= 1 && val <= 60) {
+                durationSec = val;
+            } else {
+                Logger.println("⚠️  Invalid duration (1-60 seconds), using default 20s");
+            }
         }
-        performAudioCapture(durationSec);
+        
+        captureOnNextOffHook = true;
+        captureRequestedDuration = durationSec;
+        saveAudioCaptureState();
+        Logger.printf("✅ Audio capture armed: will capture %d seconds on next off-hook\n", durationSec);
+        Logger.println("   Pick up the phone to trigger capture");
+        Logger.println("   (Saved to NVS - survives reboot)");
     }
     else if (cmd.equalsIgnoreCase("sddebug") || cmd.equalsIgnoreCase("sdtest")) {
         performSDCardDebug();
@@ -283,7 +385,6 @@ void processDebugCommand(const String& cmd) {
         }
     }
 }
-#endif
 
 // ============================================================================
 // SPECIAL COMMANDS - CONFIGURABLE STORAGE
@@ -293,7 +394,6 @@ void processDebugCommand(const String& cmd) {
 #define EEPROM_SIZE 1024
 #define EEPROM_MAGIC 0xB0E1  // Magic number to verify EEPROM data
 #define EEPROM_VERSION 1
-#define PREFERENCES_NAMESPACE "bowiephone"
 
 // EEPROM data structure for persistent storage
 struct EEPROMCommandData {
@@ -312,9 +412,6 @@ struct EEPROMHeader {
 // Runtime storage for special commands
 static SpecialCommand specialCommands[MAX_SPECIAL_COMMANDS];
 static int specialCommandCount = 0;
-
-// Preferences object for ESP32 NVS storage
-static Preferences preferences;
 
 // Default special commands (can be overridden via build flags or ESPHome)
 // Organized by function:
@@ -352,6 +449,9 @@ static const SpecialCommand DEFAULT_SPECIAL_COMMANDS[] = {
 void initializeSpecialCommands()
 {
     Logger.printf("🔧 Initializing special commands system...\n");
+    
+    // Initialize audio capture state from NVS
+    initAudioCaptureState();
     
     // Try to load from EEPROM first
     if (loadSpecialCommandsFromEEPROM())
@@ -859,164 +959,8 @@ void executeTailscaleStatus()
 // CPU PERFORMANCE TESTING FUNCTIONS
 // ============================================================================
 
-#ifdef DEBUG
-void performFFTCPULoadTest()
-{
-    // CPU load test - FFT-based DTMF detection during audio playback
-    extern AudioRealFFT fft;
-    extern StreamCopy copier;
-    extern AudioBoardStream kit;
-    
-    Logger.println("🔬 CPU Load Test: FFT-based DTMF + Audio");
-    Logger.println("============================================");
-    Logger.println("Starting dial tone playback...");
-    
-    getExtendedAudioPlayer().playAudioKey("dialtone");
-    delay(100);  // Let audio start
-    
-    if (!getExtendedAudioPlayer().isActive()) {
-        Logger.println("❌ Failed to start audio - test aborted");
-        return;
-    }
-    
-    const int TEST_DURATION_MS = 5000;
-    const int SAMPLE_INTERVAL_MS = 100;
-    
-    unsigned long testStart = millis();
-    unsigned long loopCount = 0;
-    unsigned long copyCount = 0;
-    unsigned long maxLoopTime = 0;
-    unsigned long minLoopTime = ULONG_MAX;
-    unsigned long totalLoopTime = 0;
-    unsigned long audioUnderrunCount = 0;
-    unsigned long lastSample = millis();
-    
-    // I2S buffer tracking
-    int minBufferAvailable = INT_MAX;
-    int maxBufferAvailable = 0;
-    unsigned long bufferEmptyCount = 0;
-    unsigned long bufferSamples = 0;
-    long totalBufferAvailable = 0;
-    
-    Logger.printf("Running for %d seconds...\n", TEST_DURATION_MS / 1000);
-    
-    while (millis() - testStart < TEST_DURATION_MS) {
-        unsigned long loopStart = micros();
-        
-        // Process audio (what normally happens in loop)
-        if (getExtendedAudioPlayer().isActive()) {
-            getExtendedAudioPlayer().copy();
-        } else {
-            audioUnderrunCount++;
-            // Restart dial tone if it stopped unexpectedly
-            getExtendedAudioPlayer().playAudioKey("dialtone");
-        }
-        
-        // Sample I2S output buffer status
-        int bufAvail = kit.availableForWrite();
-        if (bufAvail < minBufferAvailable) minBufferAvailable = bufAvail;
-        if (bufAvail > maxBufferAvailable) maxBufferAvailable = bufAvail;
-        totalBufferAvailable += bufAvail;
-        bufferSamples++;
-        if (bufAvail > (kit.defaultConfig().buffer_size * 0.9)) {
-            bufferEmptyCount++;
-        }
-        
-        // Process FFT DTMF detection
-        size_t copied = copier.copy();
-        if (copied > 0) {
-            copyCount++;
-        }
-        
-        // Check for DTMF sequences (but don't act on them)
-        readDTMFSequence();
-        
-        unsigned long loopTime = micros() - loopStart;
-        totalLoopTime += loopTime;
-        loopCount++;
-        
-        if (loopTime > maxLoopTime) maxLoopTime = loopTime;
-        if (loopTime < minLoopTime) minLoopTime = loopTime;
-        
-        // Progress dots
-        if (millis() - lastSample >= SAMPLE_INTERVAL_MS * 10) {
-            Logger.print(".");
-            lastSample = millis();
-        }
-        
-        yield();
-    }
-    
-    // Stop audio
-    getExtendedAudioPlayer().stop();
-    
-    // Calculate statistics
-    unsigned long avgLoopTime = loopCount > 0 ? totalLoopTime / loopCount : 0;
-    float loopsPerSecond = loopCount * 1000.0f / TEST_DURATION_MS;
-    float copiesPerSecond = copyCount * 1000.0f / TEST_DURATION_MS;
-    int avgBufferAvailable = bufferSamples > 0 ? (int)(totalBufferAvailable / bufferSamples) : 0;
-    float expectedFFTRate = 44100.0f / 1024.0f;  // Based on stride
-    
-    Logger.println();
-    Logger.println("============================================");
-    Logger.println("📊 Results:");
-    Logger.printf("   Test duration: %lu ms\n", TEST_DURATION_MS);
-    Logger.printf("   Total loops: %lu (%.1f/sec)\n", loopCount, loopsPerSecond);
-    Logger.printf("   FFT copier calls with data: %lu (%.1f/sec)\n", copyCount, copiesPerSecond);
-    Logger.printf("   Expected FFT rate: %.1f frames/sec\n", expectedFFTRate);
-    Logger.println();
-    Logger.println("⏱️ Loop Timing (microseconds):");
-    Logger.printf("   Min: %lu µs\n", minLoopTime);
-    Logger.printf("   Max: %lu µs\n", maxLoopTime);
-    Logger.printf("   Avg: %lu µs\n", avgLoopTime);
-    Logger.println();
-    Logger.println("🔊 I2S Output Buffer (availableForWrite):");
-    Logger.printf("   Min available: %d bytes\n", minBufferAvailable);
-    Logger.printf("   Max available: %d bytes\n", maxBufferAvailable);
-    Logger.printf("   Avg available: %d bytes\n", avgBufferAvailable);
-    Logger.printf("   Empty count: %lu / %lu samples (%.1f%%)\n", 
-                  bufferEmptyCount, bufferSamples,
-                  bufferSamples > 0 ? (bufferEmptyCount * 100.0f / bufferSamples) : 0.0f);
-    Logger.println("   (Low values = buffer full = good)");
-    Logger.println("   (High values = buffer empty = starving)");
-    Logger.println();
-    Logger.printf("⚠️ Audio restarts (underruns): %lu\n", audioUnderrunCount);
-    Logger.println();
-    
-    // Assessment
-    Logger.println("📋 Assessment:");
-    if (maxLoopTime > 50000) {
-        Logger.println("   ❌ FAIL: Max loop time > 50ms - will cause audio glitches");
-    } else if (maxLoopTime > 23000) {
-        Logger.println("   ⚠️ WARN: Max loop time > 23ms - may miss DTMF tones");
-    } else {
-        Logger.println("   ✅ PASS: Loop timing acceptable");
-    }
-    
-    if (audioUnderrunCount > 0) {
-        Logger.println("   ❌ FAIL: Audio underruns detected");
-    } else {
-        Logger.println("   ✅ PASS: No audio underruns");
-    }
-    
-    float emptyPercent = bufferSamples > 0 ? (bufferEmptyCount * 100.0f / bufferSamples) : 0.0f;
-    if (emptyPercent > 10.0f) {
-        Logger.println("   ❌ FAIL: I2S buffer frequently starved - audio will stutter");
-    } else if (emptyPercent > 1.0f) {
-        Logger.println("   ⚠️ WARN: I2S buffer occasionally starved");
-    } else {
-        Logger.println("   ✅ PASS: I2S buffer staying saturated");
-    }
-    
-    if (copiesPerSecond < expectedFFTRate * 0.8f) {
-        Logger.println("   ⚠️ WARN: FFT processing may be falling behind");
-    } else {
-        Logger.println("   ✅ PASS: FFT processing keeping up");
-    }
-    
-    Logger.printf("\n💾 Free heap: %u bytes\n", ESP.getFreeHeap());
-    Logger.println("============================================");
-}
+// performFFTCPULoadTest() removed — FFT pipeline no longer exists.
+// Use "cpuload" command which now runs the Goertzel test below.
 
 void performGoertzelCPULoadTest()
 {
@@ -1737,5 +1681,3 @@ void performSDCardDebug() {
     Logger.println();
     Logger.println("⚠️  Reboot required to restore normal SD operation");
 }
-
-#endif

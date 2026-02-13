@@ -1,7 +1,6 @@
 #include "sequence_processor.h"
 #include "audio_file_manager.h"
 #include "audio_key_registry.h"
-#include "dtmf_decoder.h"
 #include "extended_audio_player.h"
 #include "notifications.h"
 #include "config.h"
@@ -113,29 +112,17 @@ static bool addDigitToSequence(char digit)
 
 /**
  * @brief Check for new DTMF digits and manage sequence collection
- * @param skipFFT If true, skip FFT processing (use when Goertzel is active)
+ * @param skipFFT Unused (kept for API compatibility; FFT pipeline removed)
  * @return true when a complete sequence is ready to process (matches a known pattern)
  * 
- * Note: The FFT callback (fftResult) fires when each FFT window completes
- * (~46ms at 2048 samples @ 44100Hz). That callback captures data which
- * processFFTFrame() analyzes. analyzeDTMF() returns any confirmed button.
+ * Note: All DTMF detection is now handled by the Goertzel task which
+ * feeds digits via addDtmfDigit() / getGoertzelKey() from the main loop.
+ * This function is retained for simulated-input paths only.
  */
 static bool checkForDTMFSequence(bool skipFFT = false)
 {
-    // Process any pending FFT frame (deferred from callback for efficiency)
-    // Skip when using Goertzel (dial tone active) to avoid dial tone harmonic interference
-    if (!skipFFT) {
-        processFFTFrame();
-    }
-    
-    char detectedChar = analyzeDTMF();
-    if (detectedChar != 0)
-    {
-        Logger.debugf("DTMF digit detected: %c\n", detectedChar);
-        return addDigitToSequence(detectedChar);
-    }
-
-    return false; // No complete sequence yet
+    (void)skipFFT;  // FFT pipeline removed — parameter kept for compat
+    return false;   // Digits arrive via addDtmfDigit() now
 }
 
 bool readDTMFSequence(bool skipFFT)

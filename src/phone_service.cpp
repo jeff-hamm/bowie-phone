@@ -3,12 +3,6 @@
 #include "logging.h"
 #include "tone_generators.h"
 
-#ifdef AUTO_CAPTURE_ON_OFFHOOK
-#ifdef DEBUG
-extern void performAudioCapture(int durationSec);
-#endif
-#endif
-
 PhoneService Phone;
 
 // Tone generators (owned by this module)
@@ -190,32 +184,19 @@ void PhoneService::setOffHook(bool offHook, bool override) {
     if (offHook != _isOffHook) {
         _isOffHook = offHook;
         
-        if (_isOffHook) {
-            if (override) {
-                Logger.println("📞 [DEBUG] Phone set to OFF HOOK");
-            } else {
-                Logger.println("📞 Phone picked up (OFF HOOK)");
-#ifdef AUTO_CAPTURE_ON_OFFHOOK
-#ifdef DEBUG
-                Logger.println("🎙️ Auto-triggering audio capture (10 seconds)...");
-                performAudioCapture(10);
-#endif
-#endif
-            }
-#ifdef CAN_RING
-            if (_isRinging) {
-                stopRinging();
-            }
-#endif
-        } else {
-            if (override) {
-                Logger.println("📞 [DEBUG] Phone set to ON HOOK");
-            } else {
-                Logger.println("📞 Phone hung up (ON HOOK)");
-            }
+        // Log debug override state changes
+        if (override) {
+            Logger.printf("📞 [DEBUG] Phone set to %s\n", _isOffHook ? "OFF HOOK" : "ON HOOK");
         }
         
-        // Notify callback if registered
+#ifdef CAN_RING
+        // Stop ringing when phone goes off-hook
+        if (_isOffHook && _isRinging) {
+            stopRinging();
+        }
+#endif
+        
+        // Notify callback if registered (app-level hook state logic happens here)
         if (_hookCallback) {
             _hookCallback(_isOffHook);
         }

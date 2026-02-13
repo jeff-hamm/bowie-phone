@@ -31,7 +31,6 @@ void enterFirmwareUpdateMode();
  */
 void shutdownAudioForOTA();
 
-#ifdef DEBUG
 /**
  * @brief Process debug input from a stream (Serial or Telnet)
  * @param input Stream to read debug commands from
@@ -39,15 +38,25 @@ void shutdownAudioForOTA();
 void processDebugInput(Stream& input);
 
 /**
- * @brief CPU load test for FFT-based DTMF detection during audio playback
- */
-void performFFTCPULoadTest();
-
-/**
  * @brief CPU load test for Goertzel-based DTMF detection during audio playback
  */
 void performGoertzelCPULoadTest();
-#endif
+
+/**
+ * @brief Initialize audio capture state from NVS
+ * Called automatically during initializeSpecialCommands().
+ * Restores any previously armed audio captures that survived reboot.
+ */
+void initAudioCaptureState();
+
+/**
+ * @brief Check if audio capture should be triggered on this off-hook event
+ * Should be called from the off-hook handler in main loop.
+ * If capture was previously armed via "debugaudio" command, this will execute
+ * the capture and clear the flag for one-time operation.
+ * @return true if capture was triggered, false if no capture was armed
+ */
+bool checkAndExecuteOffHookCapture();
 
 // ============================================================================
 // CONSTANTS AND DEFINITIONS
@@ -110,14 +119,12 @@ bool isSpecialCommand(const char *sequence);
  */
 void processSpecialCommand(const char *sequence);
 
-#ifdef DEBUG
 /**
  * @brief Perform comprehensive SD card initialization debugging
  * Tests multiple initialization methods and pin configurations
  * to diagnose SD card issues. Can be run early via -DRUN_SD_DEBUG_FIRST.
  */
 void performSDCardDebug();
-#endif
 
 // ============================================================================
 // DEFAULT COMMAND HANDLERS

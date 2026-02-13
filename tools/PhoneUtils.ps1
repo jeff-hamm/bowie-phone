@@ -94,15 +94,15 @@ $Script:Config = @{
     Targets = @{
         mac = @{
             Host = "jumper@100.111.120.5"
-            EsptoolPath = "/tmp/esptool-macos-arm64/esptool"
+            EsptoolPath = "~/.local/opt/bin/esptool"
             DefaultSerialPort = "/dev/cu.usbserial-0001"
             StagingDir = "/tmp/fw_upload"
             LogFile = "/tmp/fw_deploy.log"
             ApPassword = "ziggystardust"  # WIFI_AP_PASSWORD for bowie-phone
         }
         unraid = @{
-            Host = "root@100.86.189.46"
-            EsptoolPath = "esptool.py"
+            Host = "root@192.168.1.216"
+            EsptoolPath = "~/.local/opt/bin/esptool"
             DefaultSerialPort = "/dev/ttyUSB0"
             StagingDir = "/tmp/fw_upload"
             LogFile = "/tmp/fw_deploy.log"
@@ -158,13 +158,15 @@ function Get-BuildFlags {
     $flags = @{}
     
     # Extract key build flags
-    if ($content -match 'DWIREGUARD_LOCAL_IP=\\"([^"]+)\\"') { $flags.DeviceIp = $matches[1] }
+    # In compile_commands.json, strings are escaped as: \\\"value\\\"
+    # After reading, this becomes: \"value\" in the string
+    if ($content -match 'DWIREGUARD_LOCAL_IP=\\+"([^\\]+)\\+"') { $flags.DeviceIp = $matches[1] }
     if ($content -match 'DOTA_PORT=(\d+)') { $flags.OtaPort = $matches[1] }
-    if ($content -match 'DOTA_PASSWORD=\\"([^"]+)\\"') { $flags.OtaPassword = $matches[1] }
-    if ($content -match 'DFIRMWARE_VERSION=\\"([^"]+)\\"') { $flags.Version = $matches[1] }
-    if ($content -match 'DDEFAULT_SSID=\\"([^"]+)\\"') { $flags.DefaultSsid = $matches[1] }
-    if ($content -match 'DWIFI_AP_NAME=\\"([^"]+)\\"') { $flags.ApName = $matches[1] }
-    if ($content -match 'DWIFI_AP_PASSWORD=\\"([^"]+)\\"') { $flags.ApPassword = $matches[1] }
+    if ($content -match 'DOTA_PASSWORD=\\+"([^\\]+)\\+"') { $flags.OtaPassword = $matches[1] }
+    if ($content -match 'DFIRMWARE_VERSION=\\+"([^\\]+)\\+"') { $flags.Version = $matches[1] }
+    if ($content -match 'DDEFAULT_SSID=\\+"([^\\]+)\\+"') { $flags.DefaultSsid = $matches[1] }
+    if ($content -match 'DWIFI_AP_NAME=\\+"([^\\]+)\\+"') { $flags.ApName = $matches[1] }
+    if ($content -match 'DWIFI_AP_PASSWORD=\\+"([^\\]+)\\+"') { $flags.ApPassword = $matches[1] }
     
     return $flags
 }
@@ -177,9 +179,7 @@ function Invoke-SshCommand {
         [int]$Timeout = 60
     )
     
-    if (-not $Silent) {
-        Write-Verbose "SSH: $Command"
-    }
+    Write-Debug "SSH: $Command"
     
     # Use PowerShell job with timeout to prevent hanging
     $job = Start-Job -ScriptBlock {
@@ -230,20 +230,42 @@ function Test-SshConnection {
     return $result.Success
 }
 
-function Ensure-RemoteEsptool {
+function Ensure-RemoteDependencies {
     <#
     .SYNOPSIS
-        Ensures esptool is installed on the remote machine
+        Ensures required tools are installed on the remote machine for flashing
     .DESCRIPTION
-        Checks if esptool exists at the configured path. If not, downloads and
-        installs the standalone binary from GitHub releases.
+        For serial: Checks if esptool exists at the configured path. If not, installs it via pip.
+        For OTA: Ensures Python3 and espota.py are available.
     #>
     param(
         [ValidateSet("mac", "unraid")]
-        [string]$Target = "mac"
+        [string]$Target = "mac",
+        [ValidateSet("serial", "ota")]
+        [string]$FlashMethod = "serial"
     )
     
     $targetConfig = $Script:Config.Targets[$Target]
+    
+    if ($FlashMethod -eq "ota") {
+        # OTA mode - uses HTTP OTA (curl POST to /update endpoint)
+        # This works reliably over WireGuard since it uses TCP, unlike espota.py which uses UDP
+        Write-Host "   Checking OTA dependencies on $Target..." -ForegroundColor DarkGray
+        
+        # Check curl availability (should always be present)
+        $curlCheck = Invoke-SshCommand -TargetHost $targetConfig.Host -Command "command -v curl >/dev/null 2>&1 && echo FOUND || echo MISSING" -Silent -Timeout 10
+        
+        if ($curlCheck.Output -notmatch "FOUND") {
+            Write-Failure "curl not found on $Target"
+            Write-Host "   Install with: apt install curl (Ubuntu/Debian)" -ForegroundColor Yellow
+            return $false
+        }
+        
+        Write-Host "   curl found - will use HTTP OTA upload" -ForegroundColor DarkGray
+        return @{ Success = $true; PythonCmd = "curl" }
+    }
+    
+    # Serial mode - check esptool
     $esptoolPath = $targetConfig.EsptoolPath
     
     Write-Host "   Checking esptool on $Target..." -ForegroundColor DarkGray
@@ -256,29 +278,43 @@ function Ensure-RemoteEsptool {
         return $true
     }
     
-    Write-Host "   esptool not found, downloading..." -ForegroundColor Yellow
+    Write-Host "   esptool not found, installing via pip..." -ForegroundColor Yellow
     
-    # Upload and run the install script from tools/
-    $scriptFile = Join-Path $PSScriptRoot "install_esptool.sh"
+    # Create directory and install esptool via pip
+    $installCmd = @"
+mkdir -p ~/.local/opt/bin 2>/dev/null
+if command -v pip3 >/dev/null 2>&1; then
+    pip3 install --quiet --user esptool
+    ln -sf ~/.local/bin/esptool ~/.local/opt/bin/esptool 2>/dev/null || true
+elif command -v pip >/dev/null 2>&1; then
+    pip install --quiet --user esptool
+    ln -sf ~/.local/bin/esptool ~/.local/opt/bin/esptool 2>/dev/null || true
+else
+    echo 'ERROR: pip not found'
+    exit 1
+fi
+test -f ~/.local/opt/bin/esptool || ln -sf `$(which esptool 2>/dev/null) ~/.local/opt/bin/esptool
+echo 'INSTALL_OK'
+"@
     
-    if (-not (Test-Path $scriptFile)) {
-        Write-Failure "install_esptool.sh not found in tools directory"
-        return $false
-    }
+    Write-Host "   Running: pip install esptool..." -ForegroundColor DarkGray
+    $installResult = Invoke-SshCommand -TargetHost $targetConfig.Host -Command $installCmd -Timeout 120
     
-    & scp $scriptFile "$($targetConfig.Host):/tmp/install_esptool.sh" 2>&1 | Out-Null
-    $installResult = Invoke-SshCommand -TargetHost $targetConfig.Host -Command "chmod +x /tmp/install_esptool.sh && /tmp/install_esptool.sh" -Silent
-    
-    if (-not $installResult.Success) {
+    if (-not $installResult.Success -or $installResult.Output -notmatch 'INSTALL_OK') {
         Write-Failure "Failed to install esptool"
-        Write-Host "   Error: $($installResult.Output)" -ForegroundColor Red
+        if ($installResult.Output) {
+            Write-Host "   Output: $($installResult.Output -join ' ')" -ForegroundColor Red
+        }
         return $false
     }
+    
+    Write-Host "   Install complete, verifying..." -ForegroundColor DarkGray
     
     # Verify installation
-    $verifyResult = Invoke-SshCommand -TargetHost $targetConfig.Host -Command "test -f '$esptoolPath' && '$esptoolPath' version 2>/dev/null | head -1" -Silent
-    if ($verifyResult.Success) {
-        Write-Success "esptool installed: $($verifyResult.Output)"
+    $verifyResult = Invoke-SshCommand -TargetHost $targetConfig.Host -Command "'$esptoolPath' version 2>&1 | head -1" -Silent -Timeout 10
+    if ($verifyResult.Success -and $verifyResult.Output) {
+        $version = ($verifyResult.Output -join ' ').Trim()
+        Write-Success "esptool installed: $version"
         return $true
     }
     
@@ -488,7 +524,10 @@ function New-RemoteDeployScript {
     #>
     param(
         [string]$Target,
+        [string]$FlashMethod = "serial",
         [string]$SerialPort,
+        [string]$DeviceIp,
+        [string]$PythonCmd = "python",
         [string]$WifiSsid,
         [string]$WifiPassword,
         [switch]$ConfigureWifi,
@@ -504,8 +543,29 @@ function New-RemoteDeployScript {
     $apIp = $Script:Config.ApIp
     $apPassword = $targetConfig.ApPassword
 
-    # Build the flash command
-    $flashCmd = "$esptool --chip esp32 --port $port --baud $($Script:Config.BaudRate) --before default_reset --after hard_reset write_flash -z --flash_mode $($Script:Config.FlashMode) --flash_freq $($Script:Config.FlashFreq) --flash_size detect $($Script:Config.BootloaderOffset) $staging/bootloader.bin $($Script:Config.PartitionsOffset) $staging/partitions.bin $($Script:Config.FirmwareOffset) $staging/firmware.bin"
+    # Get OTA settings from build flags if available
+    $buildFlags = Get-BuildFlags
+    $otaPort = if ($buildFlags.OtaPort) { $buildFlags.OtaPort } else { "3232" }
+    $otaPassword = if ($buildFlags.OtaPassword) { $buildFlags.OtaPassword } else { "" }
+
+    # Build the flash command based on method
+    if ($FlashMethod -eq "ota") {
+        # HTTP OTA flash using curl POST to /update endpoint
+        # Works reliably over WireGuard (TCP) unlike espota.py (UDP)
+        $deviceIp = if ($DeviceIp) { $DeviceIp } else { $buildFlags.DeviceIp }
+        if (-not $deviceIp) {
+            throw "Device IP required for OTA flash (use -DeviceIp parameter or set WIREGUARD_LOCAL_IP in build)"
+        }
+        
+        # HTTP OTA: first prepare device, then upload firmware via /update
+        $flashCmd = "curl -s -m 120 http://$deviceIp/prepareota"
+        $httpOtaUploadCmd = "curl -f -m 120 --progress-bar -F 'firmware=@$staging/firmware.bin' http://$deviceIp/update"
+        $flashMethodName = "HTTP OTA to $deviceIp"
+    } else {
+        # Serial flash using esptool
+        $flashCmd = "$esptool --chip esp32 --port $port --baud $($Script:Config.BaudRate) --before default_reset --after hard_reset write_flash -z --flash_mode $($Script:Config.FlashMode) --flash_freq $($Script:Config.FlashFreq) --flash_size detect $($Script:Config.BootloaderOffset) $staging/bootloader.bin $($Script:Config.PartitionsOffset) $staging/partitions.bin $($Script:Config.FirmwareOffset) $staging/firmware.bin"
+        $flashMethodName = "Serial via $port"
+    }
     
     # WiFi configuration section (if specified)
     $wifiConfigScript = ""
@@ -590,6 +650,7 @@ set -e
 LOGFILE="$logFile"
 STAGING="$staging"
 PORT="$port"
+FLASH_METHOD="$FlashMethod"
 
 # Logging function
 log() {
@@ -617,18 +678,45 @@ for file in firmware.bin bootloader.bin partitions.bin; do
 done
 
 # ============================================================================
-# STEP 2: Flash firmware via serial
+# STEP 2: Flash firmware ($flashMethodName)
 # ============================================================================
-log "STEP 2: Flashing firmware"
+log "STEP 2: Flashing firmware via $flashMethodName"
 
-# Release serial port
-pkill -f "cat $port" 2>/dev/null || true
-pkill screen 2>/dev/null || true
-sleep 2
+# Release serial port if using serial flash
+if [ \"`$FLASH_METHOD\" = \"serial\" ]; then
+    pkill -f \"cat \$PORT\" 2>/dev/null || true
+    pkill screen 2>/dev/null || true
+    sleep 2
+fi
 
-log "Running esptool flash command..."
+log "Running flash command..."
+$(if ($FlashMethod -eq "ota") {
+@"
+log "Preparing device for OTA update..."
+PREPARE_RESULT=`$(curl -s -m 120 http://$deviceIp/prepareota 2>&1) || true
+log "Prepare response: `$PREPARE_RESULT"
+if echo "`$PREPARE_RESULT" | grep -q "OK"; then
+    log "Device prepared for OTA"
+else
+    log "WARNING: Prepare may have timed out - continuing anyway"
+fi
+sleep 3
+log "Uploading firmware via HTTP OTA (~1.7MB)..."
+log "Command: curl -f -m 600 -F firmware=@`$STAGING/firmware.bin http://$deviceIp/update"
+UPLOAD_RESULT=`$(curl -f -m 600 -F "firmware=@`$STAGING/firmware.bin" http://$deviceIp/update 2>&1) || true
+log "Upload response: `$UPLOAD_RESULT"
+if echo "`$UPLOAD_RESULT" | grep -qi "OK\|success"; then
+    log "Flash completed successfully!"
+else
+    log "ERROR: HTTP OTA upload may have failed"
+    log "Response: `$UPLOAD_RESULT"
+    echo "RESULT:FLASH_FAILED"
+    exit 1
+fi
+"@
+} else {
+@"
 log "Command: $flashCmd"
-
 if $flashCmd >> "`$LOGFILE" 2>&1; then
     log "Flash completed successfully!"
 else
@@ -636,6 +724,8 @@ else
     echo "RESULT:FLASH_FAILED"
     exit 1
 fi
+"@
+})
 $wifiConfigScript
 # ============================================================================
 # DONE
@@ -653,7 +743,9 @@ function Copy-FirmwareToRemote {
     param(
         [ValidateSet("mac", "unraid")]
         [string]$Target = "mac",
-        [string]$Environment = "bowie-phone-1"
+        [string]$Environment = "bowie-phone-1",
+        [ValidateSet("serial", "ota")]
+        [string]$FlashMethod = "serial"
     )
     
     $targetConfig = $Script:Config.Targets[$Target]
@@ -675,6 +767,8 @@ function Copy-FirmwareToRemote {
         (Join-Path $buildDir "bootloader.bin"),
         (Join-Path $buildDir "partitions.bin")
     )
+    
+    # OTA mode only needs firmware.bin (HTTP upload), no extra tools needed
     
     foreach ($file in $files) {
         if (-not (Test-Path $file)) {
@@ -874,7 +968,11 @@ function Start-RemoteDeployment {
     param(
         [ValidateSet("mac", "unraid")]
         [string]$Target = "mac",
+        [ValidateSet("serial", "ota")]
+        [string]$FlashMethod = "serial",
         [string]$SerialPort,
+        [string]$DeviceIp,
+        [string]$PythonCmd = "python3",
         [string]$WifiSsid,
         [string]$WifiPassword,
         [switch]$MonitorAfter,
@@ -887,7 +985,8 @@ function Start-RemoteDeployment {
     
     # Generate the deployment script
     $configureWifi = $WifiSsid -and $WifiSsid.Length -gt 0
-    $script = New-RemoteDeployScript -Target $Target -SerialPort $SerialPort `
+    $script = New-RemoteDeployScript -Target $Target -FlashMethod $FlashMethod `
+        -SerialPort $SerialPort -DeviceIp $DeviceIp -PythonCmd $PythonCmd `
         -WifiSsid $WifiSsid -WifiPassword $WifiPassword `
         -ConfigureWifi:$configureWifi -MonitorAfter:$MonitorAfter
     
@@ -947,7 +1046,30 @@ function Start-RemoteDeployment {
         }
         
         if (-not $success) {
-            Write-Failure "Deployment failed - check remote log: $($targetConfig.LogFile)"
+            Write-Failure "Deployment failed"
+            
+            # Fetch and display the remote log
+            Write-Host "`n📋 Remote deployment log:" -ForegroundColor Yellow
+            Write-Host ("=" * 70) -ForegroundColor Yellow
+            
+            $logCmd = "tail -50 $($targetConfig.LogFile) 2>/dev/null || echo 'Log file not found'"
+            $logResult = Invoke-SshCommand -TargetHost $targetConfig.Host -Command $logCmd -Silent -Timeout 10
+            
+            if ($logResult.Success -and $logResult.Output) {
+                $logResult.Output | ForEach-Object {
+                    if ($_ -match "ERROR") {
+                        Write-Host $_ -ForegroundColor Red
+                    } elseif ($_ -match "WARNING") {
+                        Write-Host $_ -ForegroundColor Yellow
+                    } else {
+                        Write-Host $_
+                    }
+                }
+            } else {
+                Write-Host "Could not fetch remote log from $($targetConfig.LogFile)" -ForegroundColor Red
+            }
+            
+            Write-Host ("=" * 70) -ForegroundColor Yellow
             return $false
         }
         
@@ -997,9 +1119,18 @@ function Deploy-ViaSsh {
     
     # Test SSH connection
     $targetConfig = $Script:Config.Targets[$Target]
-    # Ensure esptool is installed on remote
-    if (-not (Ensure-RemoteEsptool -Target $Target)) {
+    
+    # Ensure required dependencies are installed on remote
+    $depsResult = Ensure-RemoteDependencies -Target $Target -FlashMethod $FlashMethod
+    if ($depsResult -is [hashtable]) {
+        if (-not $depsResult.Success) {
+            return $false
+        }
+        $pythonCmd = if ($depsResult.PythonCmd) { $depsResult.PythonCmd } else { "python3" }
+    } elseif (-not $depsResult) {
         return $false
+    } else {
+        $pythonCmd = "python3"
     }
     
     # Step 1: Build
@@ -1014,7 +1145,7 @@ function Deploy-ViaSsh {
     # Step 2: Upload files
     $step++
     Write-Step $step $totalSteps "Uploading to $Target"
-    if (-not (Copy-FirmwareToRemote -Target $Target -Environment $Environment)) {
+    if (-not (Copy-FirmwareToRemote -Target $Target -Environment $Environment -FlashMethod $FlashMethod)) {
         return $false
     }
     
@@ -1029,7 +1160,8 @@ function Deploy-ViaSsh {
     # Step 3: Run deployment
     $step++
     Write-Step $step $totalSteps "Running remote deployment"
-    $success = Start-RemoteDeployment -Target $Target -SerialPort $SerialPort `
+    $success = Start-RemoteDeployment -Target $Target -FlashMethod $FlashMethod `
+        -SerialPort $SerialPort -DeviceIp $DeviceIp -PythonCmd $pythonCmd `
         -WifiSsid $WifiSsid -WifiPassword $WifiPassword `
         -MonitorAfter:$MonitorAfter -NoWait:$NoWait
     

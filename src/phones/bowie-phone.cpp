@@ -1,23 +1,28 @@
 /**
- * Bowie Phone Configuration
+ * Bowie Phone Configuration (Repaired Hardware - Feb 2026)
  * 
- * This phone exhibits unusual DTMF characteristics:
- * - Weak fundamental DTMF frequencies (0.1-0.2 magnitude)
- * - Strong intermodulation products at the sum of row+col frequencies
- * - The summed frequencies only distinguish COLUMNS, not individual buttons
+ * After SLIC hardware repair, this phone now produces standard DTMF fundamentals:
+ *   - Clear row frequencies: 697, 770, 852, 941 Hz
+ *   - Clear column frequencies: 1209, 1336, 1477, 1633 Hz
+ *   - Both bands present simultaneously during key press
+ * 
+ * Signal characteristics (from offline CSV analysis at 22050 Hz):
+ *   - Row band (low) magnitudes are ~2-5x weaker than column band (high)
+ *   - Twist ratio (high/low) ranges from ~2:1 to ~9:1 depending on button
+ *   - Noise floor Goertzel magnitude: ~29K (at N=5512)
+ *   - Active tone Goertzel magnitude: ~500K-15M (at N=5512)
+ *   - Clear separation between noise and signal
  * 
  * Detection strategy:
- * 1. Use strong summed frequency to detect which COLUMN was pressed
- * 2. Check weak fundamental row frequencies to determine the ROW
- * 3. Combine column + row to determine the actual button
+ *   Standard Goertzel for all 8 DTMF frequencies with:
+ *   1. Per-block magnitude accumulation (strongest row + strongest col)
+ *   2. Twist ratio check (max 12:1 to accommodate asymmetric bands)  
+ *   3. Consecutive-block debouncing (3 blocks = ~139ms at block_size=2048)
+ *   4. Key release after 4 consecutive silent blocks (~185ms)
  * 
- * Observed summed frequencies (all buttons in same column output same freq):
- * - Column 0 (1209Hz): ~2240Hz → buttons 1, 4, 7, *
- * - Column 1 (1336Hz): ~2455Hz → buttons 2, 5, 8, 0
- * - Column 2 (1477Hz): ~2713Hz → buttons 3, 6, 9, #
- * 
- * The summed frequency only tells us the COLUMN. We must check the row
- * frequency (697, 770, 852, 941 Hz) to determine the specific button.
+ * Verified tones from signal analysis:
+ *   '#' = 941 Hz + 1477 Hz (twist ~4-9x)
+ *   '1' = 697 Hz + 1209 Hz (twist ~2.5x)
  */
 
 #include "phone.h"
@@ -33,65 +38,48 @@ const char DTMF_KEYPAD[4][4] = {
     {'*', '0', '#', 'D'}
 };
 
-// Bowie Phone specific summed frequency table
-// These map to COLUMNS only (not individual buttons)
-// The row must be determined from the weak fundamental row frequency
-// Format: {detected_frequency, representative_button_char}
-// The button char is from row 0 of that column (1, 2, 3)
-static const PhoneSummedFreqEntry BOWIE_SUMMED_FREQ_TABLE[] = {
-    // Column 0 (1209 Hz) - any of 1, 4, 7, * will produce this
-    {2240.0, '1'},  // Observed: 2239.5Hz - represents column 0
-    
-    // Column 1 (1336 Hz) - any of 2, 5, 8, 0 will produce this  
-    {2455.0, '2'},  // Observed: 2454.8Hz - represents column 1
-    
-    // Column 2 (1477 Hz) - any of 3, 6, 9, # will produce this
-    {2713.0, '3'},  // Observed: 2713.2Hz - represents column 2
-};
-
-static const int BOWIE_SUMMED_FREQ_TABLE_SIZE = 
-    sizeof(BOWIE_SUMMED_FREQ_TABLE) / sizeof(PhoneSummedFreqEntry);
-
-// Bowie Phone configuration
+// Bowie Phone configuration - standard DTMF (repaired hardware)
 static const PhoneConfig BOWIE_PHONE_CONFIG = {
     // Identification
     .name = "Bowie Phone",
-    .description = "ESP32-A1S AudioKit with SLIC - column-only summed freq, weak fundamentals",
+    .description = "ESP32-A1S AudioKit with SLIC - standard DTMF fundamentals (repaired)",
     
     // Frequency scaling
-    .freqScale = 1.0f,  // Not used for column detection
+    .freqScale = 1.0f,
     
     // Detection thresholds
-    // From logs: good detections have col magnitudes 50-200, noise is 0.1-2.0
-    .fundamentalMagnitudeThreshold = 15.0f,  // Require strong column signal to filter noise
-    .summedMagnitudeThreshold = 100.0f,      // Strong signals (200-500 observed)
-    .freqTolerance = 75.0f,                  // Hz tolerance for fundamental matching
-    .summedFreqTolerance = 60.0f,            // Hz tolerance for summed frequency (3 distinct columns)
+    // GoertzelStream fires callback when magnitude > threshold
+    // With normalized magnitudes: noise ~0.1-2.0, real tones ~50-500+
+    // Set low enough to catch weak row frequencies, debouncing handles noise
+    .fundamentalMagnitudeThreshold = 10.0f,
+    .summedMagnitudeThreshold = 0.0f,         // Not used - standard DTMF only
+    .freqTolerance = 75.0f,                   // Hz tolerance for freq matching
+    .summedFreqTolerance = 0.0f,              // Not used
     
     // Detection timing
-    .detectionCooldown = 300,                // 300ms between detections (prevents repeat on held button)
-    .gapThreshold = 150,                     // 150ms silence = new button press (~2 FFT frames)
-    .requiredConsecutive = 3,                // Require 3 consecutive matches for solid debounce
+    .detectionCooldown = 200,                 // 200ms between distinct digit emissions
+    .gapThreshold = 120,                      // 120ms silence = button released
+    .requiredConsecutive = 3,                 // 3 consecutive matching blocks to confirm
     
     // Goertzel-specific timing
-    .goertzelBlockTimeoutMs = 5,             // Row+Col must arrive within 5ms
-    .goertzelReleaseMs = 80,                 // Key released after 80ms silence
-    .goertzelBlockSize = 512,                // ~11.6ms blocks @ 44100Hz
-    .goertzelCopierBufferSize = 512,         // StreamCopy buffer size
+    .goertzelBlockTimeoutMs = 30,             // Row+Col must be in same block (generous)
+    .goertzelReleaseMs = 120,                 // Key released after 120ms silence
+    .goertzelBlockSize = 2048,                // ~46ms blocks @ 44100Hz (good SNR, low overhead)
+    .goertzelCopierBufferSize = 2048,         // Match block size for efficiency
     
-    // Detection mode
-    .useSummedFreqDetection = true,          // Primary: use summed frequencies for COLUMN
-    .useFundamentalDetection = true,         // Also try fundamentals when strong enough
-    .summedTriggersRowCheck = true,          // When summed detected, MUST verify with row freq
+    // Detection mode - standard DTMF fundamentals only
+    .useSummedFreqDetection = false,
+    .useFundamentalDetection = true,
+    .summedTriggersRowCheck = false,
     
-    // Summed frequency table (maps to columns only)
-    .summedFreqTable = BOWIE_SUMMED_FREQ_TABLE,
-    .summedFreqTableSize = BOWIE_SUMMED_FREQ_TABLE_SIZE,
+    // No summed frequency table needed (repaired hardware has good fundamentals)
+    .summedFreqTable = nullptr,
+    .summedFreqTableSize = 0,
     
-    // Row frequencies (standard DTMF - check these for row detection)
+    // Standard DTMF row frequencies
     .rowFreqs = {697.0f, 770.0f, 852.0f, 941.0f},
     
-    // Column frequencies (standard DTMF)
+    // Standard DTMF column frequencies
     .colFreqs = {1209.0f, 1336.0f, 1477.0f, 1633.0f},
 };
 
@@ -99,36 +87,16 @@ const PhoneConfig& getPhoneConfig() {
     return BOWIE_PHONE_CONFIG;
 }
 
-// Helper: Decode COLUMN from summed frequency (returns column index 0-3, or -1)
+// Helper: Decode COLUMN from summed frequency - NOT USED for repaired hardware
 static int getColumnFromSummedFreq(float freq) {
-    const PhoneConfig& config = BOWIE_PHONE_CONFIG;
-    
-    for (int i = 0; i < config.summedFreqTableSize; i++) {
-        float diff = freq - config.summedFreqTable[i].freq;
-        if (diff < 0) diff = -diff;
-        if (diff <= config.summedFreqTolerance) {
-            // Return column index based on which entry matched
-            // Entry 0 = column 0, Entry 1 = column 1, Entry 2 = column 2
-            return i;
-        }
-    }
-    return -1; // No match
+    (void)freq;
+    return -1;
 }
 
-// Helper: Decode button from summed frequency
-// This now returns a "representative" button that indicates the column
-// The actual button must be determined by also checking the row frequency
+// Helper: Decode button from summed frequency - NOT USED for repaired hardware
 char decodeFromSummedFreq(float freq) {
-    const PhoneConfig& config = BOWIE_PHONE_CONFIG;
-    
-    for (int i = 0; i < config.summedFreqTableSize; i++) {
-        float diff = freq - config.summedFreqTable[i].freq;
-        if (diff < 0) diff = -diff;
-        if (diff <= config.summedFreqTolerance) {
-            return config.summedFreqTable[i].button;
-        }
-    }
-    return 0; // No match
+    (void)freq;
+    return 0;
 }
 
 // Helper: Find closest frequency in array

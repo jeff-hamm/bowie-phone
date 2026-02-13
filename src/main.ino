@@ -1,12 +1,10 @@
 #include <config.h>
-#include "dtmf_decoder.h"
 #include "dtmf_goertzel.h"
 #include "esp_wifi.h"
 #include "esp_system.h"
 #include "driver/gpio.h"
 #include "AudioTools.h"
 #include "AudioTools/AudioLibs/AudioBoardStream.h"
-#include "AudioTools/AudioLibs/AudioRealFFT.h" // or AudioKissFFT
 #if SD_USE_MMC
   #include "AudioTools/Disk/AudioSourceSDMMC.h"
 #else
@@ -32,8 +30,6 @@
 ESPTelnetStream telnet;  // Telnet server for remote logging
 AudioBoardStream kit(AudioKitEs8388V1); // Audio source
 AudioSource *source = nullptr;          // to be initialized in setup()
-AudioRealFFT fft;                       // or AudioKissFFT
-StreamCopy copier(fft, kit);            // copy mic to FFT
 MultiDecoder multi_decoder;
 MP3DecoderHelix mp3_decoder;
 WAVDecoder wav_decoder;
@@ -53,8 +49,6 @@ const int NUM_KEYS = 6;
 const int FIRMWARE_UPDATE_KEY = 19;  // GPIO 19 = KEY3
 // Flag to track if audio board was initialized
 static bool audioKitInitialized = false;
-
-void initDtmfDecoder();
 
 
 // DTMF sequence checking moved to sequence_processor.cpp
@@ -163,11 +157,9 @@ void setup()
     audioPlayer.addDecoder(wav_decoder, "audio/vnd.wave");
     audioPlayer.addDecoder(wav_decoder, "audio/wave");
     audioPlayer.begin(kit, source != nullptr);
-    // Initialize DTMF decoder (FFT and copier configuration)
-    initDtmfDecoder(fft, copier);
     
-    // Initialize Goertzel-based DTMF decoder for efficient dial tone detection
-    // Goertzel is O(n*k) vs FFT O(n log n), much faster for specific frequencies
+    // Initialize Goertzel-based DTMF decoder
+    // Goertzel is O(n*k) for 8 DTMF frequencies — the only detector we need
     initGoertzelDecoder(goertzel, goertzelCopier);
     
     // Start Goertzel processing on separate FreeRTOS task (core 0)
@@ -226,23 +218,26 @@ void setup()
     Phone.begin();
     Phone.setHookCallback([](bool isOffHook) {
         if (isOffHook) {
-            // Handle off-hook event - play dial tone
-            Logger.println("⚡ Event: Phone Off Hook - Playing Dial Tone");
+            // Handle off-hook event
+            Logger.println("📞 Phone picked up (OFF HOOK)");
+            // Check if debugaudio command has armed a capture for this off-hook
+            if (checkAndExecuteOffHookCapture()) {
+                // Capture was triggered, skip normal dial tone for now
+                // (capture function will handle audio)
+                return;
+            }
+            Logger.println("⚡ Playing Dial Tone");
             audioPlayer.playAudioKey("dialtone");
         } else {
-            // Handle on-hook event - stop audio, reset state
-            Logger.println("⚡ Event: Phone On Hook");
+            // Handle on-hook event
+            Logger.println("📞 Phone hung up (ON HOOK)");
             audioPlayer.stop();
             resetDTMFSequence(); // Clear any partial DTMF sequence
         }
     });
     
     Logger.println("✅ Bowie Phone Ready!");
-    
-#ifdef DEBUG
     Logger.println("🔧 Serial Debug Mode ACTIVE - type 'help' for commands");
-#endif
-    
     // Check if phone is already off hook at boot - play dial tone
     if (Phone.isOffHook())
     {
@@ -287,7 +282,6 @@ void loop()
             }
         }
         
-#ifdef USE_GOERTZEL_ONLY
         // Goertzel runs on separate task - just check for detected keys
         char goertzelKey = getGoertzelKey();
         if (goertzelKey != 0) {
@@ -296,31 +290,6 @@ void loop()
             // readDTMFSequence now handles playback internally
             readDTMFSequence(true);
         }
-#else
-        static unsigned long lastDTMFCheck = 0;
-        if (isDialTone)
-        {
-            // Goertzel runs on separate task - just check for detected keys
-            char goertzelKey = getGoertzelKey();
-            if (goertzelKey != 0) {
-                // Feed key to sequence processor
-                addDtmfDigit(goertzelKey);
-                
-                // Skip FFT processing - readDTMFSequence handles playback internally
-                readDTMFSequence(true);
-            }
-        }
-        else if (!player.isActive())
-        {
-            // Use FFT for idle (no audio) - needed for summed frequency detection on some phones
-            lastDTMFCheck = millis();
-            copier.copy();
-
-            // readDTMFSequence handles playback internally via PlaylistRegistry
-            readDTMFSequence();
-        }
-#endif  
-
 
     } else {
         // Handle phone home periodic check-in (for remote OTA, status, etc.)
@@ -339,52 +308,10 @@ void loop()
 
         // Handle WiFi management (config portal and OTA)
         handleWiFiLoop();
-#ifdef DEBUG
         // Process debug commands from Serial and Telnet
         processDebugInput(Serial);
         processDebugInput(telnet);
-#endif
         // Handle Tailscale VPN keepalive/reconnection and remote logging
         handleTailscaleLoop();
     }
-}
-
-// or AudioKissFFT
-
-// Initialize FFT and copier for DTMF detection
-void initDtmfDecoder(AudioRealFFT &fft, StreamCopy &copier)
-{
-    // Setup FFT for DTMF detection
-    // DTMF tones are 40-100ms, so we need fast time resolution
-    // 2048 samples @ 44100Hz = 46ms window with ~21.5 Hz bin width
-    // This is sufficient since DTMF frequencies are at least 70Hz apart
-    auto tcfg = fft.defaultConfig();
-    tcfg.length = 2048; // 46ms window - good for DTMF timing
-    tcfg.stride = 1024;
-    tcfg.setAudioInfo(AUDIO_INFO_DEFAULT());
-    tcfg.callback = &fftResult;
-    // Window function selection - override via build flags:
-    // -DFFT_WINDOW_HAMMING, -DFFT_WINDOW_HANN, -DFFT_WINDOW_BLACKMAN,
-    // -DFFT_WINDOW_BLACKMAN_HARRIS (default), -DFFT_WINDOW_BLACKMAN_NUTTALL
-#if defined(FFT_WINDOW_HAMMING)
-    tcfg.window_function = new BufferedWindow(new Hamming());
-    Logger.println("🎵 FFT Window: Hamming (-43dB side lobes)");
-#elif defined(FFT_WINDOW_HANN)
-    tcfg.window_function = new BufferedWindow(new Hann());
-    Logger.println("🎵 FFT Window: Hann (-31dB side lobes)");
-#elif defined(FFT_WINDOW_BLACKMAN)
-    tcfg.window_function = new BufferedWindow(new Blackman());
-    Logger.println("🎵 FFT Window: Blackman (-58dB side lobes)");
-#elif defined(FFT_WINDOW_BLACKMAN_NUTTALL)
-    tcfg.window_function = new BufferedWindow(new BlackmanNuttall());
-    Logger.println("🎵 FFT Window: BlackmanNuttall (-98dB side lobes)");
-#else // Default: FFT_WINDOW_BLACKMAN_HARRIS
-    tcfg.window_function = new BufferedWindow(new BlackmanHarris());
-    Logger.println("🎵 FFT Window: BlackmanHarris (-92dB side lobes)");
-#endif
-    fft.begin(tcfg);
-
-    // Resize copier buffer for better audio throughput
-    copier.resize(AUDIO_COPY_BUFFER_SIZE);
-    Logger.printf("🎤 Copier buffer resized to %d bytes\n", AUDIO_COPY_BUFFER_SIZE);
 }
