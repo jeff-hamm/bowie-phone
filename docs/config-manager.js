@@ -293,7 +293,8 @@ class ConfigManager {
             ],
             
             specialNumbers: siteConfig.specialNumbers || defaultConfig.specialNumbers || [
-                'dialtone', 'busy', 'error', 'ringback', 'wrong_number'
+                'dialtone', 'busy', 'error', 'ringback', 'wrong_number', 'click'
+
             ]
         };
     }

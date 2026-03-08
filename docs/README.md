@@ -164,7 +164,8 @@ specialNumbers: [
     'ringback',
     // Add your own...
     'hold',
-    'voicemail'
+    'voicemail',
+    'click'
 ]
 ```
 
