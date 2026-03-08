@@ -45,10 +45,15 @@
                     <span style="font-size: 2rem;">📞</span>
                     <h1>Bowie Phone Sequences</h1>
                 </div>
-                <button id="add-sequence-btn" class="floating-add-btn">
-                    <span class="add-icon"></span>
-                    <span class="btn-text">Add Sequence</span>
-                </button>
+                <div style="display: flex; gap: var(--spacing-sm); align-items: center;">
+                    <button id="dialer-btn" class="dialer-open-btn" title="Open Dialer">
+                        <span>🔢</span> Dial
+                    </button>
+                    <button id="add-sequence-btn" class="floating-add-btn">
+                        <span class="add-icon"></span>
+                        <span class="btn-text">Add Sequence</span>
+                    </button>
+                </div>
             </div>
             
             <!-- Controls bar -->
@@ -194,6 +199,7 @@
     
     <!-- Core app -->
     <script src="app.js"></script>
+    <script src="dialer.js"></script>
     
     <!-- Initialize -->
     <script>
@@ -213,6 +219,10 @@
                 // Initialize the app
                 window.phoneApp = new PhoneSequenceApp(e.detail);
                 phoneApp.init();
+                
+                // Set up dialer
+                window.phoneDialer = new PhoneDialer(window.phoneApp);
+                document.getElementById('dialer-btn')?.addEventListener('click', () => window.phoneDialer.open());
                 
                 // Set up Google Sheets link
                 const config = e.detail;
