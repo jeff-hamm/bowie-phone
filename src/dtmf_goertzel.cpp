@@ -108,7 +108,7 @@ static void evaluateBlock() {
         if (consecutiveMisses >= RELEASE_BLOCK_COUNT) {
             // Key released — reset for next press
             if (emittedKey != 0) {
-                Logger.debugf("🎵 Goertzel: key '%c' released (silence)\n", emittedKey);
+                Logger.printf("🎵 Goertzel: key '%c' released (silence)\n", emittedKey);
                 emittedKey = 0;
             }
             candidateDigit = 0;
@@ -146,7 +146,7 @@ static void evaluateBlock() {
         consecutiveMisses++;
         if (consecutiveMisses >= RELEASE_BLOCK_COUNT) {
             if (emittedKey != 0) {
-                Logger.debugf("🎵 Goertzel: key '%c' released (partial)\n", emittedKey);
+                Logger.printf("🎵 Goertzel: key '%c' released (partial)\n", emittedKey);
                 emittedKey = 0;
             }
             candidateDigit = 0;
@@ -183,7 +183,7 @@ static void evaluateBlock() {
         emittedKey = digit;
         goertzelPendingKey = digit;
         
-        Logger.debugf("🎵 Goertzel DTMF: '%c' (row=%d/%.0f col=%d/%.0f twist=%.1f hits=%d)\n",
+        Logger.printf("🎵 Goertzel DTMF: '%c' (row=%d/%.0f col=%d/%.0f twist=%.1f hits=%d)\n",
                      digit, bestRow, bestRowMag, bestCol, bestColMag,
                      maxMag / minMag, consecutiveHits);
     }
@@ -284,13 +284,24 @@ void resetGoertzelState() {
 static TaskHandle_t goertzelTaskHandle = nullptr;
 static StreamCopy* goertzelCopierPtr = nullptr;
 static volatile bool goertzelTaskShouldRun = false;
+static volatile bool goertzelTaskStarted = false;  // true once task loop begins
 
 // Goertzel task — runs on core 0 to avoid blocking audio on core 1
 // Each iteration: copy audio → GoertzelStream fires callbacks → evaluate
 void goertzelTaskFunction(void* parameter) {
     StreamCopy* copier = (StreamCopy*)parameter;
     
+    // Wait for system to stabilize (WiFi init on core 0 uses significant
+    // interrupt stack; launching Goertzel immediately causes stack canary trips)
+    vTaskDelay(pdMS_TO_TICKS(3000));
+    
+    goertzelTaskStarted = true;
     Logger.println("🎵 Goertzel task started on core 0");
+    
+    UBaseType_t hwm = uxTaskGetStackHighWaterMark(NULL);
+    Logger.printf("🎵 Goertzel stack high-water mark (initial): %u words free\n", hwm);
+    
+    unsigned long lastHwmCheck = millis();
     
     while (goertzelTaskShouldRun) {
         // Copy audio data from mic to Goertzel decoder
@@ -300,11 +311,19 @@ void goertzelTaskFunction(void* parameter) {
         // Evaluate accumulated block data (if a block completed during copy)
         evaluateBlock();
         
+        // Periodically log stack usage (every 30s)
+        if (millis() - lastHwmCheck > 30000) {
+            hwm = uxTaskGetStackHighWaterMark(NULL);
+            Logger.printf("🎵 Goertzel stack HWM: %u words free\n", hwm);
+            lastHwmCheck = millis();
+        }
+        
         // Small yield to prevent watchdog issues
         vTaskDelay(1);
     }
     
     Logger.println("🎵 Goertzel task stopped");
+    goertzelTaskStarted = false;
     goertzelTaskHandle = nullptr;
     vTaskDelete(NULL);
 }
@@ -321,7 +340,7 @@ void startGoertzelTask(StreamCopy &copier) {
     xTaskCreatePinnedToCore(
         goertzelTaskFunction,
         "GoertzelTask",
-        4096,
+        16384,
         &copier,
         1,
         &goertzelTaskHandle,
@@ -338,10 +357,11 @@ void stopGoertzelTask() {
     
     goertzelTaskShouldRun = false;
     
-    int timeout = 100;
+    // Wait up to 4 seconds for task to exit (accounts for 3s startup delay)
+    int timeout = 4000;
     while (goertzelTaskHandle != nullptr && timeout > 0) {
-        vTaskDelay(1);
-        timeout--;
+        vTaskDelay(pdMS_TO_TICKS(10));
+        timeout -= 10;
     }
     
     if (goertzelTaskHandle != nullptr) {

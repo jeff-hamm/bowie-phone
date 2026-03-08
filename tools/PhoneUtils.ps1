@@ -351,32 +351,81 @@ function Ensure-RemoteDependencies {
     
     Write-Host "   Checking esptool on $Target..." -ForegroundColor DarkGray
     
-    # Check if esptool exists (short timeout for simple check)
+    # Check if esptool exists at configured path (short timeout for simple check)
     $checkResult = Invoke-SshCommand -TargetHost $targetConfig.Host -Command "test -f '$esptoolPath' && echo EXISTS" -Silent -Timeout 10
     
     if ($checkResult.Output -match "EXISTS") {
         Write-Host "   esptool found at $esptoolPath" -ForegroundColor DarkGray
         return $true
     }
+
+    # Fallback: PlatformIO virtualenv often already contains esptool on remote hosts.
+    $pioEsptoolPaths = @(
+        "~/.platformio/penv/bin/esptool",
+        "~/.platformio/penv/bin/esptool.py"
+    )
+    foreach ($pioPath in $pioEsptoolPaths) {
+        $pioCheck = Invoke-SshCommand -TargetHost $targetConfig.Host -Command "test -f '$pioPath' && echo EXISTS" -Silent -Timeout 10
+        if ($pioCheck.Output -match "EXISTS") {
+            Write-Host "   Found PlatformIO esptool at $pioPath" -ForegroundColor DarkGray
+            $Script:Config.Targets[$Target].EsptoolPath = $pioPath
+            return $true
+        }
+    }
+
+    # Fallback: use any esptool already available in PATH.
+    $pathEsptoolCheck = Invoke-SshCommand -TargetHost $targetConfig.Host -Command "command -v esptool >/dev/null 2>&1 && command -v esptool" -Silent -Timeout 10
+    if ($pathEsptoolCheck.Success -and $pathEsptoolCheck.Output) {
+        $pathEsptool = ($pathEsptoolCheck.Output -join " ").Trim()
+        if ($pathEsptool) {
+            Write-Host "   Found esptool in PATH: $pathEsptool" -ForegroundColor DarkGray
+            $Script:Config.Targets[$Target].EsptoolPath = $pathEsptool
+            return $true
+        }
+    }
+
+    # Additional fallback: PlatformIO python may already have esptool module installed.
+    $pioPythonCheckCmd = "test -x ~/.platformio/penv/bin/python && ~/.platformio/penv/bin/python -c 'import esptool' >/dev/null 2>&1 && echo EXISTS"
+    $pioPythonCheck = Invoke-SshCommand -TargetHost $targetConfig.Host -Command $pioPythonCheckCmd -Silent -Timeout 10
+    if ($pioPythonCheck.Output -match "EXISTS") {
+        $Script:Config.Targets[$Target].EsptoolPath = "~/.platformio/penv/bin/python -m esptool"
+        Write-Host "   Using PlatformIO Python module: ~/.platformio/penv/bin/python -m esptool" -ForegroundColor DarkGray
+        return $true
+    }
+
+    # On macOS, auto-install missing dependency chain (Homebrew + Python) when needed.
+    if ($Target -eq "mac") {
+        Write-Host "   Checking Python toolchain on macOS..." -ForegroundColor DarkGray
+        $pythonReadyCmd = "if [ -x /opt/homebrew/bin/python3 ] || [ -x /usr/local/bin/python3 ] || [ -x `$HOME/miniforge3/bin/python ]; then echo READY; elif command -v pip3 >/dev/null 2>&1 && pip3 --version >/dev/null 2>&1; then echo READY; elif command -v python3 >/dev/null 2>&1 && python3 -m pip --version >/dev/null 2>&1; then echo READY; else echo MISSING; fi"
+        $pythonReady = Invoke-SshCommand -TargetHost $targetConfig.Host -Command $pythonReadyCmd -Silent -Timeout 15
+
+        if ($pythonReady.Output -notmatch "READY") {
+            Write-Host "   Python toolchain missing - attempting auto-install (Homebrew + Python)..." -ForegroundColor Yellow
+
+            $bootstrapCmd = @'
+set -e; export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/miniforge3/bin:$PATH"; if command -v python3 >/dev/null 2>&1 && python3 -m pip --version >/dev/null 2>&1; then echo 'PYTHON_READY'; exit 0; fi; if command -v brew >/dev/null 2>&1; then if [ -x /opt/homebrew/bin/brew ]; then eval "$(/opt/homebrew/bin/brew shellenv)"; elif [ -x /usr/local/bin/brew ]; then eval "$(/usr/local/bin/brew shellenv)"; fi; brew install python >/dev/null 2>&1 || true; fi; if command -v python3 >/dev/null 2>&1 && python3 -m pip --version >/dev/null 2>&1; then echo 'PYTHON_READY'; exit 0; fi; ARCH="$(uname -m)"; if [ "$ARCH" = "arm64" ]; then MINIFORGE_URL="https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-MacOSX-arm64.sh"; else MINIFORGE_URL="https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-MacOSX-x86_64.sh"; fi; INSTALLER="/tmp/miniforge.sh"; curl -fsSL "$MINIFORGE_URL" -o "$INSTALLER"; bash "$INSTALLER" -b -p "$HOME/miniforge3" >/dev/null; "$HOME/miniforge3/bin/python" -m pip --version >/dev/null 2>&1; echo 'PYTHON_READY'
+'@
+
+            $bootstrapResult = Invoke-SshCommand -TargetHost $targetConfig.Host -Command $bootstrapCmd -Timeout 900
+            if (-not $bootstrapResult.Success -or $bootstrapResult.Output -notmatch 'PYTHON_READY') {
+                Write-Failure "Failed to auto-install Python dependencies on macOS"
+                if ($bootstrapResult.Output) {
+                    Write-Host "   Output: $($bootstrapResult.Output -join ' ')" -ForegroundColor Red
+                }
+                return $false
+            }
+
+            Write-Success "Python toolchain ready"
+        }
+    }
     
     Write-Host "   esptool not found, installing via pip..." -ForegroundColor Yellow
     
-    # Create directory and install esptool via pip
-    $installCmd = @"
-mkdir -p ~/.local/opt/bin 2>/dev/null
-if command -v pip3 >/dev/null 2>&1; then
-    pip3 install --quiet --user esptool
-    ln -sf ~/.local/bin/esptool ~/.local/opt/bin/esptool 2>/dev/null || true
-elif command -v pip >/dev/null 2>&1; then
-    pip install --quiet --user esptool
-    ln -sf ~/.local/bin/esptool ~/.local/opt/bin/esptool 2>/dev/null || true
-else
-    echo 'ERROR: pip not found'
-    exit 1
-fi
-test -f ~/.local/opt/bin/esptool || ln -sf `$(which esptool 2>/dev/null) ~/.local/opt/bin/esptool
-echo 'INSTALL_OK'
-"@
+    # Use explicit separators so remote shells don't misparse command blocks.
+    # Avoid `which` on macOS (can trigger xcode-select), and only emit INSTALL_OK on verified success.
+    $installCmd = @'
+export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/miniforge3/bin:$PATH"; mkdir -p "$HOME/.local/opt/bin" "$HOME/.local/bin" 2>/dev/null; if [ -x "$HOME/.platformio/penv/bin/esptool" ]; then ln -sf "$HOME/.platformio/penv/bin/esptool" "$HOME/.local/opt/bin/esptool" || exit 1; elif [ -f "$HOME/.platformio/penv/bin/esptool.py" ]; then ln -sf "$HOME/.platformio/penv/bin/esptool.py" "$HOME/.local/opt/bin/esptool" || exit 1; elif [ -x "$HOME/.platformio/penv/bin/pip" ]; then "$HOME/.platformio/penv/bin/pip" install --quiet esptool || exit 1; if [ -x "$HOME/.platformio/penv/bin/esptool" ]; then ln -sf "$HOME/.platformio/penv/bin/esptool" "$HOME/.local/opt/bin/esptool" || exit 1; elif [ -f "$HOME/.platformio/penv/bin/esptool.py" ]; then ln -sf "$HOME/.platformio/penv/bin/esptool.py" "$HOME/.local/opt/bin/esptool" || exit 1; else echo 'ERROR: esptool not found in PlatformIO penv after install'; exit 1; fi; elif [ -x "$HOME/miniforge3/bin/python" ]; then "$HOME/miniforge3/bin/python" -m pip install --quiet esptool || exit 1; elif [ -x "/opt/homebrew/bin/python3" ]; then /opt/homebrew/bin/python3 -m pip install --quiet --user esptool || exit 1; elif [ -x "/usr/local/bin/python3" ]; then /usr/local/bin/python3 -m pip install --quiet --user esptool || exit 1; elif command -v pip3 >/dev/null 2>&1 && pip3 --version >/dev/null 2>&1; then pip3 install --quiet --user esptool || exit 1; elif command -v pip >/dev/null 2>&1; then pip install --quiet --user esptool || exit 1; elif command -v python3 >/dev/null 2>&1 && python3 -m pip --version >/dev/null 2>&1; then python3 -m pip install --quiet --user esptool || exit 1; else echo 'ERROR: pip not found'; exit 1; fi; if [ -x "$HOME/miniforge3/bin/esptool" ]; then ln -sf "$HOME/miniforge3/bin/esptool" "$HOME/.local/opt/bin/esptool" || true; elif [ -x "$HOME/.local/bin/esptool" ]; then ln -sf "$HOME/.local/bin/esptool" "$HOME/.local/opt/bin/esptool" || true; elif command -v esptool >/dev/null 2>&1; then ln -sf "$(command -v esptool)" "$HOME/.local/opt/bin/esptool" || true; fi; test -f "$HOME/.local/opt/bin/esptool" || exit 1; echo 'INSTALL_OK'
+'@
     
     Write-Host "   Running: pip install esptool..." -ForegroundColor DarkGray
     $installResult = Invoke-SshCommand -TargetHost $targetConfig.Host -Command $installCmd -Timeout 120
@@ -385,6 +434,13 @@ echo 'INSTALL_OK'
         Write-Failure "Failed to install esptool"
         if ($installResult.Output) {
             Write-Host "   Output: $($installResult.Output -join ' ')" -ForegroundColor Red
+            if (($installResult.Output -join ' ') -match 'xcode-select: error: No developer tools were found') {
+                Write-Host "   Remote macOS only has Apple shim python/pip (/usr/bin)." -ForegroundColor Yellow
+                Write-Host "   Install real Python first (recommended):" -ForegroundColor Yellow
+                Write-Host "     1) Install Homebrew (if missing)" -ForegroundColor Yellow
+                Write-Host "     2) brew install python" -ForegroundColor Yellow
+                Write-Host "   Or install Command Line Tools on the remote Mac and retry." -ForegroundColor Yellow
+            }
         }
         return $false
     }
@@ -392,7 +448,7 @@ echo 'INSTALL_OK'
     Write-Host "   Install complete, verifying..." -ForegroundColor DarkGray
     
     # Verify installation
-    $verifyResult = Invoke-SshCommand -TargetHost $targetConfig.Host -Command "'$esptoolPath' version 2>&1 | head -1" -Silent -Timeout 10
+    $verifyResult = Invoke-SshCommand -TargetHost $targetConfig.Host -Command "$esptoolPath version 2>&1 | head -1" -Silent -Timeout 10
     if ($verifyResult.Success -and $verifyResult.Output) {
         $version = ($verifyResult.Output -join ' ').Trim()
         Write-Success "esptool installed: $version"
