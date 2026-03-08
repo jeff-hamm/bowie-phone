@@ -229,6 +229,8 @@ class PhoneDialer {
             this.matchDisplay.classList.add('has-match');
             this.matchDisplay.classList.remove('has-partial');
             this.callBtn.classList.add('has-match');
+            // Auto-call on exact match
+            setTimeout(() => this._initiateCall(), 300);
             return;
         }
 
