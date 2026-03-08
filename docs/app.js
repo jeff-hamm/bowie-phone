@@ -574,7 +574,7 @@ class PhoneSequenceApp {
         
         if (!isValid) {
             if (showError) {
-                errorEl.textContent = 'Invalid: Use digits (0-9, *, #) or special names like "dialtone"';
+                errorEl.textContent = 'Invalid: Use digits (0-9, *, #) or special names like "dialtone", "click"';
                 errorEl.style.display = 'block';
             }
             input.classList.add('invalid');
@@ -591,7 +591,7 @@ class PhoneSequenceApp {
         
         // Check if it's a special name
         const specialNumbers = this.config.specialNumbers || [
-            'dialtone', 'busy', 'ringback', 'disconnect', 'error', 'silence', 'wrong_number'
+            'dialtone', 'busy', 'ringback', 'disconnect', 'error', 'silence', 'wrong_number', 'click'
         ];
         
         if (specialNumbers.includes(trimmed)) {

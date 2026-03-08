@@ -10,6 +10,7 @@
     - Bump-Version: Increment firmware version across all files
     - Publish-Firmware: Build and publish firmware to docs/firmware for web installer
     - Watch-SerialOutput: Monitor device serial output
+    - Watch-RemoteLogs: Stream live device logs from the remote log server
     - Get-RemoteDeployLog: Retrieve deployment logs
     
     Features:
@@ -28,7 +29,8 @@
 .PARAMETER Environment
     PlatformIO environment to build (default: bowie-phone-1)
 .PARAMETER Target
-    Deployment target: "mac" or "unraid" (default: mac)
+    Deployment target: "mac", "unraid", "bowie-phone", or "local" (default: mac).
+    "bowie-phone" routes OTA deployment through unraid and streams remote logs via Watch-RemoteLogs.
 .PARAMETER FlashMethod
     How to flash: "serial" or "ota" (default: serial)
 .PARAMETER SerialPort
@@ -41,7 +43,7 @@
     WiFi password for deployment-time configuration
 .PARAMETER SkipBuild
     Skip the build step (use existing firmware)
-.PARAMETER MonitorAfter
+.PARAMETER NoMonitor
     Monitor serial output after flashing (serial mode only)
 .PARAMETER NoWait
     Don't wait for deployment to complete (fire and forget)
@@ -61,15 +63,24 @@
     Build-Firmware -Environment bowie-phone-1 -BuildArgs "-DRUN_SD_DEBUG_FIRST"
     Bump-Version
     Publish-Firmware
-    Deploy-ViaSsh -MonitorAfter
-    Deploy-ViaSsh -BuildArgs "-DRUN_SD_DEBUG_FIRST" -MonitorAfter
+    Deploy-ViaSsh -NoMonitor
+    Deploy-ViaSsh -BuildArgs "-DRUN_SD_DEBUG_FIRST" -NoMonitor
     Watch-SerialOutput
+    Watch-RemoteLogs
+    Watch-RemoteLogs -DeviceId bowie-phone-1 -ServerUrl http://10.253.0.1:3000
+    # OTA via unraid (routes curl from unraid to bowie-phone WireGuard IP 10.253.0.2 automatically)
+    Deploy-ViaSsh -Target unraid -FlashMethod ota
+    Deploy-ViaSsh -Target unraid -FlashMethod ota -SkipBuild
+    # bowie-phone target: automatically uses OTA via unraid; Monitor-SerialOutput tails remote logs
+    Deploy-ViaSsh -Target bowie-phone
+    Deploy-ViaSsh -Target bowie-phone -SkipBuild
+    Monitor-SerialOutput -Target bowie-phone
 #>
 
 [CmdletBinding()]
 param(
     [string]$Environment = "bowie-phone-1",
-    [ValidateSet("mac", "unraid", "local")]
+    [ValidateSet("mac", "unraid", "bowie-phone", "local")]
     [string]$Target = "mac",
     [ValidateSet("serial", "ota")]
     [string]$FlashMethod = "serial",
@@ -78,7 +89,7 @@ param(
     [string]$WifiSsid,
     [string]$WifiPassword,
     [switch]$SkipBuild,
-    [switch]$MonitorAfter,
+    [switch]$NoMonitor,
     [switch]$Clean,
     [switch]$NoWait,
     [string]$BuildArgs
@@ -107,6 +118,24 @@ $Script:Config = @{
             StagingDir = "/tmp/fw_upload"
             LogFile = "/tmp/fw_deploy.log"
             ApPassword = "ziggystardust"
+            DefaultOtaDeviceIp = "10.253.0.2"  # bowie-phone-1 WireGuard IP; unraid can reach it directly
+            OtaPort = "3232"
+            OtaPassword = "photo-ota-2000"
+            DeviceId = "bowie-phone-1"        # Used by Monitor-SerialOutput / Watch-RemoteLogs
+            TelnetLogs = $true                 # Stream logs from server file via SSH tail
+        }
+        'bowie-phone' = @{
+            Host = "root@192.168.1.216"   # SSH via unraid; unraid can reach the device over WireGuard
+            EsptoolPath = "~/.local/opt/bin/esptool"
+            StagingDir = "/tmp/fw_upload"
+            LogFile = "/tmp/fw_deploy.log"
+            ApPassword = "ziggystardust"
+            DefaultOtaDeviceIp = "10.253.0.2"
+            OtaPort = "3232"
+            OtaPassword = "photo-ota-2000"
+            DeviceId = "bowie-phone-1"        # Used by Monitor-SerialOutput / Watch-RemoteLogs
+            DefaultFlashMethod = "ota"         # No serial cable; always deploy via OTA
+            TelnetLogs = $true                 # Stream logs from server file via SSH tail
         }
         local = @{
             Host = $null  # Local machine, no SSH
@@ -129,6 +158,9 @@ $Script:Config = @{
     PartitionsOffset = "0x8000"
     FirmwareOffset = "0x10000"
     
+    # Remote log file storage (written by log server on unraid)
+    RemoteLogBasePath = "/mnt/pool/appdata/phone/logs"
+
     # Config portal settings
     ApName = "Bowie-Phone-Setup"
     ApIp = "192.168.4.1"
@@ -253,7 +285,7 @@ function Ensure-RemoteDependencies {
         For local: Checks if esptool is available on Windows PATH or via Python.
     #>
     param(
-        [ValidateSet("mac", "unraid", "local")]
+        [ValidateSet("mac", "unraid", "bowie-phone", "local")]
         [string]$Target = "mac",
         [ValidateSet("serial", "ota")]
         [string]$FlashMethod = "serial"
@@ -468,7 +500,7 @@ function Get-SerialPortPids {
         Returns an array of PIDs (empty if port is free).
     #>
     param(
-        [ValidateSet("mac", "unraid", "local")]
+        [ValidateSet("mac", "unraid", "bowie-phone", "local")]
         [string]$Target = "mac",
         [string]$SerialPort
     )
@@ -504,7 +536,7 @@ function Clear-SerialPort {
         On Windows local, checks for processes locking COM ports.
     #>
     param(
-        [ValidateSet("mac", "unraid", "local")]
+        [ValidateSet("mac", "unraid", "bowie-phone", "local")]
         [string]$Target = "mac",
         [string]$SerialPort
     )
@@ -678,6 +710,49 @@ function Build-Firmware {
     }
 }
 
+function Test-BuildFresh {
+    <#
+    .SYNOPSIS
+        Check whether the existing firmware build is up-to-date with source files.
+    .DESCRIPTION
+        Compares the last-write time of firmware.bin against all files in src/,
+        include/, and platformio.ini. Returns $true when the build output exists
+        and is newer than every source file.
+    #>
+    param(
+        [string]$Environment = "bowie-phone-1"
+    )
+
+    $buildDir  = Join-Path $Script:Config.ProjectRoot ".pio\build\$Environment"
+    $firmware  = Join-Path $buildDir "firmware.bin"
+
+    if (-not (Test-Path $firmware)) {
+        return $false
+    }
+
+    $fwTime = (Get-Item $firmware).LastWriteTimeUtc
+
+    $sourceDirs = @(
+        (Join-Path $Script:Config.ProjectRoot "src"),
+        (Join-Path $Script:Config.ProjectRoot "include")
+    )
+    $sourceFiles = @(
+        (Join-Path $Script:Config.ProjectRoot "platformio.ini")
+    )
+    foreach ($dir in $sourceDirs) {
+        if (Test-Path $dir) {
+            $sourceFiles += Get-ChildItem -Path $dir -Recurse -File | Select-Object -ExpandProperty FullName
+        }
+    }
+
+    foreach ($f in $sourceFiles) {
+        if ((Get-Item $f).LastWriteTimeUtc -gt $fwTime) {
+            return $false
+        }
+    }
+    return $true
+}
+
 function New-RemoteDeployScript {
     <#
     .SYNOPSIS
@@ -692,7 +767,7 @@ function New-RemoteDeployScript {
         [string]$WifiSsid,
         [string]$WifiPassword,
         [switch]$ConfigureWifi,
-        [switch]$MonitorAfter
+        [switch]$NoMonitor
     )
     
     $targetConfig = $Script:Config.Targets[$Target]
@@ -713,9 +788,12 @@ function New-RemoteDeployScript {
     if ($FlashMethod -eq "ota") {
         # HTTP OTA flash using curl POST to /update endpoint
         # Works reliably over WireGuard (TCP) unlike espota.py (UDP)
-        $deviceIp = if ($DeviceIp) { $DeviceIp } else { $buildFlags.DeviceIp }
+        $deviceIp = if ($DeviceIp) { $DeviceIp } `
+                    elseif ($buildFlags.DeviceIp) { $buildFlags.DeviceIp } `
+                    elseif ($targetConfig.DefaultOtaDeviceIp) { $targetConfig.DefaultOtaDeviceIp } `
+                    else { $null }
         if (-not $deviceIp) {
-            throw "Device IP required for OTA flash (use -DeviceIp parameter or set WIREGUARD_LOCAL_IP in build)"
+            throw "Device IP required for OTA flash (use -DeviceIp parameter, set WIREGUARD_LOCAL_IP in build, or add DefaultOtaDeviceIp to target config)"
         }
         
         # HTTP OTA: first prepare device, then upload firmware via /update
@@ -903,7 +981,7 @@ echo "RESULT:SUCCESS"
 
 function Copy-FirmwareToRemote {
     param(
-        [ValidateSet("mac", "unraid", "local")]
+        [ValidateSet("mac", "unraid", "bowie-phone", "local")]
         [string]$Target = "mac",
         [string]$Environment = "bowie-phone-1",
         [ValidateSet("serial", "ota")]
@@ -986,7 +1064,7 @@ function Monitor-SerialOutput {
         Replay the most recent monitoring session log instead of starting a new session
     #>
     param(
-        [ValidateSet("mac", "unraid", "local")]
+        [ValidateSet("mac", "unraid", "bowie-phone", "local")]
         [string]$Target = "mac",
         [string]$SerialPort,
         [int]$BaudRate = 115200,
@@ -1002,6 +1080,53 @@ function Monitor-SerialOutput {
     }
     
     $targetConfig = $Script:Config.Targets[$Target]
+
+    # TelnetLogs target: tail log files stored on the server by the remote log service
+    if ($targetConfig.TelnetLogs) {
+        $deviceId = $targetConfig.DeviceId
+        $sshHost  = $targetConfig.Host
+        $logBase  = $Script:Config.RemoteLogBasePath
+        $logDir   = "$logBase/$deviceId"
+
+        Write-Host "`n📡 Remote Log Monitor (server files)" -ForegroundColor Yellow
+        Write-Host "   Device:  $deviceId" -ForegroundColor DarkGray
+        Write-Host "   Via SSH: $sshHost" -ForegroundColor DarkGray
+        Write-Host "   Logs:    $logDir" -ForegroundColor DarkGray
+        Write-Host "   Press Ctrl+C to stop" -ForegroundColor DarkGray
+        Write-Host ""
+
+        # tail -f today's log file; if it doesn't exist yet, wait for it
+        # Script is base64-encoded before sending to avoid CRLF/quoting issues
+        $tailScript = @"
+#!/bin/bash
+logdir="$logDir"
+logfile="`$logdir/`$(date +%Y-%m-%d).log"
+if [ ! -f "`$logfile" ]; then
+    echo "Waiting for `$logfile..."
+    while [ ! -f "`$logfile" ]; do
+        sleep 5
+        logfile="`$logdir/`$(date +%Y-%m-%d).log"
+    done
+fi
+tail -n +1 -f "`$logfile"
+"@
+        $b64 = [Convert]::ToBase64String(
+            [System.Text.Encoding]::UTF8.GetBytes($tailScript.Replace("`r`n", "`n"))
+        )
+        & ssh $sshHost "echo $b64 | base64 -d | bash" | ForEach-Object {
+            $line = $_.ToString()
+            if ($line -match 'ERROR|FAIL') {
+                Write-Host "   $line" -ForegroundColor Red
+            } elseif ($line -match 'WARN') {
+                Write-Host "   $line" -ForegroundColor Yellow
+            } else {
+                Write-Host "   $line" -ForegroundColor DarkGray
+            }
+            Write-Output $line
+        }
+        return
+    }
+
     $port = if ($SerialPort) { $SerialPort } else { $targetConfig.DefaultSerialPort }
     $esptool = $targetConfig.EsptoolPath
     
@@ -1159,7 +1284,7 @@ function Set-DeviceVpnConfig {
 
 function Start-RemoteDeployment {
     param(
-        [ValidateSet("mac", "unraid", "local")]
+        [ValidateSet("mac", "unraid", "bowie-phone", "local")]
         [string]$Target = "mac",
         [ValidateSet("serial", "ota")]
         [string]$FlashMethod = "serial",
@@ -1170,7 +1295,7 @@ function Start-RemoteDeployment {
         [string]$WifiSsid,
         [string]$WifiPassword,
         [string]$EsptoolCmd,
-        [switch]$MonitorAfter,
+        [switch]$NoMonitor,
         [switch]$NoWait
     )
     
@@ -1239,7 +1364,7 @@ function Start-RemoteDeployment {
     $script = New-RemoteDeployScript -Target $Target -FlashMethod $FlashMethod `
         -SerialPort $SerialPort -DeviceIp $DeviceIp -PythonCmd $PythonCmd `
         -WifiSsid $WifiSsid -WifiPassword $WifiPassword `
-        -ConfigureWifi:$configureWifi -MonitorAfter:$MonitorAfter
+        -ConfigureWifi:$configureWifi -NoMonitor:$NoMonitor
     
     # Upload the script
     $scriptPath = Join-Path $env:TEMP "deploy_esp32.sh"
@@ -1324,8 +1449,8 @@ function Start-RemoteDeployment {
             return $false
         }
         
-        # If MonitorAfter, tail the serial output
-        if ($MonitorAfter) {
+        # If NoMonitor, tail the serial output
+        if (!$NoMonitor) {
             Monitor-SerialOutput -Target $Target -SerialPort $SerialPort -NoReset
         }
         
@@ -1336,7 +1461,7 @@ function Start-RemoteDeployment {
 function Deploy-ViaSsh {
     param(
         [string]$Environment = "bowie-phone-1",
-        [ValidateSet("mac", "unraid", "local")]
+        [ValidateSet("mac", "unraid", "bowie-phone", "local")]
         [string]$Target = "mac",
         [ValidateSet("serial", "ota")]
         [string]$FlashMethod = "serial",
@@ -1345,17 +1470,31 @@ function Deploy-ViaSsh {
         [string]$WifiSsid,
         [string]$WifiPassword,
         [switch]$SkipBuild,
-        [switch]$MonitorAfter,
         [switch]$Clean,
+        [switch]$NoMonitor,
         [switch]$NoWait,
         [string]$BuildArgs
     )
     
+    # Auto-detect whether a build is needed when neither -SkipBuild nor -Clean was given
+    if (-not $SkipBuild -and -not $Clean) {
+        if (Test-BuildFresh -Environment $Environment) {
+            Write-Host "   Build is up-to-date — skipping build step" -ForegroundColor DarkGray
+            $SkipBuild = [switch]::new($true)
+        }
+    }
+
     $totalSteps = if ($SkipBuild) { 2 } else { 3 }
     $step = 0
     
     $isLocal = Test-IsLocalTarget -Target $Target
     $deployType = if ($isLocal) { "Local" } else { "via SSH" }
+
+    # Apply target's preferred flash method if the caller didn't explicitly override it
+    $targetConfig = $Script:Config.Targets[$Target]
+    if ($targetConfig.DefaultFlashMethod -and $FlashMethod -eq "serial") {
+        $FlashMethod = $targetConfig.DefaultFlashMethod
+    }
     
     Write-Host "`n" + ("=" * 55) -ForegroundColor Cyan
     Write-Host "🚀 ESP32 Deployment $deployType" -ForegroundColor Cyan
@@ -1425,7 +1564,7 @@ function Deploy-ViaSsh {
         PythonCmd = $pythonCmd
         WifiSsid = $WifiSsid
         WifiPassword = $WifiPassword
-        MonitorAfter = $MonitorAfter
+        NoMonitor = $NoMonitor
         NoWait = $NoWait
     }
     if ($esptoolCmd) {
@@ -1575,6 +1714,14 @@ function Publish-Firmware {
     }
     Write-Host "📦 Version: $Version" -ForegroundColor Green
     
+    # Auto-detect whether a build is needed when neither -SkipBuild nor -Clean was given
+    if (-not $SkipBuild -and -not $Clean) {
+        if (Test-BuildFresh -Environment $Environment) {
+            Write-Host "`n   Build is up-to-date — skipping build step" -ForegroundColor DarkGray
+            $SkipBuild = [switch]::new($true)
+        }
+    }
+
     # Build firmware
     if (-not $SkipBuild) {
         Write-Host "`n🔨 Building firmware for $Environment..." -ForegroundColor Yellow
@@ -1667,6 +1814,151 @@ function Publish-Firmware {
     return $true
 }
 
+function Watch-RemoteLogs {
+    <#
+    .SYNOPSIS
+        Stream live device logs from the remote log server
+    .DESCRIPTION
+        The device posts batches of log lines to http://REMOTE_LOG_SERVER/logs every few seconds over WireGuard.
+        This function polls that HTTP endpoint and prints new lines as they arrive, simulating tail -f.
+        Server is read from platformio.ini REMOTE_LOG_SERVER (default: http://10.253.0.1:3000).
+        Device ID is read from platformio.ini REMOTE_LOG_DEVICE_ID (default: bowie-phone-1).
+    .PARAMETER DeviceId
+        Device ID to filter logs for (default: bowie-phone-1)
+    .PARAMETER ServerUrl
+        Remote log server base URL (default: read from build flags, then http://10.253.0.1:3000)
+    .PARAMETER PollIntervalSecs
+        How often to poll the server in seconds (default: 2)
+    .PARAMETER SshHost
+        If set, all HTTP requests are proxied through this SSH host (e.g. root@192.168.1.216).
+        Use when the log server is on a WireGuard network only reachable via that host.
+    .PARAMETER Lines
+        Number of historical lines to show on start (default: 50)
+    .EXAMPLE
+        Watch-RemoteLogs
+        Watch-RemoteLogs -DeviceId bowie-phone-1
+        Watch-RemoteLogs -ServerUrl http://10.253.0.1:3000
+        Watch-RemoteLogs -SshHost root@192.168.1.216
+    #>
+    param(
+        [string]$DeviceId,
+        [string]$ServerUrl,
+        [string]$SshHost,
+        [int]$PollIntervalSecs = 2,
+        [int]$Lines = 50
+    )
+
+    # Resolve device ID and server URL from build flags if not specified
+    $buildFlags = Get-BuildFlags
+
+    if (-not $DeviceId) {
+        $DeviceId = if ($buildFlags.ContainsKey('RemoteLogDeviceId')) { $buildFlags.RemoteLogDeviceId } else { 'bowie-phone-1' }
+    }
+    if (-not $ServerUrl) {
+        # Extract base URL from REMOTE_LOG_SERVER flag (strip trailing /logs path)
+        $flagServer = $null
+        $pioPath = Join-Path $Script:Config.ProjectRoot 'platformio.ini'
+        if (Test-Path $pioPath) {
+            $pioContent = Get-Content $pioPath -Raw
+            if ($pioContent -match 'REMOTE_LOG_SERVER=\\?"([^"\\]+)\\?"') {
+                $flagServer = $matches[1] -replace '/logs$', ''
+            }
+        }
+        $ServerUrl = if ($flagServer) { $flagServer } else { 'http://10.253.0.1:3000' }
+    }
+
+    $logsUrl  = "$ServerUrl/logs?device=$DeviceId&lines=$Lines"
+    $streamUrl = "$ServerUrl/logs/stream?device=$DeviceId"
+
+    Write-Host "`n📡 Remote Log Monitor" -ForegroundColor Yellow
+    Write-Host "   Device:  $DeviceId" -ForegroundColor DarkGray
+    Write-Host "   Server:  $ServerUrl" -ForegroundColor DarkGray
+    Write-Host "   Press Ctrl+C to stop" -ForegroundColor DarkGray
+    Write-Host ""
+
+    if ($SshHost) {
+        Write-Host "   Via SSH: $SshHost" -ForegroundColor DarkGray
+    }
+
+    # --- Try SSE / streaming endpoint first ---
+    $streamWorked = $false
+    if ($SshHost) {
+        $testCode = & ssh $SshHost "curl -s -o /dev/null -w '%{http_code}' -m 3 '$streamUrl' 2>/dev/null"
+        $streamWorked = ($testCode -eq '200')
+    } else {
+        try {
+            $wr = [System.Net.WebRequest]::Create($streamUrl)
+            $wr.Timeout = 3000
+            $wr.Method = 'GET'
+            $resp = $wr.GetResponse()
+            $resp.Close()
+            $streamWorked = $true
+        } catch { }
+    }
+
+    if ($streamWorked) {
+        Write-Host "   Mode: streaming" -ForegroundColor DarkGray
+        Write-Host ""
+        try {
+            if ($SshHost) {
+                & ssh $SshHost "curl -sN '$streamUrl'" | ForEach-Object {
+                    $line = $_ -replace '^data:\s*', ''
+                    if ($line.Trim()) { Write-Host "   $line" }
+                }
+            } else {
+                & curl -sN $streamUrl | ForEach-Object {
+                    $line = $_ -replace '^data:\s*', ''
+                    if ($line.Trim()) { Write-Host "   $line" }
+                }
+            }
+        } catch {
+            Write-Warning "Stream ended: $_"
+        }
+        return
+    }
+
+    # --- Fallback: poll /logs endpoint ---
+    Write-Host "   Mode: polling every $PollIntervalSecs s" -ForegroundColor DarkGray
+    Write-Host ""
+
+    $seen = [System.Collections.Generic.HashSet[string]]::new()
+
+    while ($true) {
+        try {
+            if ($SshHost) {
+                $json = (& ssh $SshHost "curl -s -m 5 '$logsUrl' 2>/dev/null") -join ''
+                $resp = if ($json) { $json | ConvertFrom-Json } else { $null }
+            } else {
+                $resp = Invoke-RestMethod -Uri $logsUrl -TimeoutSec 5 -ErrorAction Stop
+            }
+
+            # Accept both JSON {logs:[...]} and plain-text response
+            $entries = if ($resp -and $resp.logs) { $resp.logs } `
+                       elseif ($resp -is [string]) { $resp -split "`n" } `
+                       else { @() }
+
+            foreach ($entry in $entries) {
+                $entry = $entry.ToString().Trim()
+                if ($entry -and -not $seen.Contains($entry)) {
+                    $seen.Add($entry) | Out-Null
+                    if ($entry -match 'ERROR|FAIL') {
+                        Write-Host "   $entry" -ForegroundColor Red
+                    } elseif ($entry -match 'WARN') {
+                        Write-Host "   $entry" -ForegroundColor Yellow
+                    } else {
+                        Write-Host "   $entry" -ForegroundColor DarkGray
+                    }
+                }
+            }
+        } catch {
+            if ($_.Exception.Message -notmatch 'Unable to connect|timed out|canceled|Timeout') {
+                Write-Warning "Poll error: $($_.Exception.Message)"
+            }
+        }
+        Start-Sleep -Seconds $PollIntervalSecs
+    }
+}
+
 function Get-RemoteDeployLog {
     <#
     .SYNOPSIS
@@ -1719,7 +2011,7 @@ if ($MyInvocation.InvocationName -ne '.') {
         -WifiSsid $WifiSsid `
         -WifiPassword $WifiPassword `
         -SkipBuild:$SkipBuild `
-        -MonitorAfter:$MonitorAfter `
+        -NoMonitor:$NoMonitor `
         -Clean:$Clean `
         -NoWait:$NoWait `
         -BuildArgs $BuildArgs
@@ -1736,6 +2028,7 @@ else {
     Write-Host "     • Bump-Version" -ForegroundColor Green
     Write-Host "     • Publish-Firmware" -ForegroundColor Green
     Write-Host "     • Monitor-SerialOutput" -ForegroundColor Green
+    Write-Host "     • Watch-RemoteLogs" -ForegroundColor Green
     Write-Host "     • Get-RemoteDeployLog" -ForegroundColor Green
     Write-Host "`n   Type Get-Help <function-name> for details" -ForegroundColor DarkGray
 }

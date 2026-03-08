@@ -1,5 +1,5 @@
 ---
-name: bowie-mac-firmware-workflow
+name: esp32-ssh
 description: Build, deploy, monitor, and debug Bowie Phone firmware on the mac SSH target. Use when you need end-to-end ESP32 workflow commands for serial or OTA flashing, remote dependency setup, serial monitoring, and deployment troubleshooting.
 compatibility: Requires PowerShell on Windows host, SSH access to mac target, and bowie-phone tools/PhoneUtils.ps1.
 ---
@@ -59,9 +59,22 @@ Use this skill for repeatable ESP32 firmware operations against the `mac` deploy
    Monitor-SerialOutput -Target mac -SerialPort /dev/tty.usbserial-0001
    ```
 
-7. Run OTA deploy when device IP is known.
+7. Run OTA deploy via unraid (preferred — Windows can't reach the device directly).
+   SSH goes to unraid, which can reach the device at `10.253.0.2` over WireGuard. Device IP resolves automatically.
    ```powershell
-   Deploy-ViaSsh -Environment bowie-phone-1 -Target mac -FlashMethod ota -DeviceIp 10.253.0.2
+   Deploy-ViaSsh -Environment bowie-phone-1 -Target unraid -FlashMethod ota
+   Deploy-ViaSsh -Environment bowie-phone-1 -Target unraid -FlashMethod ota -SkipBuild
+   ```
+   Override device IP explicitly if needed:
+   ```powershell
+   Deploy-ViaSsh -Environment bowie-phone-1 -Target unraid -FlashMethod ota -DeviceIp 10.253.0.2
+   ```
+
+8. Stream live device logs from the remote log server (device posts via WireGuard to unraid at `10.253.0.1:3000`).
+   ```powershell
+   Watch-RemoteLogs
+   Watch-RemoteLogs -DeviceId bowie-phone-1
+   Watch-RemoteLogs -ServerUrl http://10.253.0.1:3000
    ```
 
 ## Debug Playbook
