@@ -250,6 +250,7 @@ void processDebugCommand(const String& cmd) {
         Logger.println("   *123#  - System Status");
         Logger.println("   *789#  - Reboot Device");
         Logger.println("   *#06#  - Device Info");
+        Logger.println("   clear-cache  - Clear Cache & Reboot");
         Logger.println("   *#07#  - Refresh Audio");
         Logger.println("   *#08#  - Prepare for OTA");
         Logger.println("   *#09#  - Phone Home Check-in");
@@ -430,6 +431,7 @@ static const SpecialCommand DEFAULT_SPECIAL_COMMANDS[] = {
     
     // ========== STATUS & INFO (*#xx#) ==========
     {"*#00#", "List Commands"},
+    {"clear-cache", "Clear Cache & Reboot"},
     {"*#06#", "Device Info"},
     {"*#07#", "Refresh Audio"},
     {"*#08#", "Prepare for OTA"},
@@ -728,6 +730,8 @@ void assignDefaultHandler(int index, const char* sequence)
     // Status & info commands
     else if (strcmp(sequence, "*#00#") == 0)
         specialCommands[index].handler = executeListCommands;
+    else if (strcmp(sequence, "clear-cache") == 0)
+        specialCommands[index].handler = executeClearCacheAndReboot;
     else if (strcmp(sequence, "*#06#") == 0)
         specialCommands[index].handler = executeDeviceInfo;
     else if (strcmp(sequence, "*#07#") == 0)
@@ -848,6 +852,17 @@ void executeDeviceInfo()
     Logger.printf("   Chip Revision: %d\n", ESP.getChipRevision());
     Logger.printf("   Flash Size: %d KB\n", ESP.getFlashChipSize() / 1024);
     Logger.printf("   Free Heap: %d bytes\n", ESP.getFreeHeap());
+}
+
+void executeClearCacheAndReboot()
+{
+    Logger.printf("🗑️  Clearing audio cache and rebooting...\n");
+    invalidateAudioCache();
+    Logger.printf("✅ Cache cleared. Rebooting in 2 seconds...\n");
+    Logger.flush();
+    getExtendedAudioPlayer().stop();
+    delay(2000);
+    ESP.restart();
 }
 
 void executeRefreshAudio()

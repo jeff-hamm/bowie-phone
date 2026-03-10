@@ -151,6 +151,11 @@ void executeFactoryReset();
 void executeDeviceInfo();
 
 /**
+ * @brief Invalidate the audio file cache and reboot the device
+ */
+void executeClearCacheAndReboot();
+
+/**
  * @brief Refresh audio catalog from server
  */
 void executeRefreshAudio();

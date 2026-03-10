@@ -809,6 +809,7 @@ bool startConfigPortalSafe()
     }, []() {
         // Handle file upload
         HTTPUpload& upload = server.upload();
+        static bool otaBeginOk = false;
         
         if (upload.status == UPLOAD_FILE_START) {
             Logger.printf("🔄 HTTP OTA: Receiving %s\n", upload.filename.c_str());
@@ -826,11 +827,13 @@ bool startConfigPortalSafe()
                 Logger.printf("📦 HTTP OTA: Expected firmware size: %u bytes\n", firmwareSize);
             }
             
-            if (!Update.begin(firmwareSize)) {
+            otaBeginOk = Update.begin(firmwareSize);
+            if (!otaBeginOk) {
                 Logger.printf("❌ HTTP OTA: Begin failed: %s\n", Update.errorString());
             }
         } else if (upload.status == UPLOAD_FILE_WRITE) {
             // Write firmware chunk
+            if (!otaBeginOk) return;
             if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
                 Logger.printf("❌ HTTP OTA: Write failed: %s\n", Update.errorString());
             } else {
@@ -845,6 +848,7 @@ bool startConfigPortalSafe()
                 }
             }
         } else if (upload.status == UPLOAD_FILE_END) {
+            if (!otaBeginOk) return;
             if (Update.end(true)) {
                 Logger.printf("✅ HTTP OTA: Complete (%u bytes)\n", upload.totalSize);
             } else {
@@ -1035,6 +1039,7 @@ void startOTA()
         }
     }, []() {
         HTTPUpload& upload = server.upload();
+        static bool otaBeginOk = false;
         
         if (upload.status == UPLOAD_FILE_START) {
             Logger.printf("🔄 HTTP OTA: Receiving %s\n", upload.filename.c_str());
@@ -1057,10 +1062,12 @@ void startOTA()
                 Logger.printf("📦 HTTP OTA: Expected firmware size: %u bytes\n", firmwareSize);
             }
             
-            if (!Update.begin(firmwareSize)) {
+            otaBeginOk = Update.begin(firmwareSize);
+            if (!otaBeginOk) {
                 Logger.printf("❌ HTTP OTA: Begin failed: %s\n", Update.errorString());
             }
         } else if (upload.status == UPLOAD_FILE_WRITE) {
+            if (!otaBeginOk) return;
             if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
                 Logger.printf("❌ HTTP OTA: Write failed: %s\n", Update.errorString());
             } else {
@@ -1075,6 +1082,7 @@ void startOTA()
                 }
             }
         } else if (upload.status == UPLOAD_FILE_END) {
+            if (!otaBeginOk) return;
             if (Update.end(true)) {
                 Logger.printf("✅ HTTP OTA: Complete (%u bytes)\n", upload.totalSize);
             } else {

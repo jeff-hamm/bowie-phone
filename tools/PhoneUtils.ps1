@@ -1,100 +1,3 @@
-<#
-.SYNOPSIS
-    Bowie Phone PowerShell Utilities - Build, deploy, version, and publish ESP32 firmware
-.DESCRIPTION
-    Comprehensive toolkit for Bowie Phone firmware development and deployment.
-    
-    Core Functions:
-    - Build-Firmware: Build firmware with PlatformIO
-    - Deploy-ViaSsh: Deploy firmware to remote machine via SSH
-    - Bump-Version: Increment firmware version across all files
-    - Publish-Firmware: Build and publish firmware to docs/firmware for web installer
-    - Watch-SerialOutput: Monitor device serial output
-    - Watch-RemoteLogs: Stream live device logs from the remote log server
-    - Get-RemoteDeployLog: Retrieve deployment logs
-    
-    Features:
-    - Multiple fallback WiFi SSIDs (compile-time or deployment-time)
-    - Resilient deployment - remote script continues even if connection drops
-    - Serial or OTA flashing
-    - Deployment-time WiFi configuration via config portal API
-    - Automated version management
-    - Web installer firmware publishing
-    
-    Can be dot-sourced for individual functions:
-        . .\tools\PhoneUtils.ps1
-        Build-Firmware -Environment bowie-phone-1
-        Publish-Firmware
-        Bump-Version
-.PARAMETER Environment
-    PlatformIO environment to build (default: bowie-phone-1)
-.PARAMETER Target
-    Deployment target: "mac", "unraid", "bowie-phone", or "local" (default: mac).
-    "bowie-phone" routes OTA deployment through unraid and streams remote logs via Watch-RemoteLogs.
-.PARAMETER FlashMethod
-    How to flash: "serial" or "ota" (default: serial)
-.PARAMETER SerialPort
-    Serial port on remote machine (default: /dev/cu.usbserial-0001 for mac)
-.PARAMETER DeviceIp
-    Device IP for OTA (default: read from platformio.ini WIREGUARD_LOCAL_IP)
-.PARAMETER WifiSsid
-    WiFi SSID to configure at deployment time (optional - uses compile-time defaults if not set)
-.PARAMETER WifiPassword
-    WiFi password for deployment-time configuration
-.PARAMETER SkipBuild
-    Skip the build step (use existing firmware)
-.PARAMETER NoMonitor
-    Monitor serial output after flashing (serial mode only)
-.PARAMETER NoWait
-    Don't wait for deployment to complete (fire and forget)
-.PARAMETER BuildArgs
-    Extra build flags to pass to PlatformIO (e.g., "-DRUN_SD_DEBUG_FIRST")
-.EXAMPLE
-    # Direct execution (legacy - runs Deploy-ViaSsh)
-    .\PhoneUtils.ps1
-    .\PhoneUtils.ps1 -Target unraid -FlashMethod ota
-    .\PhoneUtils.ps1 -WifiSsid "MyNetwork" -WifiPassword "secret123"
-    .\PhoneUtils.ps1 -NoWait
-    .\PhoneUtils.ps1 -BuildArgs "-DRUN_SD_DEBUG_FIRST"
-    
-    # Dot-source for all utilities
-    . .\tools\PhoneUtils.ps1
-    Build-Firmware -Environment bowie-phone-1
-    Build-Firmware -Environment bowie-phone-1 -BuildArgs "-DRUN_SD_DEBUG_FIRST"
-    Bump-Version
-    Publish-Firmware
-    Deploy-ViaSsh -NoMonitor
-    Deploy-ViaSsh -BuildArgs "-DRUN_SD_DEBUG_FIRST" -NoMonitor
-    Watch-SerialOutput
-    Watch-RemoteLogs
-    Watch-RemoteLogs -DeviceId bowie-phone-1 -ServerUrl http://10.253.0.1:3000
-    # OTA via unraid (routes curl from unraid to bowie-phone WireGuard IP 10.253.0.2 automatically)
-    Deploy-ViaSsh -Target unraid -FlashMethod ota
-    Deploy-ViaSsh -Target unraid -FlashMethod ota -SkipBuild
-    # bowie-phone target: automatically uses OTA via unraid; Monitor-SerialOutput tails remote logs
-    Deploy-ViaSsh -Target bowie-phone
-    Deploy-ViaSsh -Target bowie-phone -SkipBuild
-    Monitor-SerialOutput -Target bowie-phone
-#>
-
-[CmdletBinding()]
-param(
-    [string]$Environment = "bowie-phone-1",
-    [ValidateSet("mac", "unraid", "bowie-phone", "local")]
-    [string]$Target = "mac",
-    [ValidateSet("serial", "ota")]
-    [string]$FlashMethod = "serial",
-    [string]$SerialPort,
-    [string]$DeviceIp,
-    [string]$WifiSsid,
-    [string]$WifiPassword,
-    [switch]$SkipBuild,
-    [switch]$NoMonitor,
-    [switch]$Clean,
-    [switch]$NoWait,
-    [string]$BuildArgs
-)
-
 #region Configuration
 $Script:Config = @{
     # Project paths
@@ -195,7 +98,7 @@ function Test-IsLocalTarget {
 }
 
 function Get-BuildFlags {
-    param([string]$Environment)
+    param([string]$BuildEnvironment)
     $compileCommands = Join-Path $Script:Config.ProjectRoot "compile_commands.json"
     if (-not (Test-Path $compileCommands)) { return @{} }
     
@@ -434,11 +337,10 @@ function Ensure-RemoteDependencies {
         if ($pythonReady.Output -notmatch "READY") {
             Write-Host "   Python toolchain missing - attempting auto-install (Homebrew + Python)..." -ForegroundColor Yellow
 
-            $bootstrapCmd = @'
-set -e; export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/miniforge3/bin:$PATH"; if command -v python3 >/dev/null 2>&1 && python3 -m pip --version >/dev/null 2>&1; then echo 'PYTHON_READY'; exit 0; fi; if command -v brew >/dev/null 2>&1; then if [ -x /opt/homebrew/bin/brew ]; then eval "$(/opt/homebrew/bin/brew shellenv)"; elif [ -x /usr/local/bin/brew ]; then eval "$(/usr/local/bin/brew shellenv)"; fi; brew install python >/dev/null 2>&1 || true; fi; if command -v python3 >/dev/null 2>&1 && python3 -m pip --version >/dev/null 2>&1; then echo 'PYTHON_READY'; exit 0; fi; ARCH="$(uname -m)"; if [ "$ARCH" = "arm64" ]; then MINIFORGE_URL="https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-MacOSX-arm64.sh"; else MINIFORGE_URL="https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-MacOSX-x86_64.sh"; fi; INSTALLER="/tmp/miniforge.sh"; curl -fsSL "$MINIFORGE_URL" -o "$INSTALLER"; bash "$INSTALLER" -b -p "$HOME/miniforge3" >/dev/null; "$HOME/miniforge3/bin/python" -m pip --version >/dev/null 2>&1; echo 'PYTHON_READY'
-'@
-
-            $bootstrapResult = Invoke-SshCommand -TargetHost $targetConfig.Host -Command $bootstrapCmd -Timeout 900
+            $bootstrapContent = Get-Content (Join-Path $PSScriptRoot "scripts\bootstrap-python.sh") -Raw
+            $bootstrapContent = $bootstrapContent -replace "`r`n", "`n"
+            $bootstrapB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($bootstrapContent))
+            $bootstrapResult = Invoke-SshCommand -TargetHost $targetConfig.Host -Command "echo $bootstrapB64 | base64 -d | bash" -Timeout 900
             if (-not $bootstrapResult.Success -or $bootstrapResult.Output -notmatch 'PYTHON_READY') {
                 Write-Failure "Failed to auto-install Python dependencies on macOS"
                 if ($bootstrapResult.Output) {
@@ -455,12 +357,12 @@ set -e; export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/miniforge3/bin:$PATH
     
     # Use explicit separators so remote shells don't misparse command blocks.
     # Avoid `which` on macOS (can trigger xcode-select), and only emit INSTALL_OK on verified success.
-    $installCmd = @'
-export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/miniforge3/bin:$PATH"; mkdir -p "$HOME/.local/opt/bin" "$HOME/.local/bin" 2>/dev/null; if [ -x "$HOME/.platformio/penv/bin/esptool" ]; then ln -sf "$HOME/.platformio/penv/bin/esptool" "$HOME/.local/opt/bin/esptool" || exit 1; elif [ -f "$HOME/.platformio/penv/bin/esptool.py" ]; then ln -sf "$HOME/.platformio/penv/bin/esptool.py" "$HOME/.local/opt/bin/esptool" || exit 1; elif [ -x "$HOME/.platformio/penv/bin/pip" ]; then "$HOME/.platformio/penv/bin/pip" install --quiet esptool || exit 1; if [ -x "$HOME/.platformio/penv/bin/esptool" ]; then ln -sf "$HOME/.platformio/penv/bin/esptool" "$HOME/.local/opt/bin/esptool" || exit 1; elif [ -f "$HOME/.platformio/penv/bin/esptool.py" ]; then ln -sf "$HOME/.platformio/penv/bin/esptool.py" "$HOME/.local/opt/bin/esptool" || exit 1; else echo 'ERROR: esptool not found in PlatformIO penv after install'; exit 1; fi; elif [ -x "$HOME/miniforge3/bin/python" ]; then "$HOME/miniforge3/bin/python" -m pip install --quiet esptool || exit 1; elif [ -x "/opt/homebrew/bin/python3" ]; then /opt/homebrew/bin/python3 -m pip install --quiet --user esptool || exit 1; elif [ -x "/usr/local/bin/python3" ]; then /usr/local/bin/python3 -m pip install --quiet --user esptool || exit 1; elif command -v pip3 >/dev/null 2>&1 && pip3 --version >/dev/null 2>&1; then pip3 install --quiet --user esptool || exit 1; elif command -v pip >/dev/null 2>&1; then pip install --quiet --user esptool || exit 1; elif command -v python3 >/dev/null 2>&1 && python3 -m pip --version >/dev/null 2>&1; then python3 -m pip install --quiet --user esptool || exit 1; else echo 'ERROR: pip not found'; exit 1; fi; if [ -x "$HOME/miniforge3/bin/esptool" ]; then ln -sf "$HOME/miniforge3/bin/esptool" "$HOME/.local/opt/bin/esptool" || true; elif [ -x "$HOME/.local/bin/esptool" ]; then ln -sf "$HOME/.local/bin/esptool" "$HOME/.local/opt/bin/esptool" || true; elif command -v esptool >/dev/null 2>&1; then ln -sf "$(command -v esptool)" "$HOME/.local/opt/bin/esptool" || true; fi; test -f "$HOME/.local/opt/bin/esptool" || exit 1; echo 'INSTALL_OK'
-'@
-    
+    $installContent = Get-Content (Join-Path $PSScriptRoot "scripts\install-esptool.sh") -Raw
+    $installContent = $installContent -replace "`r`n", "`n"
+    $installB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($installContent))
+
     Write-Host "   Running: pip install esptool..." -ForegroundColor DarkGray
-    $installResult = Invoke-SshCommand -TargetHost $targetConfig.Host -Command $installCmd -Timeout 120
+    $installResult = Invoke-SshCommand -TargetHost $targetConfig.Host -Command "echo $installB64 | base64 -d | bash" -Timeout 120
     
     if (-not $installResult.Success -or $installResult.Output -notmatch 'INSTALL_OK') {
         Write-Failure "Failed to install esptool"
@@ -626,20 +528,20 @@ function Clear-SerialPort {
 #region Core Functions
 function Build-Firmware {
     param(
-        [string]$Environment = "bowie-phone-1",
+        [string]$BuildEnvironment = "bowie-phone-1",
         [switch]$Clean,
         [string]$BuildArgs
     )
     
-    $buildDir = Join-Path $Script:Config.ProjectRoot ".pio\build\$Environment"
+    $buildDir = Join-Path $Script:Config.ProjectRoot ".pio\build\$BuildEnvironment"
     
-    Write-Host "`n🔨 Building firmware for $Environment..." -ForegroundColor Cyan
+    Write-Host "`n🔨 Building firmware for $BuildEnvironment..." -ForegroundColor Cyan
     
     Push-Location $Script:Config.ProjectRoot
     try {
         if ($Clean) {
             Write-Host "   Cleaning..." -ForegroundColor DarkGray
-            & $Script:Config.PioExe run -e $Environment -t clean 2>&1 | Out-Null
+            & $Script:Config.PioExe run -e $BuildEnvironment -t clean 2>&1 | Out-Null
         }
         
         # Set extra build flags if provided (appends to existing build_flags)
@@ -648,7 +550,7 @@ function Build-Firmware {
             $env:PLATFORMIO_BUILD_FLAGS = $BuildArgs
         }
         
-        $output = & $Script:Config.PioExe run -e $Environment 2>&1
+        $output = & $Script:Config.PioExe run -e $BuildEnvironment 2>&1
         
         # Clear the environment variable after build
         if ($BuildArgs) {
@@ -696,7 +598,7 @@ function Build-Firmware {
         Write-Success "Build complete ($fwSize KB)"
         
         # Show key config
-        $flags = Get-BuildFlags -Environment $Environment
+        $flags = Get-BuildFlags -Environment $BuildEnvironment
         if ($flags.DefaultSsid) {
             Write-Host "   WiFi SSID: $($flags.DefaultSsid)" -ForegroundColor DarkGray
         }
@@ -720,10 +622,10 @@ function Test-BuildFresh {
         and is newer than every source file.
     #>
     param(
-        [string]$Environment = "bowie-phone-1"
+        [string]$BuildEnvironment = "bowie-phone-1"
     )
 
-    $buildDir  = Join-Path $Script:Config.ProjectRoot ".pio\build\$Environment"
+    $buildDir  = Join-Path $Script:Config.ProjectRoot ".pio\build\$BuildEnvironment"
     $firmware  = Join-Path $buildDir "firmware.bin"
 
     if (-not (Test-Path $firmware)) {
@@ -784,7 +686,7 @@ function New-RemoteDeployScript {
     $otaPort = if ($buildFlags.OtaPort) { $buildFlags.OtaPort } else { "3232" }
     $otaPassword = if ($buildFlags.OtaPassword) { $buildFlags.OtaPassword } else { "" }
 
-    # Build the flash command based on method
+    # Build flash block and method name
     if ($FlashMethod -eq "ota") {
         # HTTP OTA flash using curl POST to /update endpoint
         # Works reliably over WireGuard (TCP) unlike espota.py (UDP)
@@ -795,21 +697,51 @@ function New-RemoteDeployScript {
         if (-not $deviceIp) {
             throw "Device IP required for OTA flash (use -DeviceIp parameter, set WIREGUARD_LOCAL_IP in build, or add DefaultOtaDeviceIp to target config)"
         }
-        
-        # HTTP OTA: first prepare device, then upload firmware via /update
-        $flashCmd = "curl -s -m 120 http://$deviceIp/prepareota"
-        $httpOtaUploadCmd = "curl -f -m 120 --progress-bar -F 'firmware=@$staging/firmware.bin' 'http://$deviceIp/update?size=`$(stat -c%s $staging/firmware.bin 2>/dev/null || stat -f%z $staging/firmware.bin)'"
         $flashMethodName = "HTTP OTA to $deviceIp"
+        $flashBlock = @"
+log "Preparing device for OTA update..."
+PREPARE_RESULT=`$(curl -s -m 120 http://$deviceIp/prepareota 2>&1) || true
+log "Prepare response: `$PREPARE_RESULT"
+if echo "`$PREPARE_RESULT" | grep -q "OK"; then
+    log "Device prepared for OTA"
+else
+    log "WARNING: Prepare may have timed out - continuing anyway"
+fi
+sleep 3
+FW_SIZE=`$(stat -c%s "`$STAGING/firmware.bin" 2>/dev/null || stat -f%z "`$STAGING/firmware.bin" 2>/dev/null)
+log "Uploading firmware via HTTP OTA (`$FW_SIZE bytes)..."
+log "Command: curl -f -m 600 -F firmware=@`$STAGING/firmware.bin http://$deviceIp/update?size=`$FW_SIZE"
+UPLOAD_RESULT=`$(curl -f -m 600 -F "firmware=@`$STAGING/firmware.bin" "http://$deviceIp/update?size=`$FW_SIZE" 2>&1) || true
+log "Upload response: `$UPLOAD_RESULT"
+if echo "`$UPLOAD_RESULT" | grep -qi "OK\|success"; then
+    log "Flash completed successfully!"
+else
+    log "ERROR: HTTP OTA upload may have failed"
+    log "Response: `$UPLOAD_RESULT"
+    echo "RESULT:FLASH_FAILED"
+    exit 1
+fi
+"@
     } else {
         # Serial flash using esptool
         $flashCmd = "$esptool --chip esp32 --port $port --baud $($Script:Config.BaudRate) --before default_reset --after hard_reset write_flash -z --flash_mode $($Script:Config.FlashMode) --flash_freq $($Script:Config.FlashFreq) --flash_size detect $($Script:Config.BootloaderOffset) $staging/bootloader.bin $($Script:Config.PartitionsOffset) $staging/partitions.bin $($Script:Config.FirmwareOffset) $staging/firmware.bin"
         $flashMethodName = "Serial via $port"
+        $flashBlock = @"
+log "Command: $flashCmd"
+if $flashCmd >> "`$LOGFILE" 2>&1; then
+    log "Flash completed successfully!"
+else
+    log "ERROR: Flash failed!"
+    echo "RESULT:FLASH_FAILED"
+    exit 1
+fi
+"@
     }
     
-    # WiFi configuration section (if specified)
-    $wifiConfigScript = ""
+    # WiFi block (optional)
+    $wifiBlock = ""
     if ($ConfigureWifi -and $WifiSsid) {
-        $wifiConfigScript = @"
+        $wifiBlock = @"
 
 # ============================================================================
 # STEP 3: Configure WiFi via config portal API
@@ -871,125 +803,33 @@ restore_wifi
 
 "@
     }
-    
-    # Full script
-    $script = @"
-#!/bin/bash
-# ============================================================================
-# ESP32 Firmware Deployment Script (Autonomous)
-# Generated: $(Get-Date -Format "yyyy-MM-dd HH:mm:ss")
-# ============================================================================
-# This script runs autonomously on the remote machine.
-# Even if the originating connection drops, deployment continues.
-# Logs are written to: $logFile
-# ============================================================================
 
-set -e
-
-LOGFILE="$logFile"
-STAGING="$staging"
-PORT="$port"
-FLASH_METHOD="$FlashMethod"
-
-# Logging function
-log() {
-    echo "`$(date '+%Y-%m-%d %H:%M:%S') | `$1" | tee -a "`$LOGFILE"
-}
-
-# Start fresh log
-echo "============================================================================" > "`$LOGFILE"
-log "ESP32 Deployment Starting"
-log "============================================================================"
-
-# ============================================================================
-# STEP 1: Verify files
-# ============================================================================
-log "STEP 1: Verifying firmware files"
-
-for file in firmware.bin bootloader.bin partitions.bin; do
-    if [ ! -f "`$STAGING/`$file" ]; then
-        log "ERROR: Missing file: `$STAGING/`$file"
-        echo "RESULT:MISSING_FILES"
-        exit 1
-    fi
-    SIZE=`$(ls -l "`$STAGING/`$file" | awk '{print `$5}')
-    log "  `$file: `$SIZE bytes"
-done
-
-# ============================================================================
-# STEP 2: Flash firmware ($flashMethodName)
-# ============================================================================
-log "STEP 2: Flashing firmware via $flashMethodName"
-
-# Release serial port if using serial flash
-if [ \"`$FLASH_METHOD\" = \"serial\" ]; then
-    pkill -f \"cat \$PORT\" 2>/dev/null || true
-    pkill screen 2>/dev/null || true
-    sleep 2
-fi
-
-log "Running flash command..."
-$(if ($FlashMethod -eq "ota") {
-@"
-log "Preparing device for OTA update..."
-PREPARE_RESULT=`$(curl -s -m 120 http://$deviceIp/prepareota 2>&1) || true
-log "Prepare response: `$PREPARE_RESULT"
-if echo "`$PREPARE_RESULT" | grep -q "OK"; then
-    log "Device prepared for OTA"
-else
-    log "WARNING: Prepare may have timed out - continuing anyway"
-fi
-sleep 3
-FW_SIZE=`$(stat -c%s "`$STAGING/firmware.bin" 2>/dev/null || stat -f%z "`$STAGING/firmware.bin" 2>/dev/null)
-log "Uploading firmware via HTTP OTA (`$FW_SIZE bytes)..."
-log "Command: curl -f -m 600 -F firmware=@`$STAGING/firmware.bin http://$deviceIp/update?size=`$FW_SIZE"
-UPLOAD_RESULT=`$(curl -f -m 600 -F "firmware=@`$STAGING/firmware.bin" "http://$deviceIp/update?size=`$FW_SIZE" 2>&1) || true
-log "Upload response: `$UPLOAD_RESULT"
-if echo "`$UPLOAD_RESULT" | grep -qi "OK\|success"; then
-    log "Flash completed successfully!"
-else
-    log "ERROR: HTTP OTA upload may have failed"
-    log "Response: `$UPLOAD_RESULT"
-    echo "RESULT:FLASH_FAILED"
-    exit 1
-fi
-"@
-} else {
-@"
-log "Command: $flashCmd"
-if $flashCmd >> "`$LOGFILE" 2>&1; then
-    log "Flash completed successfully!"
-else
-    log "ERROR: Flash failed!"
-    echo "RESULT:FLASH_FAILED"
-    exit 1
-fi
-"@
-})
-$wifiConfigScript
-# ============================================================================
-# DONE
-# ============================================================================
-log "============================================================================"
-log "Deployment completed successfully!"
-log "============================================================================"
-echo "RESULT:SUCCESS"
-"@
-    
-    return $script
+    # Read deploy script template and substitute tokens
+    $deployScript = Get-Content (Join-Path $PSScriptRoot "scripts\deploy.sh") -Raw
+    $deployScript = $deployScript -replace "`r`n", "`n"
+    $deployScript = $deployScript.Replace("@@TIMESTAMP@@",         (Get-Date -Format "yyyy-MM-dd HH:mm:ss"))
+    $deployScript = $deployScript.Replace("@@LOGFILE@@",           $logFile)
+    $deployScript = $deployScript.Replace("@@STAGING@@",           $staging)
+    $deployScript = $deployScript.Replace("@@PORT@@",              $port)
+    $deployScript = $deployScript.Replace("@@FLASH_METHOD@@",      $FlashMethod)
+    $deployScript = $deployScript.Replace("@@FLASH_METHOD_NAME@@", $flashMethodName)
+    $deployScript = $deployScript.Replace("@@FLASH_BLOCK@@",       $flashBlock)
+    $deployScript = $deployScript.Replace("@@WIFI_BLOCK@@",        $wifiBlock)
+    $deployScript = $deployScript -replace "`r`n", "`n"
+    return $deployScript
 }
 
 function Copy-FirmwareToRemote {
     param(
         [ValidateSet("mac", "unraid", "bowie-phone", "local")]
         [string]$Target = "mac",
-        [string]$Environment = "bowie-phone-1",
+        [string]$BuildEnvironment = "bowie-phone-1",
         [ValidateSet("serial", "ota")]
         [string]$FlashMethod = "serial"
     )
     
     $targetConfig = $Script:Config.Targets[$Target]
-    $buildDir = Join-Path $Script:Config.ProjectRoot ".pio\build\$Environment"
+    $buildDir = Join-Path $Script:Config.ProjectRoot ".pio\build\$BuildEnvironment"
     
     # Handle local target - no upload needed, just verify files exist
     if (Test-IsLocalTarget -Target $Target) {
@@ -1052,6 +892,66 @@ function Copy-FirmwareToRemote {
     return $true
 }
 
+function Send-DeviceCommand {
+    <#
+    .SYNOPSIS
+        Send a debug command to the device via its telnet interface
+    .DESCRIPTION
+        Connects to the device's telnet port (23) through the target's SSH host
+        and sends the command string.  The device processes it via processDebugInput()
+        in special_command_processor.cpp.  Type 'help' from the monitor or call
+        Send-DeviceCommand -Command 'help' to see the full list of supported commands.
+    .PARAMETER Target
+        Deploy target whose SSH host and device IP to use
+    .PARAMETER Command
+        Command string to send (e.g. 'help', 'state', 'hook', '*#08#', '1234')
+    .PARAMETER DeviceIp
+        Override device IP (default: target's DefaultOtaDeviceIp)
+    .PARAMETER TelnetPort
+        Telnet port on the device (default: 23)
+    .EXAMPLE
+        Send-DeviceCommand -Target bowie-phone -Command "help"
+        Send-DeviceCommand -Target bowie-phone -Command "*#08#"
+        Send-DeviceCommand -Target bowie-phone -Command "state"
+    #>
+    param(
+        [Parameter(Mandatory)]
+        [ValidateSet("mac", "unraid", "bowie-phone", "local")]
+        [string]$Target,
+        [Parameter(Mandatory)]
+        [string]$Command,
+        [string]$DeviceIp,
+        [int]$TelnetPort = 23
+    )
+
+    $targetConfig = $Script:Config.Targets[$Target]
+    $sshHost = $targetConfig.Host
+    $ip = if ($DeviceIp)                          { $DeviceIp }
+          elseif ($targetConfig.DefaultOtaDeviceIp) { $targetConfig.DefaultOtaDeviceIp }
+          else                                       { $null }
+
+    if (-not $ip) {
+        Write-Warning "No device IP configured for target '$Target' — cannot send command"
+        return $false
+    }
+
+    Write-Host "   → $Command" -ForegroundColor Cyan
+
+    # Base64-encode the bash fragment to bypass SSH/shell quoting entirely.
+    # Sends the command to the device's telnet port via nc, waits 2 s for any response.
+    $escapedCmd = $Command -replace "'", "'\''"
+    $bashScript = "printf '%s\n' '$escapedCmd' | nc -w2 $ip $TelnetPort 2>/dev/null"
+    $b64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($bashScript))
+    $result = Invoke-SshCommand -TargetHost $sshHost -Command "echo $b64 | base64 -d | bash" -Silent -Timeout 8
+
+    if ($result.Success -and $result.Output) {
+        $result.Output | Where-Object { $_.Trim() } | ForEach-Object {
+            Write-Host "   ← $_" -ForegroundColor DarkGray
+        }
+    }
+    return $result.Success
+}
+
 function Monitor-SerialOutput {
     <#
     .SYNOPSIS
@@ -1092,37 +992,69 @@ function Monitor-SerialOutput {
         Write-Host "   Device:  $deviceId" -ForegroundColor DarkGray
         Write-Host "   Via SSH: $sshHost" -ForegroundColor DarkGray
         Write-Host "   Logs:    $logDir" -ForegroundColor DarkGray
+        Write-Host "   Type a command + Enter to send to device ('help' for list)" -ForegroundColor DarkGray
         Write-Host "   Press Ctrl+C to stop" -ForegroundColor DarkGray
         Write-Host ""
 
-        # tail -f today's log file; if it doesn't exist yet, wait for it
-        # Script is base64-encoded before sending to avoid CRLF/quoting issues
-        $tailScript = @"
-#!/bin/bash
-logdir="$logDir"
-logfile="`$logdir/`$(date +%Y-%m-%d).log"
-if [ ! -f "`$logfile" ]; then
-    echo "Waiting for `$logfile..."
-    while [ ! -f "`$logfile" ]; do
-        sleep 5
-        logfile="`$logdir/`$(date +%Y-%m-%d).log"
-    done
-fi
-tail -n +1 -f "`$logfile"
-"@
-        $b64 = [Convert]::ToBase64String(
-            [System.Text.Encoding]::UTF8.GetBytes($tailScript.Replace("`r`n", "`n"))
-        )
-        & ssh $sshHost "echo $b64 | base64 -d | bash" | ForEach-Object {
-            $line = $_.ToString()
-            if ($line -match 'ERROR|FAIL') {
-                Write-Host "   $line" -ForegroundColor Red
-            } elseif ($line -match 'WARN') {
-                Write-Host "   $line" -ForegroundColor Yellow
-            } else {
-                Write-Host "   $line" -ForegroundColor DarkGray
+        # tail-remote-log.sh is read from disk; @@LOGDIR@@ is substituted before encoding
+        $tailContent = Get-Content (Join-Path $PSScriptRoot "scripts\tail-remote-log.sh") -Raw
+        $tailContent = $tailContent.Replace("@@LOGDIR@@", $logDir) -replace "`r`n", "`n"
+        $b64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($tailContent))
+
+        # Run SSH log tail in a background job so stdin can also be read concurrently
+        $sshJob = Start-Job -ScriptBlock {
+            param($h, $b)
+            & ssh $h "echo $b | base64 -d | bash" 2>&1
+        } -ArgumentList $sshHost, $b64
+
+        # Drain stdin in a separate runspace so the poll loop never blocks on keyboard input
+        $inputQueue = [System.Collections.Concurrent.ConcurrentQueue[string]]::new()
+        $stdinRS = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace()
+        $stdinRS.Open()
+        $stdinPS = [System.Management.Automation.PowerShell]::Create()
+        $stdinPS.Runspace = $stdinRS
+        $stdinPS.AddScript({
+            param($q)
+            while ($true) {
+                $line = [Console]::ReadLine()
+                if ($null -eq $line) { break }
+                $q.Enqueue($line)
             }
-            Write-Output $line
+        }).AddArgument($inputQueue) | Out-Null
+        $stdinHandle = $stdinPS.BeginInvoke()
+
+        try {
+            while ($true) {
+                # Forward SSH tail output to the console
+                $lines = Receive-Job $sshJob -ErrorAction SilentlyContinue
+                foreach ($rawLine in $lines) {
+                    $line = $rawLine.ToString()
+                    if ($line -match 'ERROR|FAIL') {
+                        Write-Host "   $line" -ForegroundColor Red
+                    } elseif ($line -match 'WARN') {
+                        Write-Host "   $line" -ForegroundColor Yellow
+                    } else {
+                        Write-Host "   $line" -ForegroundColor DarkGray
+                    }
+                    Write-Output $line
+                }
+
+                # Forward any typed input to the device as a debug command
+                $cmd = $null
+                while ($inputQueue.TryDequeue([ref]$cmd)) {
+                    if ($cmd) {
+                        Send-DeviceCommand -Target $Target -Command $cmd
+                    }
+                }
+
+                if ($sshJob.State -in @('Completed', 'Failed', 'Stopped')) { break }
+                Start-Sleep -Milliseconds 100
+            }
+        } finally {
+            Stop-Job  $sshJob -ErrorAction SilentlyContinue
+            Remove-Job $sshJob -Force -ErrorAction SilentlyContinue
+            $stdinPS.Stop() | Out-Null
+            $stdinRS.Close()
         }
         return
     }
@@ -1288,7 +1220,7 @@ function Start-RemoteDeployment {
         [string]$Target = "mac",
         [ValidateSet("serial", "ota")]
         [string]$FlashMethod = "serial",
-        [string]$Environment = "bowie-phone-1",
+        [string]$BuildEnvironment = "bowie-phone-1",
         [string]$SerialPort,
         [string]$DeviceIp,
         [string]$PythonCmd = "python3",
@@ -1311,7 +1243,7 @@ function Start-RemoteDeployment {
         }
         
         # Local serial flash
-        $buildDir = Join-Path $Script:Config.ProjectRoot ".pio\build\$Environment"
+        $buildDir = Join-Path $Script:Config.ProjectRoot ".pio\build\$BuildEnvironment"
         $port = if ($SerialPort) { $SerialPort } else { $targetConfig.DefaultSerialPort }
         
         $firmwareBin = Join-Path $buildDir "firmware.bin"
@@ -1458,9 +1390,9 @@ function Start-RemoteDeployment {
     }
 }
 
-function Deploy-ViaSsh {
+function Deploy-ToDevice {
     param(
-        [string]$Environment = "bowie-phone-1",
+        [string]$BuildEnvironment = "bowie-phone-1",
         [ValidateSet("mac", "unraid", "bowie-phone", "local")]
         [string]$Target = "mac",
         [ValidateSet("serial", "ota")]
@@ -1478,7 +1410,7 @@ function Deploy-ViaSsh {
     
     # Auto-detect whether a build is needed when neither -SkipBuild nor -Clean was given
     if (-not $SkipBuild -and -not $Clean) {
-        if (Test-BuildFresh -Environment $Environment) {
+        if (Test-BuildFresh -Environment $BuildEnvironment) {
             Write-Host "   Build is up-to-date — skipping build step" -ForegroundColor DarkGray
             $SkipBuild = [switch]::new($true)
         }
@@ -1499,7 +1431,7 @@ function Deploy-ViaSsh {
     Write-Host "`n" + ("=" * 55) -ForegroundColor Cyan
     Write-Host "🚀 ESP32 Deployment $deployType" -ForegroundColor Cyan
     Write-Host ("=" * 55) -ForegroundColor Cyan
-    Write-Host "   Environment: $Environment"
+    Write-Host "   Environment: $BuildEnvironment"
     Write-Host "   Target: $Target"
     Write-Host "   Method: $FlashMethod"
     if ($WifiSsid) {
@@ -1532,7 +1464,7 @@ function Deploy-ViaSsh {
     if (-not $SkipBuild) {
         $step++
         Write-Step $step $totalSteps "Building firmware"
-        if (-not (Build-Firmware -Environment $Environment -Clean:$Clean -BuildArgs $BuildArgs)) {
+        if (-not (Build-Firmware -Environment $BuildEnvironment -Clean:$Clean -BuildArgs $BuildArgs)) {
             return $false
         }
     }
@@ -1540,7 +1472,7 @@ function Deploy-ViaSsh {
     # Step 2: Upload files
     $step++
     Write-Step $step $totalSteps "Uploading to $Target"
-    if (-not (Copy-FirmwareToRemote -Target $Target -Environment $Environment -FlashMethod $FlashMethod)) {
+    if (-not (Copy-FirmwareToRemote -Target $Target -Environment $BuildEnvironment -FlashMethod $FlashMethod)) {
         return $false
     }
     
@@ -1572,7 +1504,7 @@ function Deploy-ViaSsh {
     }
     if ($isLocal) {
         # Pass Environment for local builds
-        $deployParams.Environment = $Environment
+        $deployParams.Environment = $BuildEnvironment
     }
     $success = Start-RemoteDeployment @deployParams
     
@@ -1688,20 +1620,20 @@ function Publish-Firmware {
         Publish-Firmware -BuildArgs "-DRUN_SD_DEBUG_FIRST"
     #>
     param(
-        [string]$Environment = "bowie-phone-1",
+        [string]$BuildEnvironment = "bowie-phone-1",
         [string]$Version,
         [switch]$SkipBuild,
         [switch]$Clean,
         [string]$BuildArgs
     )
     
-    $BuildDir = Join-Path $Script:Config.ProjectRoot ".pio\build\$Environment"
+    $BuildDir = Join-Path $Script:Config.ProjectRoot ".pio\build\$BuildEnvironment"
     $FirmwareDir = Join-Path $Script:Config.ProjectRoot "docs\firmware"
     $FrameworkDir = "$env:USERPROFILE\.platformio\packages\framework-arduinoespressif32"
     
     Write-Host "`n🔧 Bowie Phone Firmware Publisher" -ForegroundColor Cyan
     Write-Host "=" * 40
-    Write-Host "🎯 Environment: $Environment" -ForegroundColor Cyan
+    Write-Host "🎯 Environment: $BuildEnvironment" -ForegroundColor Cyan
     
     # Extract version from platformio.ini if not provided
     if (-not $Version) {
@@ -1716,16 +1648,16 @@ function Publish-Firmware {
     
     # Auto-detect whether a build is needed when neither -SkipBuild nor -Clean was given
     if (-not $SkipBuild -and -not $Clean) {
-        if (Test-BuildFresh -Environment $Environment) {
+        if (Test-BuildFresh -Environment $BuildEnvironment) {
             Write-Host "`n   Build is up-to-date — skipping build step" -ForegroundColor DarkGray
             $SkipBuild = [switch]::new($true)
         }
     }
 
     # Build firmware
-    if (-not $SkipBuild) {
-        Write-Host "`n🔨 Building firmware for $Environment..." -ForegroundColor Yellow
-        if (-not (Build-Firmware -Environment $Environment -Clean:$Clean -BuildArgs $BuildArgs)) {
+    if (-not $SkipBuild -or -$Clean) {
+        Write-Host "`n🔨 Building firmware for $BuildEnvironment..." -ForegroundColor Yellow
+        if (-not (Build-Firmware -Environment $BuildEnvironment -Clean:$Clean -BuildArgs $BuildArgs)) {
             Write-Failure "Build failed"
             return $false
         }
@@ -1999,37 +1931,14 @@ function Get-RemoteDeployLog {
 }
 #endregion
 
-#region Main Execution
-# Only run main if called directly (not dot-sourced)
-if ($MyInvocation.InvocationName -ne '.') {
-    $result = Deploy-ViaSsh `
-        -Environment $Environment `
-        -Target $Target `
-        -FlashMethod $FlashMethod `
-        -SerialPort $SerialPort `
-        -DeviceIp $DeviceIp `
-        -WifiSsid $WifiSsid `
-        -WifiPassword $WifiPassword `
-        -SkipBuild:$SkipBuild `
-        -NoMonitor:$NoMonitor `
-        -Clean:$Clean `
-        -NoWait:$NoWait `
-        -BuildArgs $BuildArgs
-    
-    if (-not $result) {
-        exit 1
-    }
-}
-else {
-    Write-Host "🚀 Bowie Phone Utilities Loaded" -ForegroundColor Cyan
-    Write-Host "   Available functions:" -ForegroundColor DarkGray
-    Write-Host "     • Build-Firmware" -ForegroundColor Green
-    Write-Host "     • Deploy-ViaSsh" -ForegroundColor Green
-    Write-Host "     • Bump-Version" -ForegroundColor Green
-    Write-Host "     • Publish-Firmware" -ForegroundColor Green
-    Write-Host "     • Monitor-SerialOutput" -ForegroundColor Green
-    Write-Host "     • Watch-RemoteLogs" -ForegroundColor Green
-    Write-Host "     • Get-RemoteDeployLog" -ForegroundColor Green
-    Write-Host "`n   Type Get-Help <function-name> for details" -ForegroundColor DarkGray
-}
-#endregion
+Write-Host "🚀 Bowie Phone Utilities Loaded" -ForegroundColor Cyan
+Write-Host "   Available functions:" -ForegroundColor DarkGray
+Write-Host "     • Build-Firmware" -ForegroundColor Green
+Write-Host "     • Deploy-ToDevice" -ForegroundColor Green
+Write-Host "     • Bump-Version" -ForegroundColor Green
+Write-Host "     • Publish-Firmware" -ForegroundColor Green
+Write-Host "     • Monitor-SerialOutput" -ForegroundColor Green
+Write-Host "     • Send-DeviceCommand" -ForegroundColor Green
+Write-Host "     • Watch-RemoteLogs" -ForegroundColor Green
+Write-Host "     • Get-RemoteDeployLog" -ForegroundColor Green
+Write-Host "`n   Type Get-Help <function-name> for details" -ForegroundColor DarkGray

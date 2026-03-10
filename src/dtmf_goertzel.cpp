@@ -298,11 +298,6 @@ void goertzelTaskFunction(void* parameter) {
     goertzelTaskStarted = true;
     Logger.println("🎵 Goertzel task started on core 0");
     
-    UBaseType_t hwm = uxTaskGetStackHighWaterMark(NULL);
-    Logger.printf("🎵 Goertzel stack high-water mark (initial): %u words free\n", hwm);
-    
-    unsigned long lastHwmCheck = millis();
-    
     while (goertzelTaskShouldRun) {
         // Copy audio data from mic to Goertzel decoder
         // This triggers Goertzel computation and callbacks when a block is ready
@@ -310,13 +305,6 @@ void goertzelTaskFunction(void* parameter) {
         
         // Evaluate accumulated block data (if a block completed during copy)
         evaluateBlock();
-        
-        // Periodically log stack usage (every 30s)
-        if (millis() - lastHwmCheck > 30000) {
-            hwm = uxTaskGetStackHighWaterMark(NULL);
-            Logger.printf("🎵 Goertzel stack HWM: %u words free\n", hwm);
-            lastHwmCheck = millis();
-        }
         
         // Small yield to prevent watchdog issues
         vTaskDelay(1);

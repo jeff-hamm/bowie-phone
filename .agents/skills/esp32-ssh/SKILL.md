@@ -37,22 +37,22 @@ Use this skill for repeatable ESP32 firmware operations against the `mac` deploy
 
 3. Deploy to mac over SSH.
    ```powershell
-   Deploy-ViaSsh -Environment bowie-phone-1 -Target mac -FlashMethod serial
+   Deploy-ToDevice -Environment bowie-phone-1 -Target mac -FlashMethod serial
    ```
 
 4. Deploy without rebuilding when binaries are already fresh.
    ```powershell
-   Deploy-ViaSsh -Environment bowie-phone-1 -Target mac -FlashMethod serial -SkipBuild
+   Deploy-ToDevice -Environment bowie-phone-1 -Target mac -FlashMethod serial -SkipBuild
    ```
 
 5. Use explicit serial port when the default is wrong.
    ```powershell
-   Deploy-ViaSsh -Environment bowie-phone-1 -Target mac -FlashMethod serial -SerialPort /dev/tty.usbserial-0001
+   Deploy-ToDevice -Environment bowie-phone-1 -Target mac -FlashMethod serial -SerialPort /dev/tty.usbserial-0001
    ```
 
 6. Monitor serial output after deploy.
    ```powershell
-   Deploy-ViaSsh -Environment bowie-phone-1 -Target mac -FlashMethod serial -MonitorAfter
+   Deploy-ToDevice -Environment bowie-phone-1 -Target mac -FlashMethod serial -MonitorAfter
    ```
    Or monitor standalone:
    ```powershell
@@ -62,12 +62,12 @@ Use this skill for repeatable ESP32 firmware operations against the `mac` deploy
 7. Run OTA deploy via unraid (preferred — Windows can't reach the device directly).
    SSH goes to unraid, which can reach the device at `10.253.0.2` over WireGuard. Device IP resolves automatically.
    ```powershell
-   Deploy-ViaSsh -Environment bowie-phone-1 -Target unraid -FlashMethod ota
-   Deploy-ViaSsh -Environment bowie-phone-1 -Target unraid -FlashMethod ota -SkipBuild
+   Deploy-ToDevice -Environment bowie-phone-1 -Target unraid -FlashMethod ota
+   Deploy-ToDevice -Environment bowie-phone-1 -Target unraid -FlashMethod ota -SkipBuild
    ```
    Override device IP explicitly if needed:
    ```powershell
-   Deploy-ViaSsh -Environment bowie-phone-1 -Target unraid -FlashMethod ota -DeviceIp 10.253.0.2
+   Deploy-ToDevice -Environment bowie-phone-1 -Target unraid -FlashMethod ota -DeviceIp 10.253.0.2
    ```
 
 8. Stream live device logs from the remote log server (device posts via WireGuard to unraid at `10.253.0.1:3000`).
@@ -91,7 +91,7 @@ Use this skill for repeatable ESP32 firmware operations against the `mac` deploy
 
 3. If port is busy, clear and retry deploy.
    ```powershell
-   Deploy-ViaSsh -Environment bowie-phone-1 -Target mac -FlashMethod serial -SerialPort /dev/tty.usbserial-0001
+   Deploy-ToDevice -Environment bowie-phone-1 -Target mac -FlashMethod serial -SerialPort /dev/tty.usbserial-0001
    ```
 
 4. If deployment output is truncated or disconnected, inspect remote logs:
@@ -108,11 +108,11 @@ Use this skill for repeatable ESP32 firmware operations against the `mac` deploy
 
 - Build and deploy in one command:
   ```powershell
-  Deploy-ViaSsh -Environment bowie-phone-1 -Target mac -FlashMethod serial
+  Deploy-ToDevice -Environment bowie-phone-1 -Target mac -FlashMethod serial
   ```
 - Fire-and-forget deployment:
   ```powershell
-  Deploy-ViaSsh -Environment bowie-phone-1 -Target mac -FlashMethod serial -NoWait
+  Deploy-ToDevice -Environment bowie-phone-1 -Target mac -FlashMethod serial -NoWait
   ```
 - Publish firmware artifacts for web installer:
   ```powershell
@@ -122,5 +122,5 @@ Use this skill for repeatable ESP32 firmware operations against the `mac` deploy
 ## Notes
 
 - Preferred mac serial naming for this project is often `/dev/tty.usbserial-0001` or `/dev/cu.usbserial-0001`; use explicit `-SerialPort` when uncertain.
-- Keep `platformio.ini` `upload_port` on Windows (`COM3`) unchanged for local workflows; remote mac serial is controlled by `Deploy-ViaSsh` parameters.
+- Keep `platformio.ini` `upload_port` on Windows (`COM3`) unchanged for local workflows; remote mac serial is controlled by `Deploy-ToDevice` parameters.
 - The deploy helper auto-attempts remote dependency setup, including Python/esptool bootstrapping paths for headless macOS.

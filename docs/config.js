@@ -51,7 +51,8 @@ const PHONE_CONFIG = {
         'ringback',
         'disconnect',
         'error',
-        'wrong_number'
+        'wrong_number',
+        'click'
     ],
     
     // Data field configuration

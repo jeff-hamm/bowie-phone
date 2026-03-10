@@ -13,7 +13,7 @@ When you open a new terminal in this workspace, PhoneUtils is automatically load
 ### Core Functions
 
 #### Deployment
-- **`Deploy-ViaSsh`** - Deploy firmware to remote machine via SSH
+- **`Deploy-ToDevice`** - Deploy firmware to remote machine via SSH
 - **`Build-Firmware`** - Build firmware with PlatformIO
 - **`Watch-SerialOutput`** - Monitor device serial output
 - **`Get-RemoteDeployLog`** - Retrieve deployment logs
@@ -40,13 +40,13 @@ When you open a new terminal in this workspace, PhoneUtils is automatically load
 # Functions are auto-loaded when you open a terminal
 
 # Build and deploy
-Deploy-ViaSsh -MonitorAfter
+Deploy-ToDevice -MonitorAfter
 
 # Deploy to specific target
-Deploy-ViaSsh -Target unraid
+Deploy-ToDevice -Target unraid
 
 # Deploy with custom WiFi credentials
-Deploy-ViaSsh -WifiSsid "MyNetwork" -WifiPassword "secret123"
+Deploy-ToDevice -WifiSsid "MyNetwork" -WifiPassword "secret123"
 
 # Bump version and publish
 Bump-Version
@@ -58,7 +58,7 @@ Watch-SerialOutput
 
 ### Deployment Parameters
 
-When calling `Deploy-ViaSsh`:
+When calling `Deploy-ToDevice`:
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
@@ -253,7 +253,7 @@ ssh jumper@100.111.120.5 "echo OK"
 ### Build Fails
 ```powershell
 # Clean build and deploy
-Deploy-ViaSsh -Clean
+Deploy-ToDevice -Clean
 
 # Or just clean build
 Build-Firmware -Clean
@@ -312,7 +312,7 @@ ssh jumper@100.111.120.5 "cat /tmp/fw_deploy.log"
 
 # Build and flash
 Build-Firmware
-Deploy-ViaSsh -MonitorAfter
+Deploy-ToDevice -MonitorAfter
 
 # Just monitor after changes
 Watch-SerialOutput
@@ -327,22 +327,22 @@ Bump-Version  # 1.0.0 -> 1.0.1
 Publish-Firmware
 
 # Deploy to device
-Deploy-ViaSsh -MonitorAfter
+Deploy-ToDevice -MonitorAfter
 ```
 
 ### Production Deployment
 ```powershell
 # Clean build with monitoring
-Deploy-ViaSsh -Clean -MonitorAfter
+Deploy-ToDevice -Clean -MonitorAfter
 
 # Fire and forget to production
-Deploy-ViaSsh -Target unraid -NoWait
+Deploy-ToDevice -Target unraid -NoWait
 ```
 
 ### WiFi Reconfiguration
 ```powershell
 # Deploy with new WiFi credentials
-Deploy-ViaSsh `
+Deploy-ToDevice `
     -SkipBuild `
     -WifiSsid "NewNetwork" `
     -WifiPassword "newpassword" `

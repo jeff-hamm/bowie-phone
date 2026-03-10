@@ -17,7 +17,7 @@
 				"args": [
 					"-NoExit",
 					"-Command",
-					". '${workspaceFolder}\\tools\\PhoneUtils.ps1'"
+					". '${workspaceFolder:bowie-phone}\\tools\\PhoneUtils.ps1'"
 				],
 				"icon": "terminal-powershell"
 			}
