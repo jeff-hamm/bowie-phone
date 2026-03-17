@@ -1370,9 +1370,10 @@ void handleWiFiLoop()
         unsigned long otaDiagNow = millis();
         if (otaDiagNow - lastOtaDiag >= 60000) {
             lastOtaDiag = otaDiagNow;
-            Logger.printf("💓 OTA listening on %s:%d | WG: %s | Heap: %u\n",
+            Logger.printf("💓 OTA: %s:%d | WG: %s | uptime: %lus | RSSI: %d dBm | Heap: %u\n",
                 WiFi.localIP().toString().c_str(), OTA_PORT,
                 isTailscaleConnected() ? getTailscaleIP() : "OFF",
+                otaDiagNow / 1000, WiFi.RSSI(),
                 ESP.getFreeHeap());
         }
         

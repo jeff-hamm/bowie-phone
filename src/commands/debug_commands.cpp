@@ -297,13 +297,35 @@ static void processDebugCommand(const String& cmd) {
         performAudioOutputTest();
     }
     else if (cmd.startsWith("debuginput") || cmd.startsWith("replayaudio")) {
+        // Usage: debuginput [<filename>] [expected:<digits>]
+        // e.g.: debuginput /debug_audio.raw expected:#1
         String arg = cmd.substring(cmd.indexOf(' ') + 1);
         arg.trim();
-        if (arg.length() == 0 || arg == cmd) {
-            performDebugInput("/debug_audio.raw");
-        } else {
-            performDebugInput(arg.c_str());
+
+        const char* filename = "/debug_audio.raw";
+        const char* expectedDigits = nullptr;
+        static char s_argFilename[64];
+        static char s_argExpected[32];
+
+        if (arg.length() > 0 && arg != cmd) {
+            int expIdx = arg.indexOf("expected:");
+            if (expIdx >= 0) {
+                String expStr = arg.substring(expIdx + 9);
+                expStr.trim();
+                strncpy(s_argExpected, expStr.c_str(), sizeof(s_argExpected) - 1);
+                s_argExpected[sizeof(s_argExpected) - 1] = '\0';
+                expectedDigits = s_argExpected;
+                arg = arg.substring(0, expIdx);
+                arg.trim();
+            }
+            if (arg.length() > 0) {
+                strncpy(s_argFilename, arg.c_str(), sizeof(s_argFilename) - 1);
+                s_argFilename[sizeof(s_argFilename) - 1] = '\0';
+                filename = s_argFilename;
+            }
         }
+
+        performDebugInput(filename, expectedDigits);
     }
     else if (cmd.equalsIgnoreCase("sddebug") || cmd.equalsIgnoreCase("sdtest")) {
         performSDCardDebug();

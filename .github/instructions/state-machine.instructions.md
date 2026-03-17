@@ -8,7 +8,7 @@ applyTo: "src/main.ino,src/sequence_processor.cpp,src/dtmf_goertzel.cpp,include/
 
 ```
 ON_HOOK → (lift) → DIAL_TONE → (1st digit) → COLLECTING → (match/term) →
-  PLAYBACK → (audio ends) → LOCKED → (hangup) → ON_HOOK
+  RINGBACK → (duration expires) → PLAYBACK → (audio ends) → LOCKED → (hangup) → ON_HOOK
 ```
 
 Hook callback (`main.ino`):
@@ -48,8 +48,13 @@ Only two things unmute Goertzel: playing dialtone, or idle+unlocked (ready for d
 ## Dispatch Rules
 
 - `isSpecialCommand()` → `processSpecialCommand()` — does NOT set `sequenceLocked` (allows further dialling after command runs).
-- Registry match → `playPlaylist()` / `playAudioKey()` — sets `sequenceLocked = true`.
+- Registry match → ringback (2–5 rings, configurable) → `queueAudioKey(sequence)` → click (auto via `onStreamEnd()`). Sets `sequenceLocked = true`.
 - Unknown sequence → `processUnknownSequence()` plays `"wrong_number"` — sets `sequenceLocked = true`.
+
+### Ringback chain
+
+`playAudioKey("ringback", rings × 6000ms)` → `queueAudioKey(sequence)` → `onStreamEnd()` auto-plays `"click"`.
+Ring count: `random(RINGBACK_MIN_RINGS, RINGBACK_MAX_RINGS + 1)` (default 2–5). Set `RINGBACK_MIN_RINGS 0` to disable.
 
 ## Off-Hook Timeout
 
@@ -70,6 +75,12 @@ After `OFF_HOOK_TIMEOUT_MS` (30 s) of inactivity, `"off_hook"` warning tone play
 - Main loop: core 1. Reads via `getGoertzelKey()` (atomic read-and-clear).
 - `goertzelMuted`: `volatile bool`, written core 1, read core 0.
 - No mutex needed — single-char and single-bool operations are atomic on ESP32.
+
+## Detailed Documentation
+
+See [docs/PHONE_STATE_MACHINE.md](../docs/PHONE_STATE_MACHINE.md) for the full
+state diagram, subsystem responsibilities, Goertzel mute truth table, and
+sequence dispatch flow.
 
 ## Common Pitfalls
 

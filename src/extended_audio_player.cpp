@@ -694,6 +694,8 @@ void ExtendedAudioPlayer::stop() {
 }
 
 void ExtendedAudioPlayer::stopInternal() {
+    playbackEndTime = millis();  // Record when this audio ended
+
     if (player) {
         player->stop();
     }
@@ -761,8 +763,6 @@ bool ExtendedAudioPlayer::copy() {
             totalBytes += bytesCopied;
             unsigned long now = millis();
             if (now - lastDiag >= 2000) {
-                Logger.printf("🔊 Generator: %lu copies, %u bytes/2s, active=%d, key=%s\n",
-                              copyCount, (unsigned)totalBytes, player->isActive(), currentKey);
                 copyCount = 0;
                 totalBytes = 0;
                 lastDiag = now;

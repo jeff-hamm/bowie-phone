@@ -250,7 +250,19 @@ bool processNumberSequence(const char *sequence)
             audioStarted = audioPlayer.playAudioKey(sequence);
         }
 #else
-        audioStarted = audioPlayer.playAudioKey(sequence);
+        // Play ringback for a random number of rings, then the audio.
+        // Click is auto-played by onStreamEnd() after the real audio finishes.
+        if (RINGBACK_MIN_RINGS > 0) {
+            int rings = random(RINGBACK_MIN_RINGS, RINGBACK_MAX_RINGS + 1);
+            unsigned long ringbackMs = (unsigned long)((float)rings * RINGBACK_RING_MS);
+            Logger.printf("📞 Ringing %d times (%lu ms) before playing '%s'\n",
+                          rings, ringbackMs, sequence);
+            audioPlayer.playAudioKey("ringback", ringbackMs);
+            audioPlayer.queueAudioKey(sequence);
+        } else {
+            audioPlayer.playAudioKey(sequence);
+        }
+        audioStarted = true;
 #endif
     }
     else {

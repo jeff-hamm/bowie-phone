@@ -1,3 +1,6 @@
+# 1 "C:\\Users\\Jumper\\AppData\\Local\\Temp\\tmpe0mr1q6w"
+#include <Arduino.h>
+# 1 "C:/Users/Jumper/Projects/bowie-phone/src/main.ino"
 #include <config.h>
 #include "dtmf_goertzel.h"
 #include "esp_wifi.h"
@@ -30,54 +33,53 @@
 #include <SD.h>
 #include <ESPTelnetStream.h>
 
-ESPTelnetStream telnet;  // Telnet server for remote logging
-AudioBoardStream kit(AudioKitEs8388V1); // Audio source
-AudioSource *source = nullptr;          // to be initialized in setup()
+ESPTelnetStream telnet;
+AudioBoardStream kit(AudioKitEs8388V1);
+AudioSource *source = nullptr;
 MultiDecoder multi_decoder;
 MP3DecoderHelix mp3_decoder;
 WAVDecoder wav_decoder;
-AACDecoderHelix aac_decoder;       // Decodes AAC frames extracted from M4A
-MultiDecoder m4a_inner_decoder;    // Routes demuxed AAC frames to aac_decoder
-ContainerM4A m4a_decoder;          // Demuxes M4A/MP4 container
+AACDecoderHelix aac_decoder;
+MultiDecoder m4a_inner_decoder;
+ContainerM4A m4a_decoder;
 ExtendedAudioPlayer& audioPlayer = getExtendedAudioPlayer();
 
-// Goertzel-based DTMF detection (more efficient during dial tone)
-GoertzelStream goertzel;                // Goertzel detector
-StreamCopy goertzelCopier(goertzel, kit); // copy mic to Goertzel
 
-// Key pins for AudioKit board (active LOW)
-// These may conflict with other functions depending on DIP switch settings
-const int KEY_PINS[] = {36, 13, 19, 23, 18, 5};  // KEY1-KEY6
+GoertzelStream goertzel;
+StreamCopy goertzelCopier(goertzel, kit);
+
+
+
+const int KEY_PINS[] = {36, 13, 19, 23, 18, 5};
 const int NUM_KEYS = 6;
 
-// Firmware update mode key - KEY3 (GPIO 19) is safest as it doesn't conflict with SD card
-// Hold this key during boot to enter firmware update mode
-const int FIRMWARE_UPDATE_KEY = 19;  // GPIO 19 = KEY3
-// Flag to track if audio board was initialized
+
+
+const int FIRMWARE_UPDATE_KEY = 19;
+
 static bool audioKitInitialized = false;
-
-
-// DTMF sequence checking moved to sequence_processor.cpp
-
+void setup();
+void loop();
+#line 62 "C:/Users/Jumper/Projects/bowie-phone/src/main.ino"
 void setup()
 {
     Serial.begin(115200);
-    delay(2000); // Give serial time to initialize
+    delay(2000);
 
-    // Initialize logging system first
+
     Logger.addLogger(Serial);
 
     Logger.printf("\n\n=== Bowie Phone Starting ===\n");
-    
+
 #ifdef RUN_SD_DEBUG_FIRST
-    // Build flag to run SD debug before ANY other initialization
-    // This helps diagnose SD issues without interference from other systems
-    // Build with: -DRUN_SD_DEBUG_FIRST
+
+
+
     Logger.println("🔧 RUN_SD_DEBUG_FIRST enabled - running SD diagnostics...");
     Logger.println("   Waiting 3 seconds for serial connection...");
     delay(3000);
-    
-    // Minimal AudioKit init for SD testing
+
+
     AudioBoardStream testKit(AudioKitEs8388V1);
     auto testCfg = testKit.defaultConfig(RXTX_MODE);
     testCfg.setAudioInfo(AUDIO_INFO_DEFAULT());
@@ -85,9 +87,9 @@ void setup()
     if (testKit.begin(testCfg)) {
         Logger.println("   AudioKit initialized for testing");
     }
-    
+
     performSDCardDebug();
-    
+
     Logger.println();
     Logger.println("═══════════════════════════════════════════");
     Logger.println("SD DEBUG COMPLETE - Device will halt");
@@ -96,40 +98,40 @@ void setup()
     Logger.println("  2. Update config.h with working pins");
     Logger.println("  3. Rebuild and flash");
     Logger.println("═══════════════════════════════════════════");
-    while (true) { delay(1000); }  // Halt here
+    while (true) { delay(1000); }
 #endif
-    
-    // Initialize notification system early (before WiFi so we can show status)
+
+
     initNotifications();
-        
-    // Check if firmware update key (KEY3 / GPIO19) is held during boot
-    // This provides a hardware way to enter bootloader mode for flashing
+
+
+
     pinMode(FIRMWARE_UPDATE_KEY, INPUT_PULLUP);
-    delay(50);  // Debounce
+    delay(50);
     if (digitalRead(FIRMWARE_UPDATE_KEY) == LOW) {
         Logger.println("🔧 KEY3 (GPIO19) held at boot - entering firmware update mode...");
         enterFirmwareUpdateMode();
-        // Will not return - device restarts into bootloader
+
     }
-    
-    
-    // Reduce AudioTools library logging to minimize noise
+
+
+
     AudioToolsLogger.begin(Logger, AUDIOTOOLS_LOG_LEVEL);
 
-    // Initialize AudioKit FIRST with sd_active=false
-    // This prevents AudioKit from interfering with our SPI SD card pins
+
+
     Logger.println("🔧 Initializing AudioKit (RXTX_MODE)...");
     auto cfg = kit.defaultConfig(RXTX_MODE);
     cfg.setAudioInfo(AUDIO_INFO_DEFAULT());
-    // Configure input device - can be set via build flags
+
 #ifdef AUDIO_INPUT_DEVICE
     cfg.input_device = AUDIO_INPUT_DEVICE;
 #else
-    cfg.input_device = ADC_INPUT_ALL; // Default: both microphone and line in
+    cfg.input_device = ADC_INPUT_ALL;
 #endif
 
-    cfg.sd_active = false; // SD card initialized manually in setup()
-    //    cfg.sd_active = false; // Don't let AudioKit touch SD pins - we'll handle SD ourselves
+    cfg.sd_active = false;
+
     if (!kit.begin(cfg))
     {
         Logger.println("❌ Failed to initialize AudioKit");
@@ -139,57 +141,57 @@ void setup()
     {
         Logger.println("✅ AudioKit initialized successfully");
         audioKitInitialized = true;
-        
-        // Set input volume/gain for DTMF detection
-        // Volume range is 0-100 (percentage)
+
+
+
         kit.setInputVolume(AUDIOKIT_INPUT_VOLUME);
         Logger.printf("🔊 Input volume set to %d%%\n", AUDIOKIT_INPUT_VOLUME);
     }
 
-    // Initialize audio file manager (handles SD card initialization internally)
-    // Returns AudioSourceSD pointer if SD card is available
+
+
     source = initializeAudioFileManager();
 
-    // Initialize Audio Player with event callback
-    // Register MP3 decoder
+
+
 
     audioPlayer.setRegistry(&getAudioKeyRegistry());
-    
-    // Register decoders with the audio player
+
+
     audioPlayer.addDecoder(mp3_decoder, "audio/mpeg");
-    // Register WAV decoder with all common MIME types
-    // WAV files can be detected as audio/wav, audio/wave, or audio/vnd.wave
+
+
     audioPlayer.addDecoder(wav_decoder, "audio/wav");
     audioPlayer.addDecoder(wav_decoder, "audio/vnd.wave");
     audioPlayer.addDecoder(wav_decoder, "audio/wave");
-    // Register M4A decoder: ContainerM4A demuxes the MP4 box structure,
-    // then m4a_inner_decoder routes the extracted AAC frames to aac_decoder.
-    // checkM4A is inactive by default in MimeDetector — the 3-arg overload activates it.
+
+
+
     m4a_inner_decoder.addDecoder(aac_decoder, "audio/aac");
     m4a_decoder.setDecoder(m4a_inner_decoder);
     audioPlayer.addDecoder(m4a_decoder, "audio/m4a", MimeDetector::checkM4A);
     audioPlayer.begin(kit, source != nullptr);
-    
-    // Initialize Goertzel-based DTMF decoder
-    // Goertzel is O(n*k) for 8 DTMF frequencies — the only detector we need
+
+
+
     initGoertzelDecoder(goertzel, goertzelCopier);
-    
-    // Start Goertzel processing on separate FreeRTOS task (core 0)
-    // This prevents blocking the main loop (audio runs on core 1)
+
+
+
     startGoertzelTask(goertzelCopier);
 
-    // Initialize WiFi with careful error handling
+
     Logger.println("🔧 Starting WiFi initialization...");
 
 
     initWiFi([]() {
-        // This is called when WiFi successfully connects
-        // Note: WiFi/Tailscale LED notifications are handled in wifi_manager/tailscale_manager
-        
-        // Start telnet server for remote logging
+
+
+
+
         telnet.onConnect([](String ip) {
             Logger.printf("📡 Telnet client connected from: %s\n", ip.c_str());
-            Logger.addLogger(telnet);  // Add telnet as a log output stream
+            Logger.addLogger(telnet);
         });
         telnet.onConnectionAttempt([](String ip) {
             Logger.printf("📡 Telnet connection attempt from: %s\n", ip.c_str());
@@ -199,17 +201,17 @@ void setup()
         });
         telnet.onDisconnect([](String ip) {
             Logger.printf("📡 Telnet client disconnected from: %s\n", ip.c_str());
-            Logger.removeLogger(telnet);  // Remove from logger streams
+            Logger.removeLogger(telnet);
         });
-        
+
         if (telnet.begin(23)) {
             Logger.println("✅ Telnet server started on port 23");
         } else {
             Logger.println("❌ Failed to start telnet server");
         }
-        
-        // Download audio catalog (non-critical, can fail)
-        // Uses cached DNS if WireGuard broke public DNS
+
+
+
         Logger.println("🌐 Downloading audio catalog...");
         if (downloadAudio()) {
             Logger.println("✅ Audio catalog downloaded successfully");
@@ -217,40 +219,40 @@ void setup()
             Logger.println("⚠️ Audio catalog download failed - will retry later");
         }
     });
-    
-    // Skip Tailscale reconnection when phone is off hook (blocking call interrupts DTMF)
+
+
     setTailscaleSkipCallback([]() -> bool {
         return Phone.isOffHook();
     });
 
-    // Initialize special commands system
+
     initializeSpecialCommands();
 
-    // Initialize Phone Service
+
     Phone.begin();
     Phone.setHookCallback([](bool isOffHook) {
         if (isOffHook) {
-            // Handle off-hook event
+
             Logger.println("📞 Phone picked up (OFF HOOK)");
-            // Check if debugaudio command has armed a capture for this off-hook
+
             if (checkAndExecuteOffHookCapture()) {
-                // Capture was triggered, skip normal dial tone for now
-                // (capture function will handle audio)
+
+
                 return;
             }
             Logger.println("⚡ Playing Dial Tone");
             audioPlayer.playAudioKey("dialtone");
         } else {
-            // Handle on-hook event
+
             Logger.println("📞 Phone hung up (ON HOOK)");
             audioPlayer.stop();
-            resetDTMFSequence(); // Clear any partial DTMF sequence
+            resetDTMFSequence();
         }
     });
-    
+
     Logger.println("✅ Bowie Phone Ready!");
     Logger.println("🔧 Serial Debug Mode ACTIVE - type 'help' for commands");
-    // Check if phone is already off hook at boot - play dial tone
+
     if (Phone.isOffHook())
     {
         Logger.println("📞 Phone is off hook at boot - playing dial tone");
@@ -260,21 +262,21 @@ void setup()
 
 void loop()
 {
-    // if(!Phone.isRinging())
-    //     Phone.startRinging();
 
-    // Process Phone Service
+
+
+
     static unsigned long lastMaintenanceCheck = 0;
     Phone.loop();
     if (Phone.isOffHook())
     {
-        // Check for off-hook timeout (play warning tone if inactive too long)
+
         static bool offHookWarningPlayed = false;
         static unsigned long warningPlayedTime = 0;
         unsigned long now = millis();
         unsigned long lastActivity = max(getLastDigitTime(), audioPlayer.getLastActive());
-        // Suppress timeout while sequence audio (ringback/clip/wrong_number) is playing.
-        // Dialtone is intentionally excluded — idle dialtone should still age out.
+
+
         bool audioInProgress = audioPlayer.isActive() && !audioPlayer.isAudioKeyPlaying("dialtone");
         if (!offHookWarningPlayed && !audioInProgress && lastActivity > 0 && (now - lastActivity) >= OFF_HOOK_TIMEOUT_MS) {
             Logger.println("⚠️ Off-hook timeout - playing warning tone");
@@ -282,66 +284,66 @@ void loop()
             offHookWarningPlayed = true;
             warningPlayedTime = now;
         }
-        
-        // Reset warning flag when new digit arrives or warning audio finishes
+
+
         if (offHookWarningPlayed) {
             if (getLastDigitTime() > warningPlayedTime) {
-                offHookWarningPlayed = false;  // New digit → restart timeout
+                offHookWarningPlayed = false;
             } else if (!audioPlayer.isActive() && (now - warningPlayedTime) > 2000) {
-                offHookWarningPlayed = false;  // Warning finished → allow re-trigger
+                offHookWarningPlayed = false;
             }
         }
-        
-        // Handle audio playback FIRST - highest priority for smooth audio
+
+
         if (audioPlayer.isActive())
         {
             audioPlayer.copy();
             bool playingDialtone = audioPlayer.isAudioKeyPlaying("dialtone");
-            // Mute Goertzel during non-dialtone playback to suppress
-            // false DTMF from ES8388 DAC→ADC internal loopback
+
+
             setGoertzelMuted(!playingDialtone);
             if (!playingDialtone) {
                 return;
             }
         } else {
-            // Mute Goertzel if sequence is locked (waiting for hangup)
+
             setGoertzelMuted(isSequenceLocked());
         }
-        
-        // Goertzel runs on separate task - just check for detected keys
+
+
         char goertzelKey = getGoertzelKey();
         if (goertzelKey != 0) {
             addDtmfDigit(goertzelKey);
         }
-        
-        // Process ready sequences (from Goertzel, simulated input, or telnet)
+
+
         if (isSequenceReady()) {
             readDTMFSequence(true);
         }
 
     } else {
-        // Handle phone home periodic check-in (for remote OTA, status, etc.)
+
         handlePhoneHomeLoop();
     }
 
     auto limit = isReadingSequence() ? 10 : 100;
     unsigned long now = millis();
-        
-    // Rate limit maintenance operations to every 100ms while not reading sequence
+
+
     if (now - lastMaintenanceCheck >= limit) {
         lastMaintenanceCheck = now;
-        
-        // Handle telnet server (process incoming connections)
+
+
         telnet.loop();
 
-        // Handle WiFi management (config portal and OTA)
+
         handleWiFiLoop();
-        // Audio maintenance: catalog refresh (if stale) + download queue processing
+
         audioMaintenanceLoop();
-        // Process debug commands from Serial and Telnet
+
         processDebugInput(Serial);
         processDebugInput(telnet);
-        // Handle Tailscale VPN keepalive/reconnection and remote logging
+
         handleTailscaleLoop();
     }
 }

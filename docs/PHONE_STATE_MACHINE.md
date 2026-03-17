@@ -40,13 +40,25 @@ cooperative state machine spread across three subsystems: the **PhoneService**
       │known key       │unknown
       ▼                ▼
    ┌────────────┐  ┌──────────────┐
-   │  PLAYBACK  │  │ WRONG_NUMBER │
-   │  locked    │  │  locked      │
-   │  Goertzel  │  │  Goertzel    │
-   │  MUTED     │  │  MUTED       │
-   └─────┬──────┘  └──────┬───────┘
-         │audio           │audio
-         │ends            │ends
+   │  RINGBACK  │  │ WRONG_NUMBER │
+   │  2-5 rings │  │  locked      │
+   │  locked    │  │  Goertzel    │
+   │  Goertzel  │  │  MUTED       │
+   │  MUTED     │  └──────┬───────┘
+   └─────┬──────┘         │audio
+         │duration        │ends
+         │expires         │
+         ▼                │
+   ┌────────────┐         │
+   │  PLAYBACK  │         │
+   │  queued    │         │
+   │  audio key │         │
+   │  Goertzel  │         │
+   │  MUTED     │         │
+   └─────┬──────┘         │
+         │audio           │
+         │ends            │
+         │(click auto)    │
          ▼                ▼
    ┌────────────────────────────┐
    │         LOCKED             │
@@ -232,7 +244,12 @@ processNumberSequence(sequence)
   ├─ isSpecialCommand()? → processSpecialCommand()  [audioStarted = false]
   ├─ registry.hasKey()?
   │    ├─ ENABLE_PLAYLIST_FEATURES? → playPlaylist() → fallback playAudioKey()
-  │    └─ else → playAudioKey()                      [audioStarted = true]
+  │    └─ else (default path):
+  │         ├─ RINGBACK_MIN_RINGS > 0?
+  │         │    playAudioKey("ringback", rings × 6000ms)
+  │         │    queueAudioKey(sequence)
+  │         └─ else → playAudioKey(sequence)
+  │         onStreamEnd() auto-plays "click"        [audioStarted = true]
   └─ else → processUnknownSequence()                 [audioStarted = true]
          └─ plays "wrong_number" audio
 ```
@@ -240,3 +257,15 @@ processNumberSequence(sequence)
 Both registry-matched keys and unknown sequences set `sequenceLocked = true`.
 The dialtone never resumes — only hanging up and picking back up restarts the
 call flow. Special commands leave the lock clear, allowing further digit input.
+
+### Ringback Details
+
+When `RINGBACK_MIN_RINGS > 0` (default 2), a random number of rings in
+`[RINGBACK_MIN_RINGS, RINGBACK_MAX_RINGS]` (default 2–5) plays before the
+matched audio. Each ring is one cycle of the North American ringback cadence:
+2 s tone (440 + 480 Hz) followed by 4 s silence = 6 s per ring. The ringback
+generator runs with a duration limit; when it expires `onStreamEnd()` advances
+the queue to the actual audio. After the audio finishes, `onStreamEnd()`
+automatically plays a `"click"` sound (if registered) to simulate hanging up.
+
+Playback chain: **ringback (N × 6 s) → sequence audio → click (auto)**

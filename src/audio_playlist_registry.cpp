@@ -20,8 +20,8 @@ static DualToneGenerator dialtoneGenerator(350.0f, 440.0f, 16000.0f);
 // Ringback base tone: 440 Hz + 480 Hz (North American standard)
 static DualToneGenerator ringbackTone(440.0f, 480.0f, 16000.0f);
 
-// Ringback with cadence: 2 seconds on, 4 seconds off
-static RepeatingToneGenerator<int16_t> ringbackToneGenerator(ringbackTone, 2000, 4000);
+// Ringback with cadence: RINGBACK_TONE_MS on, RINGBACK_SILENCE_MS off
+static RepeatingToneGenerator<int16_t> ringbackToneGenerator(ringbackTone, RINGBACK_TONE_MS, RINGBACK_SILENCE_MS);
 
 // ============================================================================
 // GLOBAL INSTANCES

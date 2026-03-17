@@ -58,4 +58,4 @@ void performAudioCapture(int durationSec);
 void performAudioOutputTest();
 
 // debug_input.cpp — called by processDebugCommand
-void performDebugInput(const char* filename);
+void performDebugInput(const char* filename, const char* expectedDigits = nullptr);

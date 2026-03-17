@@ -322,15 +322,6 @@ void handleTailscaleLoop() {
     // Flush buffered remote logs periodically
     RemoteLogger.loop();
     
-    // Periodic WireGuard diagnostic (every 60s when connected)
-    static unsigned long lastWgDiag = 0;
-    unsigned long diagNow = millis();
-    if (vpnConnected && (diagNow - lastWgDiag >= 60000)) {
-        lastWgDiag = diagNow;
-        Logger.printf("🔐 WG: %s | uptime: %lus | WiFi RSSI: %d dBm\n",
-            tailscaleIp, diagNow / 1000, WiFi.RSSI());
-    }
-    
     // Check if we need to reconnect
     if (vpnInitialized && !vpnConnected) {
         unsigned long now = millis();

@@ -638,6 +638,7 @@ static bool checkRemoteCacheValid()
     HTTPClient http;
     http.begin(checkUrl);
     http.addHeader("User-Agent", USER_AGENT_HEADER);
+    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
     http.setTimeout(5000);  // Short timeout for lightweight check
     
     int httpCode = http.GET();

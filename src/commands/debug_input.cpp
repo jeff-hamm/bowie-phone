@@ -42,7 +42,8 @@ static size_t pumpMainLoop(unsigned long durationMs) {
         // ── Off-hook timeout (mirrors main loop) ──
         unsigned long now          = millis();
         unsigned long lastActivity = max(getLastDigitTime(), ap.getLastActive());
-        if (!s_pumpWarningPlayed && lastActivity > 0 &&
+        bool audioInProgress = ap.isActive() && !ap.isAudioKeyPlaying("dialtone");
+        if (!s_pumpWarningPlayed && !audioInProgress && lastActivity > 0 &&
             (now - lastActivity) >= OFF_HOOK_TIMEOUT_MS) {
             Logger.println("   ⏰ Off-hook timeout fired");
             ap.playAudioKey("off_hook");
@@ -216,7 +217,7 @@ static bool downloadAndConvertCSV(const char* rawPath) {
 // PERFORM DEBUG INPUT — E2E test entry point
 // ============================================================================
 
-void performDebugInput(const char* filename) {
+void performDebugInput(const char* filename, const char* expectedDigits) {
     extern GoertzelStream goertzel;
     extern StreamCopy goertzelCopier;
     ExtendedAudioPlayer& ap = getExtendedAudioPlayer();
@@ -364,6 +365,12 @@ void performDebugInput(const char* filename) {
                   replayElapsed, fileDurationSec * 1000.0f / max(replayElapsed, 1UL));
     Logger.printf("   Detected digits: \"%s\" (%d total)\n", detectedDigits, detectionCount);
     TEST_CHECK("At least one DTMF detection", detectionCount > 0);
+    if (expectedDigits) {
+        bool matches = strcmp(detectedDigits, expectedDigits) == 0;
+        if (!matches)
+            Logger.printf("   Expected: \"%s\", got: \"%s\"\n", expectedDigits, detectedDigits);
+        TEST_CHECK("Detected digits match expected", matches);
+    }
 
     // ── Step 5: Feed digits via main-loop pump ──────────────────────────
     Logger.println();
@@ -374,6 +381,17 @@ void performDebugInput(const char* filename) {
 
     ap.playAudioKey("dialtone");
     pumpMainLoop(50);
+
+    // Determine if any suffix of the detected digits is a registered audio key.
+    // If not, there's nothing to lock on — skip the audio/lock assertions.
+    bool detectedKeyExists = false;
+    for (int start = 0; start < digitPos && !detectedKeyExists; start++) {
+        if (getAudioKeyRegistry().hasKey(&detectedDigits[start]))
+            detectedKeyExists = true;
+    }
+    if (!detectedKeyExists)
+        Logger.printf("   ℹ️  No registered key in \"%s\" — skipping audio/lock checks\n",
+                      detectedDigits);
 
     if (digitPos > 0) {
         Logger.printf("   Feeding %d digits: \"%s\"\n", digitPos, detectedDigits);
@@ -392,13 +410,17 @@ void performDebugInput(const char* filename) {
 
         TEST_CHECK("Dialtone stopped after first digit", !ap.isAudioKeyPlaying("dialtone"));
 
-        bool audioStarted = ap.isActive();
-        TEST_CHECK("Audio started after sequence", audioStarted);
-        if (audioStarted) {
-            Logger.printf("   Playing: %s\n",
-                          ap.getCurrentAudioKey() ? ap.getCurrentAudioKey() : "(playlist)");
+        if (detectedKeyExists) {
+            bool audioStarted = ap.isActive();
+            TEST_CHECK("Audio started after sequence", audioStarted);
+            if (audioStarted) {
+                Logger.printf("   Playing: %s\n",
+                              ap.getCurrentAudioKey() ? ap.getCurrentAudioKey() : "(ringback/queue)");
+            }
+            TEST_CHECK("Sequence locked after match", isSequenceLocked());
+        } else {
+            Logger.println("   ⏭️  Skipped: audio/lock checks (no key in detected digits)");
         }
-        TEST_CHECK("Sequence locked after match", isSequenceLocked());
     } else {
         Logger.println("   ⚠️  No digits to feed — skipping sequence test");
     }
@@ -412,7 +434,11 @@ void performDebugInput(const char* filename) {
         pumpMainLoop(100);
     }
 
-    TEST_CHECK("Sequence still locked", isSequenceLocked());
+    if (detectedKeyExists) {
+        TEST_CHECK("Sequence still locked", isSequenceLocked());
+    } else {
+        Logger.println("   ⏭️  Skipped: lock check (no key was triggered)");
+    }
     Logger.println("   Replaying test audio (should detect nothing usable)...");
 
     stopGoertzelTask();

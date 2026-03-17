@@ -303,7 +303,9 @@ public:
      * @brief Get the timestamp when playback last started
      * @return Timestamp in milliseconds when last audio started playing
      */
-    unsigned long getLastActive() const { return playbackStartTime; }
+    // Returns playbackStartTime while playing (so dialtone ages out normally),
+    // or playbackEndTime once stopped (so timeout counts from when audio finished).
+    unsigned long getLastActive() const { return isPlaying ? playbackStartTime : playbackEndTime; }
 
     /**
      * @brief Get bytes written by the last copy() call
@@ -464,6 +466,7 @@ protected:
     char currentKey[64] = {0};
     unsigned long currentDurationMs = 0;
     unsigned long playbackStartTime = 0;
+    unsigned long playbackEndTime = 0;   // Set when playback naturally ends (not on stop())
     size_t lastCopyBytes = 0;
     
     // Audio queue

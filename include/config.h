@@ -57,6 +57,26 @@
 #define ENABLE_PLAYLIST_FEATURES 0
 #endif
 
+// Ringback rings before audio playback (random count in [min, max])
+// Each ring = RINGBACK_TONE_MS + RINGBACK_SILENCE_MS.  Set min to 0 to disable.
+#ifndef RINGBACK_MIN_RINGS
+#define RINGBACK_MIN_RINGS 1
+#endif
+#ifndef RINGBACK_MAX_RINGS
+#define RINGBACK_MAX_RINGS 4
+#endif
+
+// Ringback cadence timings (milliseconds)
+#ifndef RINGBACK_TONE_MS
+#define RINGBACK_TONE_MS 2000
+#endif
+#ifndef RINGBACK_SILENCE_MS
+#define RINGBACK_SILENCE_MS 3000
+#endif
+#ifndef RINGBACK_RING_MS
+#define RINGBACK_RING_MS (RINGBACK_TONE_MS + RINGBACK_SILENCE_MS)
+#endif
+
 // Audio format settings (must match AudioKit and FFT configuration)
 #ifndef AUDIO_CHANNELS
 #define AUDIO_CHANNELS 1
