@@ -9,6 +9,7 @@
 #include "config.h"
 #include "notifications.h"
 #include "wifi_manager.h"
+#include "phone_home.h"
 #include "tailscale_manager.h"
 #include "remote_logger.h"
 
@@ -127,11 +128,10 @@ void loop() {
 
     if (now - lastCheck >= 100) {
         lastCheck = now;
-        handleWiFiLoop();        // WiFi status, fallbacks, OTA, HTTP server
-        handleTailscaleLoop();   // WireGuard reconnection
+        handleNetworkLoop();        // WiFi status, fallbacks, OTA, HTTP server
     }
 
     // Also check for updates periodically
-    handlePhoneHomeLoop();
+    checkForRemoteUpdates();
 }
 

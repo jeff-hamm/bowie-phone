@@ -78,7 +78,7 @@ After `OFF_HOOK_TIMEOUT_MS` (30 s) of inactivity, `"off_hook"` warning tone play
 
 ## Detailed Documentation
 
-See [docs/PHONE_STATE_MACHINE.md](../docs/PHONE_STATE_MACHINE.md) for the full
+See [docs/system/PHONE_STATE_MACHINE.md](../../docs/system/PHONE_STATE_MACHINE.md) for the full
 state diagram, subsystem responsibilities, Goertzel mute truth table, and
 sequence dispatch flow.
 

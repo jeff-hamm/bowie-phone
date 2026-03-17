@@ -131,6 +131,22 @@
 // NETWORK CONFIGURATION
 // ============================================================================
 
+// Home page URL - base URL for firmware updates and web resources
+// Override per-device via -DHOME_PAGE in platformio.ini
+#ifndef HOME_PAGE
+#define HOME_PAGE "phone.infinitebutts.com"
+#endif
+
+// Phone-home update check URL (default: HOME_PAGE/firmware/releases.json)
+#ifndef UPDATE_CHECK_URL
+#define UPDATE_CHECK_URL "https://" HOME_PAGE "/firmware/releases.json"
+#endif
+
+// Phone-home check interval in milliseconds (default: 1 hour)
+#ifndef UPDATE_CHECK_INTERVAL_MS
+#define UPDATE_CHECK_INTERVAL_MS 3600000
+#endif
+
 // Primary DNS server (default: Google DNS)
 #ifndef DNS_PRIMARY_1
 #define DNS_PRIMARY_1 8
@@ -172,6 +188,31 @@
 #endif
 
 // ============================================================================
+// HTTP CLIENT CONFIGURATION
+// ============================================================================
+
+// Standard API / update-check calls (default for initHTTPClient)
+#ifndef HTTP_TIMEOUT_MS
+#define HTTP_TIMEOUT_MS 15000
+#endif
+// Quick existence / lightweight checks and remote logging (fire-and-forget style)
+#ifndef HTTP_TIMEOUT_SHORT_MS
+#define HTTP_TIMEOUT_SHORT_MS 5000
+#endif
+// Catalog / JSON fetches — moderate payload, keep short to avoid blocking the loop
+#ifndef HTTP_TIMEOUT_CATALOG_MS
+#define HTTP_TIMEOUT_CATALOG_MS 10000
+#endif
+// General file / asset downloads (audio files, CSVs, etc.)
+#ifndef HTTP_TIMEOUT_DOWNLOAD_MS
+#define HTTP_TIMEOUT_DOWNLOAD_MS 30000
+#endif
+// Firmware OTA binary download — large payload over potentially slow link
+#ifndef HTTP_TIMEOUT_OTA_MS
+#define HTTP_TIMEOUT_OTA_MS 60000
+#endif
+
+// ============================================================================
 // PHONE HARDWARE CONFIGURATION
 // ============================================================================
 
@@ -209,4 +250,14 @@
 // LEDs are active LOW on AudioKit boards
 #ifndef LED_ACTIVE_LOW
 #define LED_ACTIVE_LOW 1
+#endif
+
+#ifndef KNOWN_SEQUENCES_URL
+#define KNOWN_SEQUENCES_URL "https://raw.githubusercontent.com/jeff-hamm/bowie-phone/main/sample-sequence.json"
+#endif
+#ifndef USER_AGENT_HEADER
+#define USER_AGENT_HEADER "BowiePhone/" FIRMWARE_VERSION
+#endif
+#ifndef CACHE_VALIDITY_HOURS
+#define CACHE_VALIDITY_HOURS 24 ///< Cache validity in hours
 #endif

@@ -7,8 +7,8 @@
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <link id="favicon-png" rel="alternate icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMB/6XK6cEAAAAASUVORK5CYII=" sizes="64x64">
     <link rel="stylesheet" href="styles/styles.css">
-    <!-- Load config manager first - it will apply theme and create PHONE_CONFIG -->
-    <script src="config-manager.js"></script>
+    <!-- Load config first - it will apply theme and create PHONE_CONFIG -->
+    <script src="config.js"></script>
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             const svgLink = document.querySelector('link[rel="icon"][type="image/svg+xml"]');
@@ -204,7 +204,7 @@
     <!-- Initialize -->
     <script>
         // Listen for config ready event IMMEDIATELY (before DOMContentLoaded)
-        // because config-manager may dispatch it during DOMContentLoaded
+        // because config.js may dispatch it during DOMContentLoaded
         window.addEventListener('configReady', function(e) {
             console.log('✅ Config ready event received');
             

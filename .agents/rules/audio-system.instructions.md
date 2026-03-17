@@ -78,3 +78,7 @@ Do **not** manually recreate this structure; modify the JSON catalog or the enri
 | `DOWNLOAD_QUEUE_CHECK_INTERVAL_MS` | 1 000 | Queue processing rate |
 | `AUDIO_FILES_DIR` | `/audio` | SD card audio directory |
 | `MAX_HTTP_RESPONSE_SIZE` | 8 192 | HTTP buffer (bytes) |
+
+## Detailed Documentation
+
+See [docs/system/AUDIO_SYSTEM.md](../../docs/system/AUDIO_SYSTEM.md) for the full audio pipeline analysis, component descriptions, and data flow details.

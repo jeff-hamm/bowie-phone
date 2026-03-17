@@ -16,6 +16,7 @@
 // INCLUDES
 // ============================================================================
 #include <Arduino.h>
+#include "config.h"
 
 // Forward declarations
 namespace audio_tools {
@@ -39,8 +40,8 @@ using namespace audio_tools;
 #ifndef CACHE_CHECK_INTERVAL_MS
 #define CACHE_CHECK_INTERVAL_MS 300000  ///< Lightweight cache check interval (5 minutes)
 #endif
-#ifndef CACHE_VALIDITY_HOURS
-#define CACHE_VALIDITY_HOURS 24     ///< Cache validity in hours
+#ifndef DOWNLOAD_QUEUE_CHECK_INTERVAL_MS
+#define DOWNLOAD_QUEUE_CHECK_INTERVAL_MS 1000 ///< Interval between download queue processing (milliseconds)
 #endif
 #ifndef MAX_AUDIO_FILES
 #define MAX_AUDIO_FILES 50      ///< Maximum number of known sequences
@@ -56,15 +57,6 @@ using namespace audio_tools;
 #endif
 #ifndef MAX_FILENAME_LENGTH
 #define MAX_FILENAME_LENGTH 64      ///< Maximum length for generated filenames
-#endif
-#ifndef KNOWN_SEQUENCES_URL
-#define KNOWN_SEQUENCES_URL "https://raw.githubusercontent.com/jeff-hamm/bowie-phone/main/sample-sequence.json"
-#endif
-#ifndef USER_AGENT_HEADER
-#define USER_AGENT_HEADER "BowiePhone/1.0"
-#endif
-#ifndef DOWNLOAD_QUEUE_CHECK_INTERVAL_MS
-#define DOWNLOAD_QUEUE_CHECK_INTERVAL_MS 1000  ///< Interval between download queue processing (milliseconds)
 #endif
 
 // ============================================================================

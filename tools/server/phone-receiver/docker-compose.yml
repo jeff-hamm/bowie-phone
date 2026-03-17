@@ -1,0 +1,53 @@
+name: phone-receiver
+
+services:
+  log-receiver:
+    build: .
+    container_name: phone-log-receiver
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ${APP_DATA}/phone-receiver/logs:/app/logs
+    environment:
+      - LOG_DIR=/app/logs
+      - PORT=3000
+      - LOG_RETENTION_DAYS=30
+      - MAX_LOG_SIZE_MB=50
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "com.bowie-phone.service=log-receiver"
+
+  # Optional: Log viewer web interface
+  log-viewer:
+    image: amir20/dozzle:latest
+    container_name: phone-log-viewer
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - DOZZLE_LEVEL=info
+    profiles:
+      - viewer
+
+  # Proxy for esp32 devices to give them dns via proxy
+  esp_wg_proxy:
+    image: jpillora/dnsmasq
+    container_name: esp_wg_proxy
+    restart: unless-stopped
+    ports:
+      - ${WIREGUARD_IP}:53/udp  # Bind to WireGuard IP only
+      - ${WIREGUARD_IP}:53/tcp
+    environment:
+      - HTTP_USER=${HTTP_USER}
+      - HTTP_PASS=${HTTP_PASS}
+    volumes:
+      - ${APP_DATA}/dnsmasq/dnsmasq.conf:/etc/dnsmasq.conf
+    cap_add:
+      - NET_ADMIN

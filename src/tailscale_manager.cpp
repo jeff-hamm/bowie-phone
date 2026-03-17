@@ -320,7 +320,7 @@ void handleTailscaleLoop() {
     }
     
     // Flush buffered remote logs periodically
-    RemoteLogger.loop();
+    RemoteLogger.flush();
     
     // Check if we need to reconnect
     if (vpnInitialized && !vpnConnected) {

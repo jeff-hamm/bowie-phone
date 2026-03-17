@@ -20,6 +20,7 @@
 #include "audio_key_registry.h"
 #include "extended_audio_player.h"
 #include "wifi_manager.h"
+#include "phone_home.h"
 #include "phone_service.h"
 #include "sequence_processor.h"
 #include "esp_wifi.h"
@@ -36,9 +37,9 @@
 #include "dtmf_goertzel.h"
 #include "dtmf_decoder.h"
 #include "phone.h"
-#include <HTTPClient.h>
 #include "esp_heap_caps.h"
 #include "config.h"
+#include "http_utils.h"
 
 // ============================================================================
 // SHARED CONSTANTS

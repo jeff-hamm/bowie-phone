@@ -55,7 +55,7 @@ void startConfigPortal();
 bool startConfigPortalSafe();
 void handleRoot();
 void handleSave();
-void handleWiFiLoop();
+void handleNetworkLoop();
 void clearWiFiCredentials();
 String getSavedSSID();
 
@@ -64,19 +64,6 @@ void setOtaPrepareTimeout();
 
 // Pull-based OTA - download and install firmware from URL (works over VPN)
 bool performPullOTA(const char* firmwareUrl);
-
-// Phone Home - periodic check-in with server for remote management
-// Returns true if an OTA update was triggered
-bool phoneHome(const char* serverUrl = nullptr);
-
-// Set the phone home interval (default: 5 minutes)
-void setPhoneHomeInterval(unsigned long intervalMs);
-
-// Handle phone home in loop (call from main loop)
-void handlePhoneHomeLoop();
-
-// Get the last phone home status
-const char* getPhoneHomeStatus();
 
 // Global variables
 extern WebServer server;

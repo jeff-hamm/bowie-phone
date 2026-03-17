@@ -4,6 +4,7 @@
 #include "tailscale_manager.h"
 #include "remote_logger.h"
 #include "notifications.h"
+#include "phone_home.h"
 #include "nvs_flash.h"
 #ifndef DIAG_BUILD
 #include "extended_audio_player.h"
@@ -17,8 +18,7 @@
 #include "esp_task_wdt.h"
 #include "esp_ota_ops.h"  // For ESP-IDF OTA info
 #include <Update.h>       // For HTTP OTA
-#include <HTTPClient.h>   // For pull-based OTA
-#include <WiFiClientSecure.h>
+#include "http_utils.h"
 
 // Default OTA hostname if not specified in build flags
 #ifndef OTA_HOSTNAME
@@ -752,7 +752,7 @@ static void registerWebServerRoutes()
         if (upload.status == UPLOAD_FILE_START) {
             Logger.printf("🔄 HTTP OTA: Receiving %s\n", upload.filename.c_str());
             // Flush remote logs before OTA overwrites firmware
-            RemoteLogger.forceFlush();
+            Logger.flush();
             esp_task_wdt_delete(NULL);
             if (!otaPrepared) {
                 shutdownAudioForOTA();
@@ -1045,7 +1045,7 @@ void initWiFi(WiFiConnectedCallback onConnected)
     }
     else
     {
-        // WiFi connection status will be handled in handleWiFiLoop()
+        // WiFi connection status will be handled in handleNetworkLoop()
         isConfigMode = false;
     }
     
@@ -1071,7 +1071,7 @@ void initOTA()
             ESP.getFreeHeap());
         
         // Flush remote logs so the server has the latest before we reboot
-        RemoteLogger.forceFlush();
+        Logger.flush();
         
         // Clear OTA prepare timeout - we're now in an actual OTA
         otaPrepared = false;
@@ -1150,28 +1150,6 @@ bool performPullOTA(const char* firmwareUrl)
     SD.end();
     delay(500);  // Let SD card fully release
     
-    HTTPClient http;
-    http.setTimeout(60000);  // 60 second timeout for large firmware
-    WiFiClientSecure secureClient;
-    secureClient.setInsecure();
-    http.begin(secureClient, firmwareUrl);
-    
-    int httpCode = http.GET();
-    if (httpCode != HTTP_CODE_OK) {
-        Logger.printf("❌ Pull OTA: HTTP error %d\n", httpCode);
-        http.end();
-        return false;
-    }
-    
-    int contentLength = http.getSize();
-    if (contentLength <= 0) {
-        Logger.println("❌ Pull OTA: Invalid content length");
-        http.end();
-        return false;
-    }
-    
-    Logger.printf("📦 Pull OTA: Firmware size: %d bytes\n", contentLength);
-    
     const esp_partition_t* otaPart = esp_ota_get_next_update_partition(NULL);
     if (otaPart) {
         Logger.printf("📋 OTA target partition: %s, size: %u bytes (%u KB)\n",
@@ -1182,51 +1160,16 @@ bool performPullOTA(const char* firmwareUrl)
     Logger.printf("📋 Free heap: %u bytes, largest block: %u bytes\n",
         ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     
-    if (!Update.begin(contentLength)) {
-        Logger.printf("❌ Pull OTA: Not enough space: %s\n", Update.errorString());
-        http.end();
+    HttpClient http(HTTP_TIMEOUT_OTA_MS);
+    int written = http.getUpdate(firmwareUrl);
+    if (written < 0) {
         return false;
     }
     
-    WiFiClient* stream = http.getStreamPtr();
-    size_t written = 0;
-    uint8_t buff[1024];
-    int lastPercent = -1;
-    
-    while (http.connected() && written < contentLength) {
-        size_t available = stream->available();
-        if (available) {
-            size_t readBytes = stream->readBytes(buff, min(available, sizeof(buff)));
-            size_t writeBytes = Update.write(buff, readBytes);
-            if (writeBytes != readBytes) {
-                Logger.printf("❌ Pull OTA: Write failed: %s\n", Update.errorString());
-                http.end();
-                Update.abort();
-                return false;
-            }
-            written += writeBytes;
-            
-            int percent = (written * 100) / contentLength;
-            if (percent != lastPercent && percent % 10 == 0) {
-                Logger.printf("📤 Pull OTA Progress: %d%%\n", percent);
-                lastPercent = percent;
-            }
-        }
-        delay(1);
-    }
-    
-    http.end();
-    
-    if (Update.end(true)) {
-        Logger.printf("✅ Pull OTA: Complete (%d bytes)\n", written);
-        Logger.println("🔄 Rebooting in 2 seconds...");
-        delay(2000);
-        esp_restart();
-        return true;  // Won't reach here
-    } else {
-        Logger.printf("❌ Pull OTA: End failed: %s\n", Update.errorString());
-        return false;
-    }
+    Logger.println("🔄 Rebooting in 2 seconds...");
+    delay(2000);
+    esp_restart();
+    return true;  // Won't reach here
 }
 
 // Set OTA prepare timeout - call from serial command or HTTP endpoint
@@ -1238,12 +1181,13 @@ void setOtaPrepareTimeout()
 }
 
 // Handle WiFi loop processing (call this in main loop)
-void handleWiFiLoop()
+void handleNetworkLoop()
 {
     static bool connectionLogged = false;
     static bool otaStarted = false;
     static unsigned long connectionStartTime = 0;
-    
+    // Handle phone home periodic check-in (for remote OTA, status, etc.)
+
     if (isConfigMode)
     {
         // Handle DNS and web server requests
@@ -1365,6 +1309,8 @@ void handleWiFiLoop()
         }
     }
     
+    checkForRemoteUpdates();
+
     // Handle OTA updates (only if started and WiFi is ready)
     if (otaStarted && (WiFi.status() == WL_CONNECTED || isConfigMode))
     {
@@ -1394,221 +1340,6 @@ void handleWiFiLoop()
         delay(1000);
         esp_restart();
     }
-}
 
-// ============================================================================
-// PHONE HOME - Periodic check-in with server for remote management
-// ============================================================================
-
-// ============================================================================
-// PHONE HOME - Check for updates from static JSON file
-// ============================================================================
-
-// Update check configuration - uses static JSON file on web server
-#ifndef UPDATE_CHECK_URL
-#define UPDATE_CHECK_URL "https://bowie-phone.infinitebutts.com/firmware/update.json"
-#endif
-
-#ifndef UPDATE_CHECK_INTERVAL_MS
-#define UPDATE_CHECK_INTERVAL_MS 3600000  // 1 hour default
-#endif
-
-static unsigned long phoneHomeInterval = UPDATE_CHECK_INTERVAL_MS;
-static unsigned long lastPhoneHomeTime = 0;
-static char phoneHomeStatus[64] = "Not started";
-static bool phoneHomeEnabled = true;
-
-void setPhoneHomeInterval(unsigned long intervalMs) {
-    phoneHomeInterval = intervalMs;
-    Logger.printf("📞 Update check interval set to %lu ms\n", intervalMs);
-}
-
-const char* getPhoneHomeStatus() {
-    return phoneHomeStatus;
-}
-
-// Compare version strings (e.g., "1.0.1" vs "1.0.2")
-// Returns: -1 if v1 < v2, 0 if equal, 1 if v1 > v2
-static int compareVersions(const char* v1, const char* v2) {
-    int major1 = 0, minor1 = 0, patch1 = 0;
-    int major2 = 0, minor2 = 0, patch2 = 0;
-    
-    sscanf(v1, "%d.%d.%d", &major1, &minor1, &patch1);
-    sscanf(v2, "%d.%d.%d", &major2, &minor2, &patch2);
-    
-    if (major1 != major2) return major1 < major2 ? -1 : 1;
-    if (minor1 != minor2) return minor1 < minor2 ? -1 : 1;
-    if (patch1 != patch2) return patch1 < patch2 ? -1 : 1;
-    return 0;
-}
-
-// Check for updates from static JSON file
-// JSON format:
-// {
-//   "version": "1.0.2",
-//   "firmware_url": "https://example.com/firmware/latest.bin",
-//   "release_notes": "Bug fixes",
-//   "action": "none" | "ota" | "reboot",  // "ota" forces update even if same version
-//   "message": "Optional message to log"
-// }
-bool phoneHome(const char* serverUrl) {
-    if (!WiFi.isConnected()) {
-        strcpy(phoneHomeStatus, "WiFi not connected");
-        return false;
-    }
-    
-    const char* url = serverUrl ? serverUrl : UPDATE_CHECK_URL;
-    
-    Logger.printf("📞 Checking for updates: %s\n", url);
-    strcpy(phoneHomeStatus, "Checking...");
-    
-    HTTPClient http;
-    http.setTimeout(15000);  // 15 second timeout
-    WiFiClientSecure secureClient;
-    secureClient.setInsecure();
-    
-    if (!http.begin(secureClient, url)) {
-        Logger.println("❌ Update check: Failed to begin HTTP");
-        strcpy(phoneHomeStatus, "HTTP begin failed");
-        return false;
-    }
-    
-    http.addHeader("User-Agent", "BowiePhone/" FIRMWARE_VERSION);
-    
-    int httpCode = http.GET();
-    
-    if (httpCode <= 0) {
-        Logger.printf("❌ Update check: HTTP error %d - %s\n", httpCode, http.errorToString(httpCode).c_str());
-        snprintf(phoneHomeStatus, sizeof(phoneHomeStatus), "HTTP error: %d", httpCode);
-        http.end();
-        return false;
-    }
-    
-    if (httpCode != HTTP_CODE_OK) {
-        Logger.printf("⚠️ Update check: HTTP %d\n", httpCode);
-        snprintf(phoneHomeStatus, sizeof(phoneHomeStatus), "HTTP %d", httpCode);
-        http.end();
-        return false;
-    }
-    
-    String response = http.getString();
-    http.end();
-    
-    Logger.printf("📞 Update info: %s\n", response.c_str());
-    
-    // Parse version from response (handle spaces after colon)
-    String serverVersion = "";
-    int versionStart = response.indexOf("\"version\"");
-    if (versionStart >= 0) {
-        versionStart = response.indexOf("\"", versionStart + 9);  // Find opening quote of value
-        if (versionStart >= 0) {
-            versionStart++;  // Skip the quote
-            int versionEnd = response.indexOf("\"", versionStart);
-            if (versionEnd > versionStart) {
-                serverVersion = response.substring(versionStart, versionEnd);
-            }
-        }
-    }
-    
-    // Parse firmware URL (handle spaces after colon)
-    String firmwareUrl = "";
-    int urlStart = response.indexOf("\"firmware_url\"");
-    if (urlStart >= 0) {
-        urlStart = response.indexOf("\"", urlStart + 14);  // Find opening quote of value
-        if (urlStart >= 0) {
-            urlStart++;  // Skip the quote
-            int urlEnd = response.indexOf("\"", urlStart);
-            if (urlEnd > urlStart) {
-                firmwareUrl = response.substring(urlStart, urlEnd);
-            }
-        }
-    }
-    
-    // Parse action (optional - forces update/reboot, handle spaces after colon)
-    String action = "none";
-    int actionStart = response.indexOf("\"action\"");
-    if (actionStart >= 0) {
-        actionStart = response.indexOf("\"", actionStart + 8);  // Find opening quote of value
-        if (actionStart >= 0) {
-            actionStart++;  // Skip the quote
-            int actionEnd = response.indexOf("\"", actionStart);
-            if (actionEnd > actionStart) {
-                action = response.substring(actionStart, actionEnd);
-            }
-        }
-    }
-    
-    // Log any message from server (handle spaces after colon)
-    int msgStart = response.indexOf("\"message\"");
-    if (msgStart >= 0) {
-        msgStart = response.indexOf("\"", msgStart + 9);  // Find opening quote of value
-        if (msgStart >= 0) {
-            msgStart++;  // Skip the quote
-            int msgEnd = response.indexOf("\"", msgStart);
-            if (msgEnd > msgStart) {
-                String message = response.substring(msgStart, msgEnd);
-                if (message.length() > 0) {
-                    Logger.printf("💬 Server: %s\n", message.c_str());
-                }
-            }
-        }
-    }
-    
-    // Handle forced actions
-    if (action == "reboot") {
-        Logger.println("🔄 Update check: Reboot requested");
-        strcpy(phoneHomeStatus, "Rebooting...");
-        delay(1000);
-        esp_restart();
-    }
-    
-    // Check if update is available
-    bool otaTriggered = false;
-    const char* currentVersion = FIRMWARE_VERSION;
-    
-    if (serverVersion.length() > 0 && firmwareUrl.length() > 0) {
-        int cmp = compareVersions(currentVersion, serverVersion.c_str());
-        
-        if (cmp < 0 || action == "ota") {
-            // Server has newer version OR forced OTA
-            if (cmp < 0) {
-                Logger.printf("📥 Update available: %s -> %s\n", currentVersion, serverVersion.c_str());
-            } else {
-                Logger.printf("📥 Forced OTA to version %s\n", serverVersion.c_str());
-            }
-            snprintf(phoneHomeStatus, sizeof(phoneHomeStatus), "Updating to %s", serverVersion.c_str());
-            otaTriggered = performPullOTA(firmwareUrl.c_str());
-        } else if (cmp == 0) {
-            Logger.printf("✅ Firmware up to date: %s\n", currentVersion);
-            snprintf(phoneHomeStatus, sizeof(phoneHomeStatus), "Up to date: %s", currentVersion);
-        } else {
-            Logger.printf("ℹ️ Running newer than server: %s > %s\n", currentVersion, serverVersion.c_str());
-            snprintf(phoneHomeStatus, sizeof(phoneHomeStatus), "Dev build: %s", currentVersion);
-        }
-    } else {
-        Logger.println("⚠️ Update check: Missing version or URL in response");
-        strcpy(phoneHomeStatus, "Invalid response");
-    }
-    
-    return otaTriggered;
-}
-
-// Handle phone home in main loop
-void handlePhoneHomeLoop() {
-    if (!phoneHomeEnabled || !WiFi.isConnected()) {
-        return;
-    }
-    
-    unsigned long now = millis();
-    
-    // Handle overflow
-    if (now < lastPhoneHomeTime) {
-        lastPhoneHomeTime = now;
-    }
-    
-    // Check if it's time to phone home
-    if (now - lastPhoneHomeTime >= phoneHomeInterval) {
-        lastPhoneHomeTime = now;
-        phoneHome(nullptr);
-    }
+    handleTailscaleLoop();
 }

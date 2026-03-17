@@ -66,6 +66,8 @@ void setup()
 
     // Initialize logging system first
     Logger.addLogger(Serial);
+    // Add remote logger early so pre-VPN boot logs are buffered and shipped later
+    Logger.addLogger(RemoteLogger);
 
     Logger.printf("\n\n=== Bowie Phone Starting ===\n");
     Logger.printf("🔧 Firmware: %s  Build: %s %s\n", FIRMWARE_VERSION, __DATE__, __TIME__);
@@ -321,9 +323,6 @@ void loop()
             readDTMFSequence(true);
         }
 
-    } else {
-        // Handle phone home periodic check-in (for remote OTA, status, etc.)
-        handlePhoneHomeLoop();
     }
 
     auto limit = isReadingSequence() ? 10 : 100;
@@ -337,13 +336,12 @@ void loop()
         telnet.loop();
 
         // Handle WiFi management (config portal and OTA)
-        handleWiFiLoop();
+        handleNetworkLoop();
         // Audio maintenance: catalog refresh (if stale) + download queue processing
         audioMaintenanceLoop();
         // Process debug commands from Serial and Telnet
         processDebugInput(Serial);
         processDebugInput(telnet);
         // Handle Tailscale VPN keepalive/reconnection and remote logging
-        handleTailscaleLoop();
     }
 }

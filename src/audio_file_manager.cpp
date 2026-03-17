@@ -16,8 +16,7 @@
 #include "file_utils.h"
 #include "logging.h"
 #include <WiFi.h>
-#include <HTTPClient.h>
-#include <WiFiClientSecure.h>
+#include "http_utils.h"
 #include <ArduinoJson.h>
 #include <SD.h>
 #include <SD_MMC.h>
@@ -433,119 +432,83 @@ static bool processDownloadQueueInternal()
         return false;
     }
     
-    // Download the file
-    WiFiClientSecure secureClient;
-    secureClient.setInsecure();
-    HTTPClient http;
-    http.begin(secureClient, item->url);
-    http.addHeader("User-Agent", USER_AGENT_HEADER);
-    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-    http.setTimeout(30000);  // 30 second timeout for file downloads
+    HttpClient http(HTTP_TIMEOUT_DOWNLOAD_MS);
     // Collect Content-Type so we can correct the file extension after the response
     const char* wantedHeaders[] = {"Content-Type"};
     http.collectHeaders(wantedHeaders, 1);
     
-    int httpCode = http.GET();
-    
-    if (httpCode == 200)
+    if (!http.get(item->url))
     {
-        // Detect actual audio format from Content-Type header and fix path/registry if needed
-        String contentType = http.header("Content-Type");
-        const char* detectedExt = mimeTypeToExtension(contentType.c_str());
-        if (detectedExt && (item->ext[0] == '\0' || strcmp(item->ext, detectedExt) != 0))
+        Logger.printf("❌ HTTP download failed: %d for %s\n", http.statusCode(), item->url);
+        item->inProgress = false;
+        downloadQueueIndex++;
+        return false;
+    }
+    
+    // Detect actual audio format from Content-Type header and fix path/registry if needed
+    String contentType = http.header("Content-Type");
+    const char* detectedExt = mimeTypeToExtension(contentType.c_str());
+    if (detectedExt && (item->ext[0] == '\0' || strcmp(item->ext, detectedExt) != 0))
+    {
+        Logger.printf("🔍 Content-Type '%s' → format '%s' (was '%s')\n",
+                      contentType.c_str(), detectedExt,
+                      item->ext[0] ? item->ext : "(default)");
+        char newLocalPath[128];
+        if (getLocalPathForUrl(item->url, newLocalPath, detectedExt))
         {
-            Logger.printf("🔍 Content-Type '%s' → format '%s' (was '%s')\n",
-                          contentType.c_str(), detectedExt,
-                          item->ext[0] ? item->ext : "(default)");
-            char newLocalPath[128];
-            if (getLocalPathForUrl(item->url, newLocalPath, detectedExt))
-            {
-                strncpy(item->localPath, newLocalPath, sizeof(item->localPath) - 1);
-                item->localPath[sizeof(item->localPath) - 1] = '\0';
-                strncpy(item->ext, detectedExt, sizeof(item->ext) - 1);
-                item->ext[sizeof(item->ext) - 1] = '\0';
-                // Re-register with the correct extension so the player finds the right file
-                keyRegistry.registerKey(item->description, item->url, detectedExt);
-            }
+            strncpy(item->localPath, newLocalPath, sizeof(item->localPath) - 1);
+            item->localPath[sizeof(item->localPath) - 1] = '\0';
+            strncpy(item->ext, detectedExt, sizeof(item->ext) - 1);
+            item->ext[sizeof(item->ext) - 1] = '\0';
+            // Re-register with the correct extension so the player finds the right file
+            keyRegistry.registerKey(item->description, item->url, detectedExt);
         }
+    }
 
-        // Get content length for progress tracking
-        int contentLength = http.getSize();
-        
-        // Clean up any old files with different extensions for the same URL
-        // This handles cases where a file was previously downloaded with .mp3 but should now be .wav
-        char filenameBase[64];
-        urlToBaseFilename(item->url, filenameBase, nullptr);  // Get base filename without extension
-        // Remove the .mp3 that urlToBaseFilename adds when ext is null
-        char* dot = strrchr(filenameBase, '.');
-        if (dot) *dot = '\0';
-        
-        const char* extensions[] = {".mp3", ".wav", ".ogg", ".flac", ".aac", ".m4a"};
-        for (int i = 0; i < 6; i++)
+    // Clean up any old files with different extensions for the same URL
+    char filenameBase[64];
+    urlToBaseFilename(item->url, filenameBase, nullptr);
+    char* dot = strrchr(filenameBase, '.');
+    if (dot) *dot = '\0';
+    
+    const char* extensions[] = {".mp3", ".wav", ".ogg", ".flac", ".aac", ".m4a"};
+    for (int i = 0; i < 6; i++)
+    {
+        char oldPath[128];
+        snprintf(oldPath, sizeof(oldPath), "%s/%s%s", AUDIO_FILES_DIR, filenameBase, extensions[i]);
+        if (strcmp(oldPath, item->localPath) != 0 && SD_EXISTS(oldPath))
         {
-            char oldPath[128];
-            snprintf(oldPath, sizeof(oldPath), "%s/%s%s", AUDIO_FILES_DIR, filenameBase, extensions[i]);
-            if (strcmp(oldPath, item->localPath) != 0 && SD_EXISTS(oldPath))
-            {
-                Logger.printf("🗑️ Removing old file with wrong extension: %s\n", oldPath);
-                SD_REMOVE(oldPath);
-            }
+            Logger.printf("🗑️ Removing old file with wrong extension: %s\n", oldPath);
+            SD_REMOVE(oldPath);
         }
-        
-        // Create file for writing
-        File audioFile = SD_OPEN(item->localPath, FILE_WRITE);
-        if (!audioFile)
-        {
-            Logger.printf("❌ Failed to create file: %s\n", item->localPath);
-            http.end();
-            item->inProgress = false;
-            downloadQueueIndex++;
-            return false;
-        }
-        
-        // Download in chunks
-        WiFiClient* stream = http.getStreamPtr();
-        uint8_t buffer[1024];
-        int totalBytes = 0;
-        
-        while (http.connected() && (contentLength > 0 || contentLength == -1))
-        {
-            size_t availableBytes = stream->available();
-            if (availableBytes > 0)
-            {
-                int bytesToRead = min(availableBytes, sizeof(buffer));
-                int bytesRead = stream->readBytes(buffer, bytesToRead);
-                
-                if (bytesRead > 0)
-                {
-                    audioFile.write(buffer, bytesRead);
-                    totalBytes += bytesRead;
-                    
-                    if (contentLength > 0)
-                    {
-                        contentLength -= bytesRead;
-                    }
-                }
-            }
-            else
-            {
-                delay(1); // Small delay to prevent busy waiting
-            }
-        }
-        
-        audioFile.close();
+    }
+    
+    // Stream response body to file
+    File audioFile = SD_OPEN(item->localPath, FILE_WRITE);
+    if (!audioFile)
+    {
+        Logger.printf("❌ Failed to create file: %s\n", item->localPath);
+        http.end();
+        item->inProgress = false;
+        downloadQueueIndex++;
+        return false;
+    }
+    
+    int totalBytes = http.streamBody([&](const uint8_t* buf, size_t len) {
+        audioFile.write(buf, len);
+        return true;
+    });
+    
+    audioFile.close();
+    if (totalBytes > 0)
+    {
         Logger.printf("✅ Downloaded %d bytes to: %s\n", totalBytes, item->localPath);
     }
-    else
-    {
-        Logger.printf("❌ HTTP download failed: %d (%s) for %s\n", httpCode, http.errorToString(httpCode).c_str(), item->url);
-    }
     
-    http.end();
     item->inProgress = false;
     downloadQueueIndex++;
     
-    return (httpCode == 200);
+    return true;
 }
 
 /**
@@ -638,25 +601,15 @@ static bool checkRemoteCacheValid()
         checkUrl += "?action=getLastModified";
     }
     
-    WiFiClientSecure secureClient;
-    secureClient.setInsecure();
-    HTTPClient http;
-    http.begin(secureClient, checkUrl);
-    http.addHeader("User-Agent", USER_AGENT_HEADER);
-    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-    http.setTimeout(5000);  // Short timeout for lightweight check
+    HttpClient http(HTTP_TIMEOUT_SHORT_MS);
     
-    int httpCode = http.GET();
-    
-    if (httpCode != 200)
+    if (!http.get(checkUrl))
     {
-        Logger.printf("⚠️ Cache check failed (HTTP %d) - assuming valid\n", httpCode);
-        http.end();
+        Logger.printf("⚠️ Cache check failed (HTTP %d) - assuming valid\n", http.statusCode());
         return false; // Can't verify, assume valid
     }
     
     String response = http.getString();
-    http.end();
     
     // Parse the lastModified from response
     JsonDocument doc;
@@ -1130,34 +1083,25 @@ static bool downloadAudioInternal()
         Logger.println("🌐 URL streaming mode - requesting authenticated URLs");
     }
     
-    WiFiClientSecure secureClient;
-    secureClient.setInsecure();
-    HTTPClient http;
-    http.begin(secureClient, catalogUrl);
-    http.addHeader("Content-Type", "application/json");
-    http.addHeader("User-Agent", USER_AGENT_HEADER);
-    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-    http.setTimeout(10000);  // 10 second timeout to prevent blocking
-    
-    // Add Host header if we're using IP instead of hostname (required for virtual hosts)
-    if (originalHost.length() > 0)
-    {
-        http.addHeader("Host", originalHost);
+    // Build per-request headers (Content-Type + optional Host for virtual hosts)
+    static HttpClient::Header extraHeaders[2];
+    int headerCount = 0;
+    extraHeaders[headerCount++] = {"Content-Type", "application/json"};
+    if (originalHost.length() > 0) {
+        extraHeaders[headerCount++] = {"Host", originalHost.c_str()};
     }
+
+    HttpClient http(HTTP_TIMEOUT_CATALOG_MS, extraHeaders, headerCount);
     
     Logger.printf("📡 Making GET request to: %s\n", catalogUrl.c_str());
     
-    int httpResponseCode = http.GET();
-    
-    if (httpResponseCode != 200)
+    if (!http.get(catalogUrl.c_str(), extraHeaders, headerCount))
     {
-        Logger.printf("❌ HTTP request failed: %d (%s)\n", httpResponseCode, http.errorToString(httpResponseCode).c_str());
-        http.end();
+        Logger.printf("❌ HTTP request failed: %d\n", http.statusCode());
         return false;
     }
     
     String payload = http.getString();
-    http.end();
     
     Logger.printf("✅ Received response (%d bytes)\n", payload.length());
     

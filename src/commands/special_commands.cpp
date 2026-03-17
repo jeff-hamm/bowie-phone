@@ -408,7 +408,7 @@ void executePrepareOTA() {
 
 void executePhoneHome() {
     Logger.printf("📞 Manual phone home check-in...\n");
-    if (phoneHome(nullptr)) {
+    if (checkForRemoteUpdates(nullptr)) {
         Logger.printf("✅ Phone home triggered OTA update\n");
     } else {
         Logger.printf("📞 Phone home status: %s\n", getPhoneHomeStatus());

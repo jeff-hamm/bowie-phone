@@ -1,5 +1,4 @@
 #include "commands_internal.h"
-#include <WiFiClientSecure.h>
 
 // ============================================================================
 // DEBUG INPUT — Full E2E integration test of the phone call state machine
@@ -146,18 +145,9 @@ static bool downloadAndConvertCSV(const char* rawPath) {
     String url = String(GITHUB_RAW_BASE) + "data/" + OTA_HOSTNAME + ".csv";
     Logger.printf("   Downloading: %s\n", url.c_str());
 
-    WiFiClientSecure secureClient;
-    secureClient.setInsecure();
-    HTTPClient http;
-    http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
-    if (!http.begin(secureClient, url)) {
-        Logger.println("   ❌ HTTP begin failed");
-        return false;
-    }
-    int httpCode = http.GET();
-    if (httpCode != 200) {
-        Logger.printf("   ❌ HTTP %d\n", httpCode);
-        http.end();
+    HttpClient http;
+    if (!http.get(url)) {
+        Logger.printf("   ❌ HTTP %d\n", http.statusCode());
         return false;
     }
 
@@ -168,46 +158,46 @@ static bool downloadAndConvertCSV(const char* rawPath) {
         return false;
     }
 
-    WiFiClient* stream = http.getStreamPtr();
     bool inData = false;
     size_t samplesWritten = 0;
     char lineBuf[512];
     int linePos = 0;
 
-    while (http.connected() || stream->available()) {
-        if (!stream->available()) { delay(1); continue; }
-        char c = stream->read();
-        if (c == '\n' || c == '\r') {
-            if (linePos == 0) continue;
-            lineBuf[linePos] = '\0';
-            linePos = 0;
+    http.streamBody([&](const uint8_t* buf, size_t len) -> bool {
+        for (size_t i = 0; i < len; i++) {
+            char c = (char)buf[i];
+            if (c == '\n' || c == '\r') {
+                if (linePos == 0) continue;
+                lineBuf[linePos] = '\0';
+                linePos = 0;
 
-            if (strstr(lineBuf, "---END_AUDIO_CAPTURE---")) break;
-            if (strstr(lineBuf, "---BEGIN_AUDIO_CAPTURE---")) { inData = true; continue; }
-            if (lineBuf[0] == '#') continue;
-            if (!inData) continue;
+                if (strstr(lineBuf, "---END_AUDIO_CAPTURE---")) return false;
+                if (strstr(lineBuf, "---BEGIN_AUDIO_CAPTURE---")) { inData = true; continue; }
+                if (lineBuf[0] == '#') continue;
+                if (!inData) continue;
 
-            // Parse comma-separated int16 values, upsample 2x
-            char* ptr = lineBuf;
-            while (*ptr) {
-                while (*ptr == ',' || *ptr == ' ' || *ptr == '\t') ptr++;
-                if (*ptr == '\0') break;
-                int16_t val = (int16_t)atoi(ptr);
-                outFile.write((uint8_t*)&val, sizeof(val));
-                outFile.write((uint8_t*)&val, sizeof(val));
-                samplesWritten += 2;
-                if (*ptr == '-') ptr++;
-                while (*ptr >= '0' && *ptr <= '9') ptr++;
+                // Parse comma-separated int16 values, upsample 2x
+                char* ptr = lineBuf;
+                while (*ptr) {
+                    while (*ptr == ',' || *ptr == ' ' || *ptr == '\t') ptr++;
+                    if (*ptr == '\0') break;
+                    int16_t val = (int16_t)atoi(ptr);
+                    outFile.write((uint8_t*)&val, sizeof(val));
+                    outFile.write((uint8_t*)&val, sizeof(val));
+                    samplesWritten += 2;
+                    if (*ptr == '-') ptr++;
+                    while (*ptr >= '0' && *ptr <= '9') ptr++;
+                }
+
+                if (samplesWritten % 44100 == 0) yield();
+            } else if (linePos < (int)sizeof(lineBuf) - 1) {
+                lineBuf[linePos++] = c;
             }
-
-            if (samplesWritten % 44100 == 0) yield();
-        } else if (linePos < (int)sizeof(lineBuf) - 1) {
-            lineBuf[linePos++] = c;
         }
-    }
+        return true;
+    });
 
     outFile.close();
-    http.end();
 
     Logger.printf("   ✅ Converted: %u samples (%.2f s at %d Hz) → %s\n",
                   (unsigned)samplesWritten,

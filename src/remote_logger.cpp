@@ -2,12 +2,20 @@
 #include "logging.h"
 #include "tailscale_manager.h"
 #include <WiFi.h>
-#include <HTTPClient.h>
+#include "http_utils.h"
 #include <Preferences.h>
 #include <WebServer.h>
+#include <esp_system.h>
+
+#ifndef FIRMWARE_VERSION
+#define FIRMWARE_VERSION "0.0.0"
+#endif
 
 // Global instance
 RemoteLoggerClass RemoteLogger;
+
+// Persistent HTTP client for log shipping (avoids per-request TLS setup)
+static HttpClient s_logClient(HTTP_TIMEOUT_SHORT_MS);
 
 // NVS namespace for remote logger config
 #define REMOTE_LOG_NVS_NAMESPACE "remotelog"
@@ -15,10 +23,14 @@ RemoteLoggerClass RemoteLogger;
 static Preferences remoteLogPrefs;
 
 RemoteLoggerClass::RemoteLoggerClass() 
-    : lineCount(0), lastFlushTime(0), enabled(false), vpnRequired(true) {
+    : lineCount(0), lastFlushTime(0), enabled(false), vpnRequired(true), bootSent(false) {
     serverUrl[0] = '\0';
     deviceId[0] = '\0';
-    logBuffer.reserve(REMOTE_LOG_BUFFER_SIZE);
+    // Generate a random boot id (6 random bytes → 12 hex chars)
+    uint32_t r1 = esp_random();
+    uint32_t r2 = esp_random();
+    snprintf(bootId, sizeof(bootId), "%08x%04x", r1, (uint16_t)(r2 & 0xFFFF));
+    preConnectBuffer.reserve(REMOTE_LOG_BUFFER_SIZE);
 }
 
 void RemoteLoggerClass::begin(const char* server, const char* devId, bool requireVpn) {
@@ -48,7 +60,18 @@ void RemoteLoggerClass::begin(const char* server, const char* devId, bool requir
     enabled = (strlen(serverUrl) > 0);
     
     if (enabled) {
-        Serial.printf("📡 Remote Logger: %s -> %s\n", deviceId, serverUrl);
+        Serial.printf("📡 Remote Logger: %s -> %s (boot %s)\n", deviceId, serverUrl, bootId);
+        s_logClient.setPersistentHeader("X-Device-ID", deviceId);
+        s_logClient.setPersistentHeader("Content-Type", "application/json");
+        // Move any pre-connect logs into the main buffer so they ship on first flush
+        if (preConnectBuffer.length() > 0) {
+            logBuffer = preConnectBuffer;
+            preConnectBuffer = "";
+            lineCount = 0;
+            for (size_t i = 0; i < logBuffer.length(); i++) {
+                if (logBuffer[i] == '\n') lineCount++;
+            }
+        }
     }
     
     lastFlushTime = millis();
@@ -69,7 +92,13 @@ void RemoteLoggerClass::setDeviceId(const char* id) {
 }
 
 size_t RemoteLoggerClass::write(uint8_t byte) {
-    if (!enabled) return 1;
+    if (!enabled) {
+        // Capture early boot logs before begin() enables us
+        if (preConnectBuffer.length() < REMOTE_LOG_BUFFER_SIZE) {
+            preConnectBuffer += (char)byte;
+        }
+        return 1;
+    }
     
     logBuffer += (char)byte;
     
@@ -87,7 +116,12 @@ size_t RemoteLoggerClass::write(uint8_t byte) {
 }
 
 size_t RemoteLoggerClass::write(const uint8_t* buffer, size_t size) {
-    if (!enabled) return size;
+    if (!enabled) {
+        for (size_t i = 0; i < size && preConnectBuffer.length() < REMOTE_LOG_BUFFER_SIZE; i++) {
+            preConnectBuffer += (char)buffer[i];
+        }
+        return size;
+    }
     
     for (size_t i = 0; i < size; i++) {
         logBuffer += (char)buffer[i];
@@ -105,18 +139,9 @@ size_t RemoteLoggerClass::write(const uint8_t* buffer, size_t size) {
     return size;
 }
 
-void RemoteLoggerClass::loop() {
-    if (!enabled || logBuffer.length() == 0) return;
-    
-    unsigned long now = millis();
-    if (now - lastFlushTime >= REMOTE_LOG_FLUSH_INTERVAL_MS) {
-        flush();
-    }
-}
-
 void RemoteLoggerClass::flush() {
-    if (logBuffer.length() == 0) return;
-    
+    if (!enabled || logBuffer.length() == 0 || millis() - lastFlushTime < REMOTE_LOG_FLUSH_INTERVAL_MS)
+        return;
     // Check VPN requirement
     if (vpnRequired && !isTailscaleConnected()) {
         // Don't flush, keep buffering (up to limit)
@@ -129,6 +154,13 @@ void RemoteLoggerClass::flush() {
             }
         }
         return;
+    }
+
+    // Send boot notification on first flush (includes firmware/reset info)
+    if (!bootSent) {
+        if (sendBootNotification()) {
+            bootSent = true;
+        }
     }
     
     // Try to send logs
@@ -145,30 +177,11 @@ bool RemoteLoggerClass::sendLogs(const String& logs) {
         return false;
     }
     
-    HTTPClient http;
-    http.setTimeout(5000);  // 5 second timeout
-    
-    if (!http.begin(serverUrl)) {
-        return false;
-    }
-    
-    http.addHeader("Content-Type", "application/json");
-    http.addHeader("X-Device-ID", deviceId);
-    
     // Build JSON payload
     String json = "{";
     json += "\"device\":\"" + String(deviceId) + "\",";
-    json += "\"timestamp\":" + String(millis()) + ",";
+    json += "\"boot_id\":\"" + String(bootId) + "\",";
     json += "\"uptime_sec\":" + String(millis() / 1000) + ",";
-    
-    // Get Tailscale IP if connected
-    const char* tsIp = getTailscaleIP();
-    if (tsIp) {
-        json += "\"tailscale_ip\":\"" + String(tsIp) + "\",";
-    }
-    
-    // Add WiFi RSSI for diagnostics
-    json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
     
     // Escape and add logs
     json += "\"logs\":\"";
@@ -190,10 +203,52 @@ bool RemoteLoggerClass::sendLogs(const String& logs) {
     }
     json += "\"}";
     
-    int httpCode = http.POST(json);
-    http.end();
-    
-    return (httpCode >= 200 && httpCode < 300);
+    return s_logClient.post(serverUrl, json);
+}
+
+bool RemoteLoggerClass::sendBootNotification() {
+    if (!WiFi.isConnected() || strlen(serverUrl) == 0) {
+        return false;
+    }
+
+    // Gather boot context
+    esp_reset_reason_t reason = esp_reset_reason();
+    const char* reasonStr = "unknown";
+    switch (reason) {
+        case ESP_RST_POWERON:  reasonStr = "power_on"; break;
+        case ESP_RST_SW:       reasonStr = "software"; break;
+        case ESP_RST_PANIC:    reasonStr = "panic"; break;
+        case ESP_RST_INT_WDT:  reasonStr = "int_wdt"; break;
+        case ESP_RST_TASK_WDT: reasonStr = "task_wdt"; break;
+        case ESP_RST_WDT:      reasonStr = "wdt"; break;
+        case ESP_RST_DEEPSLEEP: reasonStr = "deep_sleep"; break;
+        case ESP_RST_BROWNOUT: reasonStr = "brownout"; break;
+        default: break;
+    }
+
+    const char* tsIp = getTailscaleIP();
+
+    String json = "{";
+    json += "\"device\":\"" + String(deviceId) + "\",";
+    json += "\"boot_id\":\"" + String(bootId) + "\",";
+    json += "\"boot\":true,";
+    json += "\"boot_reason\":\"" + String(reasonStr) + "\",";
+    json += "\"firmware\":\"" FIRMWARE_VERSION "\",";
+    json += "\"uptime_sec\":" + String(millis() / 1000) + ",";
+    json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
+    json += "\"free_heap\":" + String(ESP.getFreeHeap()) + ",";
+    json += "\"wifi_ip\":\"" + WiFi.localIP().toString() + "\",";
+    if (tsIp) {
+        json += "\"tailscale_ip\":\"" + String(tsIp) + "\",";
+    }
+    // Include pre-connect boot logs as first log payload
+    json += "\"logs\":\"";
+    // The preConnectBuffer was already moved to logBuffer in begin(),
+    // so this notification carries an empty logs field — the real logs
+    // follow immediately in the normal flush.
+    json += "\"}";
+
+    return s_logClient.post(serverUrl, json);
 }
 
 // ============================================================================
@@ -259,9 +314,9 @@ void initRemoteLogger() {
                           true);
     }
     
-    // Add to logger if enabled
     if (RemoteLogger.isEnabled()) {
-        Logger.addLogger(RemoteLogger);
+        // Logger.addLogger was already called early in setup() so pre-boot logs
+        // are captured.  begin() moved the pre-connect buffer into the send queue.
         Serial.println("📡 Remote logging enabled");
     }
 }
@@ -380,7 +435,7 @@ static void handleRemoteLogTest() {
     
     if (RemoteLogger.isEnabled()) {
         Logger.println("🧪 Test log message from remote logger web interface");
-        RemoteLogger.forceFlush();
+        RemoteLogger.flush();
         remoteLogWebServer->send(200, "text/plain", "Test log sent!");
     } else {
         remoteLogWebServer->send(400, "text/plain", "Remote logging is disabled");

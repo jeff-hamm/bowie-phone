@@ -43,17 +43,21 @@
 class RemoteLoggerClass : public Print {
 private:
     String logBuffer;
+    String preConnectBuffer;  // Logs captured before VPN is ready
     int lineCount;
     unsigned long lastFlushTime;
     char serverUrl[128];
     char deviceId[32];
+    char bootId[16];     // Random hex per boot, used as session key
     bool enabled;
     bool vpnRequired;  // Only send when VPN is connected
+    bool bootSent;     // True after boot notification delivered
     
-    void flush();
     bool sendLogs(const String& logs);
+    bool sendBootNotification();
     
 public:
+    void flush();
     RemoteLoggerClass();
     
     /**
@@ -86,15 +90,6 @@ public:
     size_t write(uint8_t byte) override;
     size_t write(const uint8_t* buffer, size_t size) override;
     
-    /**
-     * Call in loop() to handle periodic flush
-     */
-    void loop();
-    
-    /**
-     * Force flush all buffered logs
-     */
-    void forceFlush() { flush(); }
     
     /**
      * Get current device ID
@@ -105,6 +100,11 @@ public:
      * Get current server URL
      */
     const char* getServerUrl() const { return serverUrl; }
+
+    /**
+     * Get the boot-unique session id (random hex)
+     */
+    const char* getBootId() const { return bootId; }
 };
 
 // Global instance
