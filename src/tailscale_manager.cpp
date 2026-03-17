@@ -189,16 +189,9 @@ bool initTailscale(const char* localIp,
         Logger.printf("✅ Tailscale: Resolved %s -> %s\n", peerEndpoint, peerAddr.toString().c_str());
     }
     
-    // Start WireGuard with /24 subnet so lwIP can route to other WG peers
-    IPAddress subnet(255, 255, 255, 0);
-    IPAddress gateway = localAddr;
-    gateway[3] = 1;  // .1 gateway (WireGuard server)
-    Logger.printf("   Subnet: %s, Gateway: %s\n", subnet.toString().c_str(), gateway.toString().c_str());
-    
+    // Start WireGuard (/32 point-to-point, all traffic tunneled)
     bool result = wg.begin(
         localAddr,
-        subnet,
-        gateway,
         privateKey,
         peerEndpoint,
         peerPublicKey,
@@ -322,6 +315,15 @@ void handleTailscaleLoop() {
     // Flush buffered remote logs periodically
     RemoteLogger.flush();
     
+    // Periodic WireGuard diagnostic (every 60s when connected)
+    static unsigned long lastWgDiag = 0;
+    unsigned long diagNow = millis();
+    if (vpnConnected && (diagNow - lastWgDiag >= 60000)) {
+        lastWgDiag = diagNow;
+        Logger.printf("🔐 WG: %s | uptime: %lus | WiFi RSSI: %d dBm\n",
+            tailscaleIp, diagNow / 1000, WiFi.RSSI());
+    }
+    
     // Check if we need to reconnect
     if (vpnInitialized && !vpnConnected) {
         unsigned long now = millis();
@@ -338,17 +340,12 @@ void handleTailscaleLoop() {
                 Logger.println("🔐 Tailscale: Attempting reconnection...");
                 strcpy(statusBuffer, "Reconnecting...");
                 
-                // Try to reconnect with /24 subnet
+                // Try to reconnect
                 IPAddress localAddr;
                 localAddr.fromString(tailscaleIp);
-                IPAddress subnet(255, 255, 255, 0);
-                IPAddress gateway = localAddr;
-                gateway[3] = 1;
                 
                 bool result = wg.begin(
                     localAddr,
-                    subnet,
-                    gateway,
                     storedPrivateKey,
                     storedPeerEndpoint,
                     storedPeerPublicKey,
