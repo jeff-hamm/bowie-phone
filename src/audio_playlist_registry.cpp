@@ -13,14 +13,15 @@
 // GLOBAL TONE GENERATORS
 // ============================================================================
 
+
 // Dial tone: 350 Hz + 440 Hz (North American standard)
-static DualToneGenerator dialToneGenerator(350.0f, 440.0f, 16000.0f);
+static DualToneGenerator dialtoneGenerator(350.0f, 440.0f, 16000.0f);
 
 // Ringback base tone: 440 Hz + 480 Hz (North American standard)
-static DualToneGenerator ringbackToneGenerator(440.0f, 480.0f, 16000.0f);
+static DualToneGenerator ringbackTone(440.0f, 480.0f, 16000.0f);
 
 // Ringback with cadence: 2 seconds on, 4 seconds off
-static RepeatingToneGenerator<int16_t> ringbackRepeater(ringbackToneGenerator, 2000, 4000);
+static RepeatingToneGenerator<int16_t> ringbackToneGenerator(ringbackTone, 2000, 4000);
 
 // ============================================================================
 // GLOBAL INSTANCES
@@ -35,7 +36,9 @@ static AudioPlaylistRegistry* globalPlaylistRegistry = nullptr;
 
 AudioKeyRegistry& getAudioKeyRegistry() {
     if (!globalKeyRegistry) {
-        globalKeyRegistry = new AudioKeyRegistry();        
+        globalKeyRegistry = new AudioKeyRegistry();
+        globalKeyRegistry->registerGenerator("dialtone", &dialtoneGenerator);
+        globalKeyRegistry->registerGenerator("ringback", &ringbackToneGenerator);
         Logger.println("✅ Global AudioKeyRegistry initialized with tone generators");
     }
     return *globalKeyRegistry;
@@ -63,10 +66,12 @@ Playlist* AudioPlaylistRegistry::createPlaylist(const char* name, bool overwrite
     // Check if already exists
     auto playlist = this->getPlaylistMutable(name);
     if (playlist) {
-        Logger.printf("⚠️ Playlist already exists: %s\n", name);
         if (!overwrite) {
             return playlist;
         }
+        // Overwrite: clear and reuse existing playlist
+        playlist->clear();
+        return playlist;
     }
     
     playlists[key] = Playlist(name, keyRegistry);

@@ -124,10 +124,11 @@ bool downloadAudio(int maxRetries = 3, unsigned long retryDelayMs = 2000);
 
 
 /**
- * @brief Check if an audio key has a playlist (with ringback pattern)
+ * @brief Check if an audio key has a ring duration configured
  * @param key Audio key to look up
- * @return Non-zero if playlist exists for this key, 0 otherwise
- * @deprecated Ring duration is now managed by playlists. Check AudioPlaylistRegistry::hasPlaylist() directly.
+ * @return Ring duration in ms if configured, 0 otherwise
+ * @note Only meaningful when ENABLE_PLAYLIST_FEATURES is enabled.
+ *       Ring duration is stored in playlists via ringback nodes.
  */
 unsigned long getAudioKeyRingDuration(const char *key);
 
@@ -150,11 +151,25 @@ void invalidateAudioCache();
 // ============================================================================
 
 /**
+ * @brief Unified audio maintenance loop — call from main loop
+ * 
+ * Combines all periodic audio management tasks:
+ * - Checks if the audio catalog cache is stale and re-downloads if needed
+ * - Processes the audio file download queue (one file per tick)
+ * 
+ * Rate-limited internally: catalog refresh uses CACHE_CHECK_INTERVAL_MS,
+ * download queue uses DOWNLOAD_QUEUE_CHECK_INTERVAL_MS.
+ */
+void audioMaintenanceLoop();
+
+/**
  * @brief Process next item in audio download queue
  * @return true if item was processed, false if queue empty or error
  * 
  * Call this function periodically in main loop to download audio files
  * in the background. Non-blocking operation with rate limiting.
+ * 
+ * @note Prefer audioMaintenanceLoop() which also handles catalog refresh.
  */
 bool processAudioDownloadQueue();
 

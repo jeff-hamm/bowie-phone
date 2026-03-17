@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# @desc Add a WireGuard peer to wg0 and print a ready-to-use client config
+#
+# Usage:
+#   wg-add-peer [--name NAME] [--ip IP] [--pubkey KEY]
+#
+# Options:
+#   --name NAME   Label for the peer (default: peer-<last-octet>)
+#   --ip   IP     Assign specific IP, e.g. 10.253.0.10 (auto-assigned if omitted)
+#   --pubkey KEY  Client's WireGuard public key (server generates keypair if omitted)
+#
+# Output is written to stdout — save it as a .conf file on the client.
+
+set -euo pipefail
+
+PHOME="${PHOME:-/mnt/pool/appdata/home}"
+WG_CONF_POOL="${PHOME}/.conf/wg0.conf"
+WG_CONF_FLASH="/boot/config/wireguard/wg0.conf"
+WG_IFACE="wg0"
+WG_NET="10.253.0.0/24"
+WG_BASE="10.253.0"
+SERVER_ENDPOINT="jumprouter.infinitebutts.com:51820"
+
+log()  { printf "\033[1;32m[wg-add-peer]\033[0m %s\n" "$*" >&2; }
+die()  { printf "\033[1;31m[wg-add-peer]\033[0m %s\n" "$*" >&2; exit 1; }
+
+usage() {
+    sed -n '/^# Usage/,/^[^#]/p' "$0" | grep '^#' | sed 's/^# \{0,1\}//'
+    exit 1
+}
+
+NAME=""
+REQUESTED_IP=""
+CLIENT_PUBKEY=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --name)    NAME="$2";          shift 2 ;;
+        --ip)      REQUESTED_IP="$2";  shift 2 ;;
+        --pubkey)  CLIENT_PUBKEY="$2"; shift 2 ;;
+        -h|--help) usage ;;
+        *)         die "Unknown option: $1" ;;
+    esac
+done
+
+# Auto-assign the next available /32 starting at .10 (leaves .2-.9 for devices)
+next_ip() {
+    local used
+    used="$(grep -oP 'AllowedIPs=10\.253\.0\.\K\d+(?=/32)' "$WG_CONF_POOL" || true)"
+    for i in $(seq 10 254); do
+        printf '%s\n' $used | grep -qx "$i" || { echo "${WG_BASE}.${i}"; return; }
+    done
+    die "No available IPs in $WG_NET"
+}
+
+CLIENT_IP="${REQUESTED_IP:-$(next_ip)}"
+[[ -z "$NAME" ]] && NAME="peer-$(printf '%s' "$CLIENT_IP" | cut -d. -f4)"
+
+SERVER_PUBKEY="$(wg show "$WG_IFACE" public-key)"
+SERVER_KEYGEN=false
+CLIENT_PRIVKEY=""
+
+if [[ -z "$CLIENT_PUBKEY" ]]; then
+    CLIENT_PRIVKEY="$(wg genkey)"
+    CLIENT_PUBKEY="$(printf '%s' "$CLIENT_PRIVKEY" | wg pubkey)"
+    SERVER_KEYGEN=true
+    log "Generated keypair for $NAME (${CLIENT_IP})"
+else
+    log "Using provided public key for $NAME (${CLIENT_IP})"
+fi
+
+# Add peer to live interface
+wg set "$WG_IFACE" peer "$CLIENT_PUBKEY" \
+    allowed-ips "${CLIENT_IP}/32" \
+    persistent-keepalive 25
+log "Added peer ${CLIENT_IP} to live $WG_IFACE"
+
+# Append [Peer] block to both wg0.conf files
+for conf in "$WG_CONF_POOL" "$WG_CONF_FLASH"; do
+    [[ -f "$conf" ]] || continue
+    if grep -qF "$CLIENT_PUBKEY" "$conf"; then
+        log "Peer already in $conf (skipped)"
+        continue
+    fi
+    cp -a "$conf" "${conf}.bak-$(date +%Y%m%d-%H%M%S)"
+    {
+        echo ""
+        echo "[Peer]"
+        echo "#${NAME}"
+        echo "PublicKey=${CLIENT_PUBKEY}"
+        echo "AllowedIPs=${CLIENT_IP}/32"
+        echo "PersistentKeepalive=25"
+    } >> "$conf"
+    log "Updated $conf"
+done
+
+# Print client config to stdout
+echo "[Interface]"
+[[ "$SERVER_KEYGEN" == "true" ]] && echo "PrivateKey = ${CLIENT_PRIVKEY}"
+echo "Address = ${CLIENT_IP}/24"
+echo "DNS = ${WG_BASE}.1"
+echo ""
+echo "[Peer]"
+echo "PublicKey = ${SERVER_PUBKEY}"
+echo "Endpoint = ${SERVER_ENDPOINT}"
+echo "AllowedIPs = ${WG_NET}"
+echo "PersistentKeepalive = 25"
+
+# Hint to stderr so it doesn't contaminate the config output
+SERVER_HTTP_IP="$(ip -4 addr show wg0 | grep -oP '(?<=inet )[\d.]+')"
+cat >&2 <<EOF
+
+────────────────────────────────────────────────────────
+  Peer ${NAME} (${CLIENT_IP}) added.
+
+  To add future clients, run this one-liner on the new machine:
+    iwr http://${SERVER_HTTP_IP}/wg-join.ps1 | iex
+  Or download and inspect first:
+    iwr http://${SERVER_HTTP_IP}/wg-join.ps1 -OutFile wg-join.ps1; .\wg-join.ps1
+────────────────────────────────────────────────────────
+EOF

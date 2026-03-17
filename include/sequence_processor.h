@@ -109,6 +109,12 @@ bool isReadingSequence();
 bool isSequenceReady();
 
 /**
+ * @brief Check if input is locked (sequence matched and audio playing)
+ * @return true if input is locked until hang-up
+ */
+bool isSequenceLocked();
+
+/**
  * @brief Get the timestamp of the last detected DTMF digit
  * @return Timestamp in milliseconds of the last digit detection
  */

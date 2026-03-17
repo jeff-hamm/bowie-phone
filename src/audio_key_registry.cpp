@@ -19,6 +19,13 @@
 void AudioKeyRegistry::registerKey(const char* audioKey, const char* path, AudioStreamType type, const char* alternatePath) {
     if (!audioKey || !path) return;
     
+    // Never overwrite a generator registration with a file/URL entry
+    auto it = registry.find(std::string(audioKey));
+    if (it != registry.end() && it->second.type == AudioStreamType::GENERATOR) {
+        Logger.printf("⏭️ Skipping registerKey for '%s' — already registered as generator\n", audioKey);
+        return;
+    }
+    
     KeyEntry entry(audioKey, path, type, alternatePath);
     registry[std::string(audioKey)] = entry;
     

@@ -50,6 +50,13 @@
 // AUDIO CONFIGURATION
 // ============================================================================
 
+// Set to 1 to enable playlist enrichment features (ringback before audio,
+// click after audio, previous/next chaining). When 0, each audioKey plays
+// its single audio file directly without playlist wrapping.
+#ifndef ENABLE_PLAYLIST_FEATURES
+#define ENABLE_PLAYLIST_FEATURES 0
+#endif
+
 // Audio format settings (must match AudioKit and FFT configuration)
 #ifndef AUDIO_CHANNELS
 #define AUDIO_CHANNELS 1

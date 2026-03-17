@@ -5,7 +5,9 @@
 #include "remote_logger.h"
 #include "notifications.h"
 #include "nvs_flash.h"
+#ifndef DIAG_BUILD
 #include "extended_audio_player.h"
+#endif
 #include "special_command_processor.h"  // For shutdownAudioForOTA
 #include <SD.h>
 #include <SPI.h>
@@ -682,6 +684,189 @@ bool connectToWiFi()
     return true;
 }
 
+// Register all HTTP server routes - called by both config portal and normal OTA mode
+static void registerWebServerRoutes()
+{
+    // Config UI
+    server.on("/", HTTP_GET, handleRoot);
+    server.on("/logs", HTTP_GET, handleLogs);
+    server.on("/save", HTTP_POST, handleSave);
+    server.on("/wifi/clear", HTTP_POST, handleWiFiClear);
+    server.on("/wifi/scan", HTTP_GET, handleWiFiScan);
+    server.on("/wifi/test", HTTP_POST, handleWiFiTest);
+
+    // Deployment API
+    server.on("/api/wifi", HTTP_POST, []() {
+        String ssid = server.arg("ssid");
+        String password = server.arg("password");
+        if (ssid.length() == 0) {
+            server.send(400, "application/json", "{\"ok\":false,\"error\":\"SSID required\"}");
+            return;
+        }
+        Logger.printf("📡 API: Saving WiFi credentials for: %s\n", ssid.c_str());
+        saveWiFiCredentials(ssid, password);
+        server.send(200, "application/json", "{\"ok\":true,\"message\":\"Credentials saved, rebooting...\"}");
+        delay(500);
+        ESP.restart();
+    });
+
+    server.on("/api/status", HTTP_GET, []() {
+        String json = "{";
+        json += "\"ap_name\":\"" + String(WIFI_AP_NAME) + "\",";
+        json += "\"ap_ip\":\"" + WiFi.softAPIP().toString() + "\",";
+        json += "\"config_mode\":" + String(isConfigMode ? "true" : "false") + ",";
+        json += "\"fallback_networks\":" + String(numFallbackNetworks);
+        json += "}";
+        server.send(200, "application/json", json);
+    });
+
+    // OTA preparation endpoint - call before OTA to release SD/SPI
+    server.on("/prepareota", HTTP_GET, []() {
+        Logger.println("🔄 HTTP: Preparing for OTA update...");
+        shutdownAudioForOTA();
+        delay(100);
+        SD.end();  // Unmount SD card only - don't touch SPI or GPIO!
+        delay(500);
+        otaPrepared = true;
+        otaPrepareTime = millis();
+        Logger.println("✅ HTTP: Ready for OTA (5 min timeout)");
+        server.send(200, "text/plain", "OK - Ready for OTA (5 min timeout, will reboot if no OTA)");
+    });
+
+    // HTTP OTA upload endpoint
+    // Use: curl -F "firmware=@.pio/build/esp32dev/firmware.bin" http://DEVICE_IP/update
+    server.on("/update", HTTP_POST, []() {
+        if (Update.hasError()) {
+            server.send(500, "text/plain", "FAIL - Update error");
+            delay(1000);
+            esp_restart();
+        } else {
+            server.send(200, "text/plain", "OK - Update successful, rebooting...");
+            delay(1000);
+            esp_restart();
+        }
+    }, []() {
+        HTTPUpload& upload = server.upload();
+        static bool otaBeginOk = false;
+        if (upload.status == UPLOAD_FILE_START) {
+            Logger.printf("🔄 HTTP OTA: Receiving %s\n", upload.filename.c_str());
+            // Flush remote logs before OTA overwrites firmware
+            RemoteLogger.forceFlush();
+            esp_task_wdt_delete(NULL);
+            if (!otaPrepared) {
+                shutdownAudioForOTA();
+                delay(100);
+                SD.end();  // Unmount SD card only - don't touch SPI or GPIO!
+                delay(500);
+            } else {
+                Logger.println("ℹ️ OTA already prepared, skipping shutdown");
+            }
+            const esp_partition_t* otaPart = esp_ota_get_next_update_partition(NULL);
+            if (otaPart) {
+                Logger.printf("📋 OTA target partition: %s, size: %u bytes (%u KB)\n",
+                    otaPart->label, otaPart->size, otaPart->size / 1024);
+            } else {
+                Logger.println("⚠️ No OTA partition found!");
+            }
+            Logger.printf("📋 Free heap: %u bytes, largest block: %u bytes\n",
+                ESP.getFreeHeap(), ESP.getMaxAllocHeap());
+            size_t firmwareSize = UPDATE_SIZE_UNKNOWN;
+            if (server.hasArg("size")) {
+                firmwareSize = server.arg("size").toInt();
+            }
+            Logger.printf("📦 HTTP OTA: Firmware size: %s (%u bytes)\n",
+                firmwareSize == UPDATE_SIZE_UNKNOWN ? "unknown" : "explicit", firmwareSize);
+            otaBeginOk = Update.begin(firmwareSize);
+            if (!otaBeginOk) {
+                Logger.printf("❌ HTTP OTA: Begin failed: %s\n", Update.errorString());
+            }
+        } else if (upload.status == UPLOAD_FILE_WRITE) {
+            if (!otaBeginOk) return;
+            if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+                Logger.printf("❌ HTTP OTA: Write failed: %s\n", Update.errorString());
+            } else {
+                static int lastPercent = -1;
+                size_t total = Update.size();
+                if (total > 0) {
+                    int percent = (Update.progress() * 100) / total;
+                    if (percent != lastPercent && percent % 10 == 0) {
+                        Logger.printf("📤 HTTP OTA Progress: %d%%\n", percent);
+                        lastPercent = percent;
+                    }
+                }
+            }
+        } else if (upload.status == UPLOAD_FILE_END) {
+            if (!otaBeginOk) return;
+            if (Update.end(true)) {
+                Logger.printf("✅ HTTP OTA: Complete (%u bytes)\n", upload.totalSize);
+            } else {
+                Logger.printf("❌ HTTP OTA: End failed: %s\n", Update.errorString());
+            }
+        }
+    });
+
+    // VPN toggle endpoints
+    server.on("/vpn/on", HTTP_GET, []() {
+        Logger.println("🔐 HTTP: Enabling WireGuard VPN...");
+        if (initTailscaleFromConfig()) {
+            server.send(200, "text/plain", "OK - VPN enabled");
+        } else {
+            server.send(500, "text/plain", "FAIL - VPN init failed");
+        }
+    });
+
+    server.on("/vpn/off", HTTP_GET, []() {
+        Logger.println("🔓 HTTP: Disabling WireGuard VPN...");
+        disconnectTailscale();
+        server.send(200, "text/plain", "OK - VPN disabled");
+    });
+
+    server.on("/vpn/status", HTTP_GET, []() {
+        bool connected = isTailscaleConnected();
+        String status = connected ? "connected" : "disconnected";
+        String ip = connected ? getTailscaleIP() : "N/A";
+        server.send(200, "application/json",
+            "{\"vpn\":\"" + status + "\",\"ip\":\"" + ip + "\"}");
+    });
+
+    // Device status endpoint
+    server.on("/status", HTTP_GET, []() {
+        String json = "{";
+        json += "\"wifi_ip\":\"" + WiFi.localIP().toString() + "\",";
+        json += "\"wifi_rssi\":" + String(WiFi.RSSI()) + ",";
+        json += "\"vpn_connected\":" + String(isTailscaleConnected() ? "true" : "false") + ",";
+        json += "\"vpn_ip\":\"";
+        const char* vpnIp = getTailscaleIP();
+        json += (vpnIp != nullptr) ? vpnIp : "N/A";
+        json += "\",";
+        json += "\"heap_free\":" + String(ESP.getFreeHeap()) + ",";
+        json += "\"heap_largest_block\":" + String(ESP.getMaxAllocHeap()) + ",";
+        const esp_partition_t* runPart = esp_ota_get_running_partition();
+        const esp_partition_t* nextPart = esp_ota_get_next_update_partition(NULL);
+        if (runPart) {
+            json += "\"running_partition\":\"" + String(runPart->label) + "\",";
+            json += "\"running_partition_size\":" + String(runPart->size) + ",";
+        }
+        if (nextPart) {
+            json += "\"ota_partition\":\"" + String(nextPart->label) + "\",";
+            json += "\"ota_partition_size\":" + String(nextPart->size) + ",";
+        }
+        json += "\"uptime\":" + String(millis() / 1000);
+        json += "}";
+        server.send(200, "application/json", json);
+    });
+
+    // Reboot endpoint
+    server.on("/reboot", HTTP_GET, []() {
+        server.send(200, "text/plain", "OK - Rebooting...");
+        delay(500);
+        esp_restart();
+    });
+
+    initVPNConfigRoutes(&server);
+    initRemoteLoggerRoutes(&server);
+}
+
 // Safer version of configuration portal startup
 bool startConfigPortalSafe()
 {
@@ -739,126 +924,8 @@ bool startConfigPortalSafe()
     // Start DNS server for captive portal
     dnsServer.start(53, "*", apIP);
     
-    // Setup web server routes
-    server.on("/", handleRoot);
-    server.on("/save", HTTP_POST, handleSave);
-    server.on("/wifi/clear", HTTP_POST, handleWiFiClear);
-    server.on("/wifi/scan", HTTP_GET, handleWiFiScan);
-    server.on("/wifi/test", HTTP_POST, handleWiFiTest);
-    server.on("/logs", handleLogs);
-    
-    // API endpoint for deployment-time WiFi configuration
-    // Usage: curl -X POST -d "ssid=MyNetwork&password=MyPassword" http://192.168.4.1/api/wifi
-    server.on("/api/wifi", HTTP_POST, []() {
-        String ssid = server.arg("ssid");
-        String password = server.arg("password");
-        
-        if (ssid.length() == 0) {
-            server.send(400, "application/json", "{\"ok\":false,\"error\":\"SSID required\"}");
-            return;
-        }
-        
-        Logger.printf("📡 API: Saving WiFi credentials for: %s\n", ssid.c_str());
-        saveWiFiCredentials(ssid, password);
-        
-        server.send(200, "application/json", "{\"ok\":true,\"message\":\"Credentials saved, rebooting...\"}");
-        
-        delay(500);
-        ESP.restart();
-    });
-    
-    // API endpoint to check device status (useful for deployment verification)
-    server.on("/api/status", HTTP_GET, []() {
-        String json = "{";
-        json += "\"ap_name\":\"" + String(WIFI_AP_NAME) + "\",";
-        json += "\"ap_ip\":\"" + WiFi.softAPIP().toString() + "\",";
-        json += "\"config_mode\":" + String(isConfigMode ? "true" : "false") + ",";
-        json += "\"fallback_networks\":" + String(numFallbackNetworks);
-        json += "}";
-        server.send(200, "application/json", json);
-    });
-    
-    // OTA preparation endpoint - call before OTA to release SD/SPI
-    server.on("/prepareota", HTTP_GET, []() {
-        Logger.println("🔄 HTTP: Preparing for OTA update...");
-        shutdownAudioForOTA();
-        SD.end();
-        delay(500);  // Let SD card fully release
-        
-        // Set OTA prepare flag and timeout
-        otaPrepared = true;
-        otaPrepareTime = millis();
-        
-        Logger.println("✅ HTTP: Ready for OTA (5 min timeout)");
-        server.send(200, "text/plain", "OK - Ready for OTA (5 min timeout, will reboot if no OTA)");
-    });
-    
-    // HTTP OTA upload endpoint - alternative to ArduinoOTA
-    // Use: curl -F "firmware=@.pio/build/esp32dev/firmware.bin" http://DEVICE_IP/update
-    server.on("/update", HTTP_POST, []() {
-        // Response after upload completes
-        if (Update.hasError()) {
-            server.send(500, "text/plain", "FAIL - Update error");
-            delay(1000);
-            esp_restart();
-        } else {
-            server.send(200, "text/plain", "OK - Update successful, rebooting...");
-            delay(1000);
-            esp_restart();
-        }
-    }, []() {
-        // Handle file upload
-        HTTPUpload& upload = server.upload();
-        static bool otaBeginOk = false;
-        
-        if (upload.status == UPLOAD_FILE_START) {
-            Logger.printf("🔄 HTTP OTA: Receiving %s\n", upload.filename.c_str());
-            
-            // Prepare system for OTA - ONLY SD.end(), no SPI/GPIO manipulation
-            esp_task_wdt_delete(NULL);
-            shutdownAudioForOTA();
-            SD.end();
-            delay(500);  // Let SD card fully release
-            
-            // Use firmware size from query param if provided, otherwise UPDATE_SIZE_UNKNOWN
-            size_t firmwareSize = UPDATE_SIZE_UNKNOWN;
-            if (server.hasArg("size")) {
-                firmwareSize = server.arg("size").toInt();
-                Logger.printf("📦 HTTP OTA: Expected firmware size: %u bytes\n", firmwareSize);
-            }
-            
-            otaBeginOk = Update.begin(firmwareSize);
-            if (!otaBeginOk) {
-                Logger.printf("❌ HTTP OTA: Begin failed: %s\n", Update.errorString());
-            }
-        } else if (upload.status == UPLOAD_FILE_WRITE) {
-            // Write firmware chunk
-            if (!otaBeginOk) return;
-            if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
-                Logger.printf("❌ HTTP OTA: Write failed: %s\n", Update.errorString());
-            } else {
-                static int lastPercent = -1;
-                size_t total = Update.size();
-                if (total > 0) {
-                    int percent = (Update.progress() * 100) / total;
-                    if (percent != lastPercent && percent % 10 == 0) {
-                        Logger.printf("📤 HTTP OTA Progress: %d%%\n", percent);
-                        lastPercent = percent;
-                    }
-                }
-            }
-        } else if (upload.status == UPLOAD_FILE_END) {
-            if (!otaBeginOk) return;
-            if (Update.end(true)) {
-                Logger.printf("✅ HTTP OTA: Complete (%u bytes)\n", upload.totalSize);
-            } else {
-                Logger.printf("❌ HTTP OTA: End failed: %s\n", Update.errorString());
-            }
-        }
-    });
-    
-    initVPNConfigRoutes(&server);
-    initRemoteLoggerRoutes(&server);
+    // Register all web server routes
+    registerWebServerRoutes();
     server.onNotFound([]() {
         server.sendHeader("Location", "/", true);
         server.send(302, "text/plain", "");
@@ -960,7 +1027,14 @@ void initOTA()
     
     // Prepare system before OTA flash write
     ArduinoOTA.onStart([]() { 
-        Logger.println("🔄 OTA Start - Preparing system for update...");
+        Logger.println("🔄 OTA Start - TCP callback connected, preparing system...");
+        Logger.printf("   WiFi IP: %s, WG: %s, Heap: %u\n",
+            WiFi.localIP().toString().c_str(),
+            isTailscaleConnected() ? getTailscaleIP() : "N/A",
+            ESP.getFreeHeap());
+        
+        // Flush remote logs so the server has the latest before we reboot
+        RemoteLogger.forceFlush();
         
         // Clear OTA prepare timeout - we're now in an actual OTA
         otaPrepared = false;
@@ -990,11 +1064,16 @@ void initOTA()
         switch (error) {
             case OTA_AUTH_ERROR: errMsg = "Auth Failed"; break;
             case OTA_BEGIN_ERROR: errMsg = "Begin Failed"; break;
-            case OTA_CONNECT_ERROR: errMsg = "Connect Failed"; break;
+            case OTA_CONNECT_ERROR: errMsg = "Connect Failed (TCP callback to sender)"; break;
             case OTA_RECEIVE_ERROR: errMsg = "Receive Failed"; break;
             case OTA_END_ERROR: errMsg = "End Failed"; break;
         }
-        Logger.printf("❌ OTA Error[%u]: %s - Rebooting in 3 seconds...\n", error, errMsg);
+        Logger.printf("❌ OTA Error[%u]: %s\n", error, errMsg);
+        Logger.printf("   WiFi: %s, WG: %s, Heap: %u\n",
+            WiFi.localIP().toString().c_str(),
+            isTailscaleConnected() ? getTailscaleIP() : "N/A",
+            ESP.getFreeHeap());
+        Logger.println("   Rebooting in 3 seconds...");
         delay(3000);
         esp_restart();
     });
@@ -1007,140 +1086,12 @@ void startOTA()
 {
     ArduinoOTA.begin();
     
-    // Start minimal web server for OTA and remote management
-    // These endpoints work in normal operation mode (not just config portal)
-    
-    // OTA preparation endpoint
-    server.on("/prepareota", HTTP_GET, []() {
-        Logger.println("🔄 HTTP: Preparing for OTA update...");
-        shutdownAudioForOTA();
-        delay(100);
-        SD.end();  // Unmount SD card only - don't touch SPI or GPIO!
-        delay(500);
-        
-        otaPrepared = true;
-        otaPrepareTime = millis();
-        
-        Logger.println("✅ HTTP: Ready for OTA (5 min timeout)");
-        server.send(200, "text/plain", "OK - Ready for OTA (5 min timeout)");
-    });
-    
-    // HTTP OTA upload endpoint - alternative to ArduinoOTA
-    // Use: curl -F "firmware=@.pio/build/esp32dev/firmware.bin" http://DEVICE_IP/update
-    server.on("/update", HTTP_POST, []() {
-        if (Update.hasError()) {
-            server.send(500, "text/plain", "FAIL - Update error");
-            delay(1000);
-            esp_restart();
-        } else {
-            server.send(200, "text/plain", "OK - Update successful, rebooting...");
-            delay(1000);
-            esp_restart();
-        }
-    }, []() {
-        HTTPUpload& upload = server.upload();
-        static bool otaBeginOk = false;
-        
-        if (upload.status == UPLOAD_FILE_START) {
-            Logger.printf("🔄 HTTP OTA: Receiving %s\n", upload.filename.c_str());
-            esp_task_wdt_delete(NULL);
-            
-            // Only do shutdown if /prepareota wasn't already called
-            if (!otaPrepared) {
-                shutdownAudioForOTA();
-                delay(100);
-                SD.end();  // Unmount SD card only - don't touch SPI or GPIO!
-                delay(500);
-            } else {
-                Logger.println("ℹ️ OTA already prepared, skipping shutdown");
-            }
-            
-            // Use firmware size from query param if provided, otherwise UPDATE_SIZE_UNKNOWN
-            size_t firmwareSize = UPDATE_SIZE_UNKNOWN;
-            if (server.hasArg("size")) {
-                firmwareSize = server.arg("size").toInt();
-                Logger.printf("📦 HTTP OTA: Expected firmware size: %u bytes\n", firmwareSize);
-            }
-            
-            otaBeginOk = Update.begin(firmwareSize);
-            if (!otaBeginOk) {
-                Logger.printf("❌ HTTP OTA: Begin failed: %s\n", Update.errorString());
-            }
-        } else if (upload.status == UPLOAD_FILE_WRITE) {
-            if (!otaBeginOk) return;
-            if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
-                Logger.printf("❌ HTTP OTA: Write failed: %s\n", Update.errorString());
-            } else {
-                static int lastPercent = -1;
-                size_t total = Update.size();
-                if (total > 0) {
-                    int percent = (Update.progress() * 100) / total;
-                    if (percent != lastPercent && percent % 10 == 0) {
-                        Logger.printf("📤 HTTP OTA Progress: %d%%\n", percent);
-                        lastPercent = percent;
-                    }
-                }
-            }
-        } else if (upload.status == UPLOAD_FILE_END) {
-            if (!otaBeginOk) return;
-            if (Update.end(true)) {
-                Logger.printf("✅ HTTP OTA: Complete (%u bytes)\n", upload.totalSize);
-            } else {
-                Logger.printf("❌ HTTP OTA: End failed: %s\n", Update.errorString());
-            }
-        }
-    });
-    
-    // WireGuard toggle endpoint
-    server.on("/vpn/on", HTTP_GET, []() {
-        Logger.println("🔐 HTTP: Enabling WireGuard VPN...");
-        if (initTailscaleFromConfig()) {
-            server.send(200, "text/plain", "OK - VPN enabled");
-        } else {
-            server.send(500, "text/plain", "FAIL - VPN init failed");
-        }
-    });
-    
-    server.on("/vpn/off", HTTP_GET, []() {
-        Logger.println("🔓 HTTP: Disabling WireGuard VPN...");
-        disconnectTailscale();
-        server.send(200, "text/plain", "OK - VPN disabled");
-    });
-    
-    server.on("/vpn/status", HTTP_GET, []() {
-        bool connected = isTailscaleConnected();
-        String status = connected ? "connected" : "disconnected";
-        String ip = connected ? getTailscaleIP() : "N/A";
-        server.send(200, "application/json", 
-            "{\"vpn\":\"" + status + "\",\"ip\":\"" + ip + "\"}");
-    });
-    
-    // Device status endpoint
-    server.on("/status", HTTP_GET, []() {
-        String json = "{";
-        json += "\"wifi_ip\":\"" + WiFi.localIP().toString() + "\",";
-        json += "\"wifi_rssi\":" + String(WiFi.RSSI()) + ",";
-        json += "\"vpn_connected\":" + String(isTailscaleConnected() ? "true" : "false") + ",";
-        json += "\"vpn_ip\":\"";
-        const char* vpnIp = getTailscaleIP();
-        json += (vpnIp != nullptr) ? vpnIp : "N/A";
-        json += "\",";
-        json += "\"heap_free\":" + String(ESP.getFreeHeap()) + ",";
-        json += "\"uptime\":" + String(millis() / 1000);
-        json += "}";
-        server.send(200, "application/json", json);
-    });
-    
-    // Reboot endpoint
-    server.on("/reboot", HTTP_GET, []() {
-        server.send(200, "text/plain", "OK - Rebooting...");
-        delay(500);
-        esp_restart();
-    });
-    
+    // Register all web server routes
+    registerWebServerRoutes();
+
     server.begin();
     Logger.printf("✅ OTA Ready: %s:%d\n", WiFi.localIP().toString().c_str(), OTA_PORT);
-    Logger.println("🌐 HTTP server started (OTA, VPN, status endpoints)");
+    Logger.println("🌐 HTTP server started");
 }
 
 // Stop OTA service when WiFi changes
@@ -1181,6 +1132,16 @@ bool performPullOTA(const char* firmwareUrl)
     }
     
     Logger.printf("📦 Pull OTA: Firmware size: %d bytes\n", contentLength);
+    
+    const esp_partition_t* otaPart = esp_ota_get_next_update_partition(NULL);
+    if (otaPart) {
+        Logger.printf("📋 OTA target partition: %s, size: %u bytes (%u KB)\n",
+            otaPart->label, otaPart->size, otaPart->size / 1024);
+    } else {
+        Logger.println("⚠️ No OTA partition found!");
+    }
+    Logger.printf("📋 Free heap: %u bytes, largest block: %u bytes\n",
+        ESP.getFreeHeap(), ESP.getMaxAllocHeap());
     
     if (!Update.begin(contentLength)) {
         Logger.printf("❌ Pull OTA: Not enough space: %s\n", Update.errorString());
@@ -1368,6 +1329,17 @@ void handleWiFiLoop()
     // Handle OTA updates (only if started and WiFi is ready)
     if (otaStarted && (WiFi.status() == WL_CONNECTED || isConfigMode))
     {
+        // Periodic OTA/network diagnostic heartbeat (every 60s)
+        static unsigned long lastOtaDiag = 0;
+        unsigned long otaDiagNow = millis();
+        if (otaDiagNow - lastOtaDiag >= 60000) {
+            lastOtaDiag = otaDiagNow;
+            Logger.printf("💓 OTA listening on %s:%d | WG: %s | Heap: %u\n",
+                WiFi.localIP().toString().c_str(), OTA_PORT,
+                isTailscaleConnected() ? getTailscaleIP() : "OFF",
+                ESP.getFreeHeap());
+        }
+        
         ArduinoOTA.handle();
         // Also handle HTTP server requests in STA mode (for OTA, VPN, status endpoints)
         if (!isConfigMode) {

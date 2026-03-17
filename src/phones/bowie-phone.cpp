@@ -52,6 +52,7 @@ static const PhoneConfig BOWIE_PHONE_CONFIG = {
     // With normalized magnitudes: noise ~0.1-2.0, real tones ~50-500+
     // Set low enough to catch weak row frequencies, debouncing handles noise
     .fundamentalMagnitudeThreshold = 10.0f,
+    .minDetectionMagnitude = 40.0f,           // Reject DAC→ADC loopback artifacts (typ. 12-24)
     .summedMagnitudeThreshold = 0.0f,         // Not used - standard DTMF only
     .freqTolerance = 75.0f,                   // Hz tolerance for freq matching
     .summedFreqTolerance = 0.0f,              // Not used

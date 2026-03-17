@@ -5,11 +5,6 @@
 
 PhoneService Phone;
 
-// Tone generators (owned by this module)
-static DualToneGenerator dialToneGenerator(350.0f, 440.0f, 16000.0f);
-static DualToneGenerator ringbackToneGenerator(440.0f, 480.0f, 16000.0f);
-static RepeatingToneGenerator<int16_t> ringbackRepeater(ringbackToneGenerator, 2000, 4000);
-
 PhoneService::PhoneService() 
 #ifdef CAN_RING
     : _pinFR(F_R), _pinRM(RM), _pinSHK(SHK),

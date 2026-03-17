@@ -9,11 +9,12 @@
 // ============================================================================
 // DTMF SEQUENCE STATE
 // ============================================================================
-extern ExtendedAudioPlayer audioPlayer;  // Defined in main.ino
+extern ExtendedAudioPlayer& audioPlayer;  // Defined in main.ino
 static char dtmfSequence[MAX_SEQUENCE_LENGTH + 1]; // +1 for null terminator
 static int sequenceIndex = 0;
 static unsigned long lastDigitTime = 0;
 static bool sequenceReady = false;  // Flag set when sequence is ready to process
+static bool sequenceLocked = false; // Lock input after a sequence plays until hang-up
 static int maxSequenceLength = MAX_SEQUENCE_LENGTH;  // Runtime configurable max length
 
 // ============================================================================
@@ -61,15 +62,15 @@ static bool addDigitToSequence(char digit)
         audioPlayer.stop();
     }
 
-    // Special case: '*' key completes the sequence (excluding the '*')
+    // Special case: '*' or '#' key completes the sequence (excluded from the key string)
     if (digit == '*' || digit == '#')
     {
         if (sequenceIndex > 0)
         {
-            Logger.printf("⭐ '*' pressed - completing sequence '%s' (excluding '*')\n", dtmfSequence);
-            return true; // Process sequence without adding '*'
+            Logger.printf("⭐ '%c' pressed - completing sequence '%s'\n", digit, dtmfSequence);
+            return true; // Process sequence without adding the terminator
         }
-        // If '*' is first character, ignore it
+        // If terminator is first character, ignore it
         return false;
     }
 
@@ -133,6 +134,7 @@ bool readDTMFSequence(bool skipFFT)
     if (ready && sequenceIndex > 0)
     {
         sequenceReady = false;  // Clear the flag
+        notify(NotificationType::ReadingSequence, false);  // Clear reading LED
         
         
         // Process the complete sequence - this handles playback internally
@@ -140,6 +142,11 @@ bool readDTMFSequence(bool skipFFT)
         // Reset sequence buffer for next sequence
         sequenceIndex = 0;
         dtmfSequence[0] = '\0';
+
+        // Lock input until hang-up if audio started
+        if (audioStarted) {
+            sequenceLocked = true;
+        }
         
         return audioStarted;
     }
@@ -151,7 +158,14 @@ void resetDTMFSequence()
 {
     sequenceIndex = 0;
     dtmfSequence[0] = '\0';
+    sequenceReady = false;
+    sequenceLocked = false;
+    notify(NotificationType::ReadingSequence, false);  // Clear reading LED
     Logger.debugln("🔄 DTMF sequence reset");
+}
+
+bool isSequenceLocked() {
+    return sequenceLocked;
 }
 
 void addDtmfDigit(char digit)
@@ -162,6 +176,19 @@ void addDtmfDigit(char digit)
     if (!((digit >= '0' && digit <= '9') || digit == '*' || digit == '#'))
     {
         Logger.printf("⚠️ Invalid DTMF digit: %c\n", digit);
+        return;
+    }
+
+    // If a sequence is already waiting to be processed, ignore new digits
+    if (sequenceReady)
+    {
+        Logger.debugf("🔧 [DEBUG] Ignoring digit '%c' - sequence already ready\n", digit);
+        return;
+    }
+
+    // If input is locked (audio playing from a matched sequence), ignore
+    if (sequenceLocked)
+    {
         return;
     }
     
@@ -209,15 +236,20 @@ bool processNumberSequence(const char *sequence)
     }
     else if (getAudioKeyRegistry().hasKey(sequence))
     {
+#if ENABLE_PLAYLIST_FEATURES
         // Play the playlist for this audio key (includes ringback, audio, click)
         audioStarted = audioPlayer.playPlaylist(sequence);
         if (!audioStarted) {
             // Fallback to direct audio key playback if no playlist
             audioStarted = audioPlayer.playAudioKey(sequence);
         }
+#else
+        audioStarted = audioPlayer.playAudioKey(sequence);
+#endif
     }
     else {
         processUnknownSequence(sequence);
+        audioStarted = true;  // wrong_number audio locks input until hangup
     }
 
     Logger.debugln("=== Sequence Processing Complete ===");

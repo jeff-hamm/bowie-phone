@@ -2,6 +2,9 @@
 #include "logging.h"
 #include "config.h"
 #include "phone.h"
+#ifdef TEST_MODE
+#include "test_helpers/dtmf_goertzel_test_helpers.h"
+#endif
 
 // ============================================================================
 // GOERTZEL DTMF DETECTOR — Block-accumulation with debounce
@@ -64,6 +67,10 @@ static int consecutiveMisses = 0;      // How many consecutive blocks had no val
 static volatile char goertzelPendingKey = 0;  // Key waiting to be consumed by getGoertzelKey()
 static char emittedKey = 0;                   // Last emitted key (suppress repeat emission)
 
+// Mute flag — when true, evaluateBlock() skips detection entirely.
+// Used to suppress false DTMF from ES8388 DAC→ADC internal loopback during playback.
+static volatile bool goertzelMuted = false;
+
 // ============================================================================
 // GOERTZEL CALLBACK
 //
@@ -99,6 +106,16 @@ void onGoertzelFrequency(float frequency, float magnitude, void* ref) {
 // ============================================================================
 
 static void evaluateBlock() {
+    if (goertzelMuted) {
+        // Discard accumulated data — DAC→ADC loopback would cause false detections
+        for (int i = 0; i < 4; i++) {
+            blockRowMags[i] = 0;
+            blockColMags[i] = 0;
+        }
+        blockDataReady = false;
+        return;
+    }
+    
     const PhoneConfig& config = getPhoneConfig();
     
     if (!blockDataReady) {
@@ -152,6 +169,13 @@ static void evaluateBlock() {
             candidateDigit = 0;
             consecutiveHits = 0;
         }
+        return;
+    }
+    
+    // Magnitude floor — reject weak loopback artifacts from ES8388 DAC→ADC
+    // Real DTMF presses produce magnitudes in the hundreds; loopback gives 12-24
+    if (bestRowMag < config.minDetectionMagnitude || bestColMag < config.minDetectionMagnitude) {
+        consecutiveMisses++;
         return;
     }
     
@@ -244,10 +268,11 @@ void initGoertzelDecoder(GoertzelStream &goertzel, StreamCopy &copier)
                   config.rowFreqs[0], config.rowFreqs[1], config.rowFreqs[2], config.rowFreqs[3]);
     Logger.printf("   Cols: %.0f, %.0f, %.0f, %.0f Hz\n",
                   config.colFreqs[0], config.colFreqs[1], config.colFreqs[2], config.colFreqs[3]);
-    Logger.printf("   Block=%d samples (%.1fms), thresh=%.1f, consecutive=%d, twist<%.0f\n",
+    Logger.printf("   Block=%d samples (%.1fms), thresh=%.1f, floor=%.1f, consecutive=%d, twist<%.0f\n",
                   config.goertzelBlockSize,
                   config.goertzelBlockSize * 1000.0f / AUDIO_SAMPLE_RATE,
                   config.fundamentalMagnitudeThreshold,
+                  config.minDetectionMagnitude,
                   config.requiredConsecutive,
                   MAX_TWIST_RATIO);
 }
@@ -276,6 +301,17 @@ void resetGoertzelState() {
     goertzelPendingKey = 0;
     emittedKey = 0;
 }
+
+#ifdef TEST_MODE
+void processGoertzelSamplesForTest(GoertzelStream &goertzel, const int16_t* samples, size_t sampleCount) {
+    if (samples == nullptr || sampleCount == 0) {
+        return;
+    }
+
+    goertzel.write(reinterpret_cast<const uint8_t*>(samples), sampleCount * sizeof(int16_t));
+    evaluateBlock();
+}
+#endif
 
 // ============================================================================
 // FREERTOS TASK FOR GOERTZEL PROCESSING
@@ -360,4 +396,18 @@ void stopGoertzelTask() {
 
 bool isGoertzelTaskRunning() {
     return goertzelTaskHandle != nullptr && goertzelTaskShouldRun;
+}
+
+void setGoertzelMuted(bool muted) {
+    if (goertzelMuted != muted) {
+        goertzelMuted = muted;
+        Logger.printf("🎵 Goertzel %s\n", muted ? "MUTED (playback active)" : "UNMUTED (listening)");
+        if (muted) {
+            resetGoertzelState();
+        }
+    }
+}
+
+bool isGoertzelMuted() {
+    return goertzelMuted;
 }

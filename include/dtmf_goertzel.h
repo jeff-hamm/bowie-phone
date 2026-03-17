@@ -25,4 +25,8 @@ char getGoertzelKey();
 // Reset Goertzel detection state (clear any stale partial detections)
 void resetGoertzelState();
 
+// Mute/unmute Goertzel detection (suppresses false detections from DAC→ADC loopback)
+void setGoertzelMuted(bool muted);
+bool isGoertzelMuted();
+
 #endif // DTMF_GOERTZEL_H

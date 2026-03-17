@@ -12,8 +12,16 @@
 #include "audio_playlist_registry.h"
 #include "logging.h"
 #include <Preferences.h>
-#include <SD.h>
 #include <WiFi.h>
+
+// SD card abstraction: use SD_MMC or SPI SD based on compile-time config
+#if SD_USE_MMC
+  #include <SD_MMC.h>
+  #define SD_FS        SD_MMC
+#else
+  #include <SD.h>
+  #define SD_FS        SD
+#endif
 
 using namespace audio_tools;
 
@@ -204,6 +212,14 @@ bool ExtendedAudioSource::setGeneratorStream(const char* generatorName) {
     generatorStream.setInput(*generator);
     generatorStream.begin(info);
     
+    // Verify generator can produce data
+    uint8_t testBuf[64];
+    size_t testBytes = generatorStream.readBytes(testBuf, sizeof(testBuf));
+    Logger.printf("🔬 Generator test read: %d bytes (first 4: %02x %02x %02x %02x)\n",
+                  (int)testBytes,
+                  testBytes > 0 ? testBuf[0] : 0, testBytes > 1 ? testBuf[1] : 0,
+                  testBytes > 2 ? testBuf[2] : 0, testBytes > 3 ? testBuf[3] : 0);
+    
     currentType = AudioStreamType::GENERATOR;
     strncpy(currentKey, generatorName, sizeof(currentKey) - 1);
     currentKey[sizeof(currentKey) - 1] = '\0';
@@ -218,14 +234,14 @@ bool ExtendedAudioSource::setFileStream(const char* filePath) {
         return false;
     }
     
-    if (!SD.exists(filePath)) {
+    if (!SD_FS.exists(filePath)) {
         Logger.printf("❌ File not found: %s\n", filePath);
         return false;
     }
     
     Logger.printf("📁 Opening file: %s\n", filePath);
     
-    currentFile = SD.open(filePath, FILE_READ);
+    currentFile = SD_FS.open(filePath, FILE_READ);
     if (!currentFile) {
         Logger.printf("❌ Failed to open file: %s\n", filePath);
         return false;
@@ -292,6 +308,17 @@ void ExtendedAudioPlayer::begin(AudioStream& outputStream, bool enableStreaming)
     // Create the audio player with our extended source
     player = new AudioPlayer(*source, volumeStream, *decoder);
     
+    // Register PCM passthrough decoder for generator streams
+    // and set source as MimeSource so MultiDecoder skips auto-detection for generators
+    if (isMultiDecoder && ownedMultiDecoder) {
+        ownedMultiDecoder->addDecoder(pcmDecoder, "audio/pcm");
+        ownedMultiDecoder->setMimeSource(*source);
+        Logger.println("🔧 PCM decoder registered + MimeSource wired on MultiDecoder");
+    } else {
+        Logger.printf("⚠️ MultiDecoder not active (isMulti=%d, owned=%p)\n", 
+                      isMultiDecoder, ownedMultiDecoder);
+    }
+    
     // Configure player
     player->begin(-1, false);  // Don't auto-start
     player->setAutoNext(false);  // We handle advancement via queue
@@ -322,8 +349,22 @@ void ExtendedAudioPlayer::onStreamEnd() {
         Logger.printf("📋 Queue has %d items, advancing...\n", audioQueue.size());
         next();
     } else {
+        // Play 'click' after real audio ends (not after click/dialtone/off_hook themselves)
+        bool shouldClick = currentKey[0] != '\0'
+            && strcmp(currentKey, "click") != 0
+            && strcmp(currentKey, "dialtone") != 0
+            && strcmp(currentKey, "ringback") != 0
+            && strcmp(currentKey, "off_hook") != 0
+            && strcmp(currentKey, "wrong_number") != 0
+            && currentType != AudioStreamType::GENERATOR;
+        
         Logger.println("📋 Queue empty, stopping playback");
         stopInternal();
+        
+        if (shouldClick && registry && registry->hasKey("click")) {
+            Logger.println("🔊 Playing click sound");
+            playAudioKey("click");
+        }
     }
 }
 
@@ -353,6 +394,13 @@ bool ExtendedAudioPlayer::playAudio(AudioStreamType type, const char* audioKey, 
 
 bool ExtendedAudioPlayer::playAudioKey(const char* audioKey, unsigned long durationMs) {
     if (!audioKey) return false;
+    
+#if ENABLE_PLAYLIST_FEATURES
+    // Use playlist if one exists (includes ringback, click, previous/next)
+    if (playlistRegistry.hasPlaylist(audioKey)) {
+        return playPlaylist(audioKey);
+    }
+#endif
     
     // Detect stream type from audioKey
     AudioStreamType type = detectStreamType(audioKey);
@@ -561,12 +609,6 @@ bool ExtendedAudioPlayer::startStream(AudioStreamType type, const char* audioKey
         case AudioStreamType::FILE_STREAM:
             // Use registry for resolution
             if (registry) {
-                // Check if there's a playlist for this audio key (includes ringback pattern)
-                if (playlistRegistry.hasPlaylist(audioKey)) {
-                    // Play the playlist which includes ringback, audio, and click
-                    return playPlaylist(audioKey);
-                }
-                
                 // Get the entry to check for streaming URL
                 const KeyEntry* entry = registry->getEntry(audioKey);
                 if (entry) {
@@ -708,7 +750,23 @@ bool ExtendedAudioPlayer::copy() {
     
     // Process audio
     if (player->isActive()) {
-        player->copy();
+        size_t bytesCopied = player->copy();
+        // Periodic diagnostic for generator streams
+        if (source && source->getCurrentStreamType() == AudioStreamType::GENERATOR) {
+            static unsigned long lastDiag = 0;
+            static unsigned long copyCount = 0;
+            static size_t totalBytes = 0;
+            copyCount++;
+            totalBytes += bytesCopied;
+            unsigned long now = millis();
+            if (now - lastDiag >= 2000) {
+                Logger.printf("🔊 Generator: %lu copies, %u bytes/2s, active=%d, key=%s\n",
+                              copyCount, (unsigned)totalBytes, player->isActive(), currentKey);
+                copyCount = 0;
+                totalBytes = 0;
+                lastDiag = now;
+            }
+        }
         return true;
     }
     
@@ -853,6 +911,9 @@ void ExtendedAudioPlayer::addDecoder(AudioDecoder& newDecoder, const char* mime)
         // No decoder yet - set this as the decoder
         decoder = &newDecoder;
         isMultiDecoder = false;
+        // Store MIME type so we can re-add it when converting to MultiDecoder
+        strncpy(firstDecoderMime, mime, sizeof(firstDecoderMime) - 1);
+        firstDecoderMime[sizeof(firstDecoderMime) - 1] = '\0';
         Logger.printf("🎵 Added decoder for %s (first decoder)\n", mime);
         return;
     }
@@ -866,13 +927,14 @@ void ExtendedAudioPlayer::addDecoder(AudioDecoder& newDecoder, const char* mime)
     }
     
     // Current decoder is not a MultiDecoder - need to wrap it
-    // Create a new MultiDecoder
+    // Create a new MultiDecoder and re-add the first decoder
     ownedMultiDecoder = new MultiDecoder();
     
-    // We can't easily get the MIME type of the existing decoder,
-    // so we'll add the new decoder first (which we know the MIME for)
-    // The existing decoder will be used as fallback or needs re-registration
-    Logger.println("⚠️ Converting to MultiDecoder - existing decoder may need re-registration");
+    // Re-add the existing decoder with its stored MIME type
+    if (firstDecoderMime[0] != '\0') {
+        ownedMultiDecoder->addDecoder(*decoder, firstDecoderMime);
+        Logger.printf("🎵 Re-added first decoder for %s to MultiDecoder\n", firstDecoderMime);
+    }
     
     // Add the new decoder
     ownedMultiDecoder->addDecoder(newDecoder, mime);

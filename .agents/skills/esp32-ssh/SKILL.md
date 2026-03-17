@@ -1,126 +1,161 @@
 ---
 name: esp32-ssh
-description: Build, deploy, monitor, and debug Bowie Phone firmware on the mac SSH target. Use when you need end-to-end ESP32 workflow commands for serial or OTA flashing, remote dependency setup, serial monitoring, and deployment troubleshooting.
-compatibility: Requires PowerShell on Windows host, SSH access to mac target, and bowie-phone tools/PhoneUtils.ps1.
+description: Build, deploy, monitor, and debug Bowie Phone firmware. Covers PlatformIO direct OTA (preferred), PhoneUtils SSH-based serial/OTA workflows, remote log streaming, and deployment troubleshooting.
+compatibility: Requires PowerShell on Windows host. PlatformIO OTA needs WireGuard active. SSH workflows need mac target access and tools/PhoneUtils.ps1.
 ---
 
-# Bowie Mac Firmware Workflow
-
-Use this skill for repeatable ESP32 firmware operations against the `mac` deploy target in this repository.
+# Bowie Phone Firmware Workflow
 
 ## Scope
 
 - Repository: `bowie-phone`
-- Main utility script: `tools/PhoneUtils.ps1`
-- Typical environment: `bowie-phone-1`
-- Typical flash method: `serial`
+- PlatformIO config: `platformio.ini`
+- Helper script: `tools/PhoneUtils.ps1` (SSH-based workflows)
 
-## Workflow
+## PlatformIO Environments
 
-1. Load utilities and sanity-check access.
+| Environment | Purpose | Upload Method |
+|-------------|---------|---------------|
+| `bowie-phone-1` | Base build env, local USB serial (`COM3`) | USB serial |
+| `bowie-phone-ota` | OTA via espota to `10.253.0.2:3232` | espota |
+| `bowie-phone-custom` | **Preferred OTA** — HTTP OTA via `tools/http_ota_upload.py` | custom HTTP |
+| `diag` | Diagnostics build (no audio libs) | USB serial |
+| `test-bowie-integration` | Unity integration tests | USB serial |
+
+## Quick Start — PlatformIO OTA (Preferred)
+
+The `bowie-phone-custom` environment uses HTTP OTA upload via `tools/http_ota_upload.py`.
+Requires WireGuard active on Windows so the device at `10.253.0.2` is reachable.
+
+1. **Build only:**
+   ```powershell
+   pio run -e bowie-phone-custom
+   ```
+
+2. **Build + upload (OTA):**
+   ```powershell
+   pio run -e bowie-phone-custom -t upload
+   ```
+
+3. **Upload + monitor** (build, flash OTA, then stream telnet logs from device):
+   ```powershell
+   pio run -e bowie-phone-custom -t upload -t monitor
+   ```
+   Monitor connects via telnet to `10.253.0.2:23` (configured as `monitor_port = socket://10.253.0.2:23`).
+
+4. **Monitor only** (no build/upload):
+   ```powershell
+   pio device monitor -e bowie-phone-custom
+   ```
+
+5. **Stream remote logs** (device posts via WireGuard to unraid log server):
    ```powershell
    . .\tools\PhoneUtils.ps1
-   ```
-
-2. Build firmware for the target environment.
-   ```powershell
-   Build-Firmware -Environment bowie-phone-1
-   ```
-   Optional clean build:
-   ```powershell
-   Build-Firmware -Environment bowie-phone-1 -Clean
-   ```
-   Optional extra build flags:
-   ```powershell
-   Build-Firmware -Environment bowie-phone-1 -BuildArgs "-DRUN_SD_DEBUG_FIRST"
-   ```
-
-3. Deploy to mac over SSH.
-   ```powershell
-   Deploy-ToDevice -Environment bowie-phone-1 -Target mac -FlashMethod serial
-   ```
-
-4. Deploy without rebuilding when binaries are already fresh.
-   ```powershell
-   Deploy-ToDevice -Environment bowie-phone-1 -Target mac -FlashMethod serial -SkipBuild
-   ```
-
-5. Use explicit serial port when the default is wrong.
-   ```powershell
-   Deploy-ToDevice -Environment bowie-phone-1 -Target mac -FlashMethod serial -SerialPort /dev/tty.usbserial-0001
-   ```
-
-6. Monitor serial output after deploy.
-   ```powershell
-   Deploy-ToDevice -Environment bowie-phone-1 -Target mac -FlashMethod serial -MonitorAfter
-   ```
-   Or monitor standalone:
-   ```powershell
-   Monitor-SerialOutput -Target mac -SerialPort /dev/tty.usbserial-0001
-   ```
-
-7. Run OTA deploy via unraid (preferred — Windows can't reach the device directly).
-   SSH goes to unraid, which can reach the device at `10.253.0.2` over WireGuard. Device IP resolves automatically.
-   ```powershell
-   Deploy-ToDevice -Environment bowie-phone-1 -Target unraid -FlashMethod ota
-   Deploy-ToDevice -Environment bowie-phone-1 -Target unraid -FlashMethod ota -SkipBuild
-   ```
-   Override device IP explicitly if needed:
-   ```powershell
-   Deploy-ToDevice -Environment bowie-phone-1 -Target unraid -FlashMethod ota -DeviceIp 10.253.0.2
-   ```
-
-8. Stream live device logs from the remote log server (device posts via WireGuard to unraid at `10.253.0.1:3000`).
-   ```powershell
    Watch-RemoteLogs
    Watch-RemoteLogs -DeviceId bowie-phone-1
    Watch-RemoteLogs -ServerUrl http://10.253.0.1:3000
    ```
 
-## Debug Playbook
+## PhoneUtils SSH Workflows
 
-1. If deploy fails at dependencies, run dependency check directly:
+For serial flashing via SSH to a remote mac, or SSH-tunneled OTA.
+
+1. Load utilities:
    ```powershell
-   Ensure-RemoteDependencies -Target mac -FlashMethod serial
+   . .\tools\PhoneUtils.ps1
    ```
 
-2. If serial flashing fails, verify serial device names on remote mac:
+2. Build firmware:
    ```powershell
-   ssh jumper@100.111.120.5 "ls -1 /dev/tty.usb* /dev/cu.usb* 2>/dev/null"
+   Build-Firmware -Environment bowie-phone-1
+   ```
+   Clean build:
+   ```powershell
+   Build-Firmware -Environment bowie-phone-1 -Clean
+   ```
+   Extra build flags:
+   ```powershell
+   Build-Firmware -Environment bowie-phone-1 -BuildArgs "-DRUN_SD_DEBUG_FIRST"
    ```
 
-3. If port is busy, clear and retry deploy.
+3. Deploy to mac over SSH (serial):
+   ```powershell
+   Deploy-ToDevice -Environment bowie-phone-1 -Target mac -FlashMethod serial
+   ```
+
+4. Deploy without rebuilding:
+   ```powershell
+   Deploy-ToDevice -Environment bowie-phone-1 -Target mac -FlashMethod serial -SkipBuild
+   ```
+
+5. Explicit serial port:
    ```powershell
    Deploy-ToDevice -Environment bowie-phone-1 -Target mac -FlashMethod serial -SerialPort /dev/tty.usbserial-0001
    ```
 
-4. If deployment output is truncated or disconnected, inspect remote logs:
+6. Monitor serial output after deploy (starts automatically, use `-NoMonitor` to suppress):
+   ```powershell
+   Deploy-ToDevice -Environment bowie-phone-1 -Target mac -FlashMethod serial
+   ```
+   Standalone monitor:
+   ```powershell
+   Monitor-SerialOutput -Target mac -SerialPort /dev/tty.usbserial-0001
+   ```
+
+7. SSH-tunneled OTA via bowie-phone target (routes through unraid to `10.253.0.2`):
+   ```powershell
+   Deploy-ToDevice -Environment bowie-phone-1 -Target bowie-phone
+   Deploy-ToDevice -Environment bowie-phone-1 -Target bowie-phone -SkipBuild
+   ```
+   Fire-and-forget:
+   ```powershell
+   Deploy-ToDevice -Environment bowie-phone-1 -Target bowie-phone -NoWait
+   ```
+
+## Debug Playbook
+
+1. If deploy fails at dependencies:
+   ```powershell
+   Ensure-RemoteDependencies -Target mac -FlashMethod serial
+   ```
+
+2. Verify serial devices on remote mac:
+   ```powershell
+   ssh jumper@100.111.120.5 "ls -1 /dev/tty.usb* /dev/cu.usb* 2>/dev/null"
+   ```
+
+3. If port is busy, specify explicitly:
+   ```powershell
+   Deploy-ToDevice -Environment bowie-phone-1 -Target mac -FlashMethod serial -SerialPort /dev/tty.usbserial-0001
+   ```
+
+4. Inspect remote deploy logs:
    ```powershell
    Get-RemoteDeployLog -Target mac
    ```
 
-5. If monitor session disconnects, replay the previous serial session log:
+5. Replay previous serial session:
    ```powershell
    Monitor-SerialOutput -Target mac -Replay
    ```
 
 ## Common Commands
 
-- Build and deploy in one command:
-  ```powershell
-  Deploy-ToDevice -Environment bowie-phone-1 -Target mac -FlashMethod serial
-  ```
-- Fire-and-forget deployment:
-  ```powershell
-  Deploy-ToDevice -Environment bowie-phone-1 -Target mac -FlashMethod serial -NoWait
-  ```
-- Publish firmware artifacts for web installer:
-  ```powershell
-  Publish-Firmware -Environment bowie-phone-1
-  ```
+| Task | Command |
+|------|---------|
+| Build + OTA (preferred) | `pio run -e bowie-phone-custom -t upload` |
+| Build + OTA + monitor | `pio run -e bowie-phone-custom -t upload -t monitor` |
+| Build only | `pio run -e bowie-phone-custom` |
+| Monitor only | `pio device monitor -e bowie-phone-custom` |
+| Serial deploy (SSH) | `Deploy-ToDevice -Environment bowie-phone-1 -Target mac -FlashMethod serial` |
+| Remote logs | `Watch-RemoteLogs -DeviceId bowie-phone-1` |
+| Publish firmware | `Publish-Firmware -Environment bowie-phone-1` |
 
 ## Notes
 
-- Preferred mac serial naming for this project is often `/dev/tty.usbserial-0001` or `/dev/cu.usbserial-0001`; use explicit `-SerialPort` when uncertain.
-- Keep `platformio.ini` `upload_port` on Windows (`COM3`) unchanged for local workflows; remote mac serial is controlled by `Deploy-ToDevice` parameters.
-- The deploy helper auto-attempts remote dependency setup, including Python/esptool bootstrapping paths for headless macOS.
+- **Preferred workflow**: `pio run -e bowie-phone-custom -t upload -t monitor` for build+OTA+logs in one command.
+- WireGuard must be active on Windows for any OTA or telnet monitor to reach `10.253.0.2`.
+- `bowie-phone-custom` extends `bowie-phone-ota` but uses custom HTTP upload script instead of espota.
+- Keep `upload_port = COM3` on base env for local USB workflows; OTA envs override this.
+- Mac serial naming is typically `/dev/tty.usbserial-0001` or `/dev/cu.usbserial-0001`.
+- The PhoneUtils deploy helper auto-bootstraps remote Python/esptool on headless macOS.

@@ -688,6 +688,11 @@ static int parseAndRegisterAudioFiles(const String& jsonString, AudioFileProcess
             Logger.println("⚠️ Maximum audio files limit reached");
             break;
         }
+
+        // Skip metadata keys (lastModified, etag, etc.) - only process object entries
+        if (!kv.value().is<JsonObject>()) {
+            continue;
+        }
         
         JsonObject entryData = kv.value().as<JsonObject>();
         const char* key = kv.key().c_str();
@@ -704,48 +709,64 @@ static int parseAndRegisterAudioFiles(const String& jsonString, AudioFileProcess
         file.ringDuration = entryData["ring_duration"] | 0;
         
         // Register the main audio file
-        registerAudioFile(&file);
-        
-        // Create playlist for this audio key
-        Playlist *playlist = playlistRegistry.createPlaylist(key, true);
-        if (!playlist)
-        {
-            Logger.printf("❌ Failed to create playlist for: %s\n", file.audioKey);
+        if (!registerAudioFile(&file)) {
             continue;
         }
+        processedCount++;
+
+#if ENABLE_PLAYLIST_FEATURES
+        // Build playlist with enrichment (ringback, click, previous/next)
+        // Build desired playlist nodes
+        std::vector<PlaylistNode> desiredNodes;
         
-        // Parse "previous" array and prepend to playlist (in reverse order)
+        // Parse "previous" array
         if (entryData["previous"].is<JsonArray>()) {
             JsonArray prevArray = entryData["previous"].as<JsonArray>();
-            // Prepend in reverse order so they play in correct order
-            for (int i = prevArray.size() - 1; i >= 0; i--) {
-                const char* prevKey = prevArray[i].as<const char*>();
+            for (JsonVariant item : prevArray) {
+                const char* prevKey = item.as<const char*>();
                 if (prevKey && strlen(prevKey) > 0) {
-                    playlist->prepend(prevKey, 0);
+                    desiredNodes.emplace_back(prevKey, 0, 0);
                 }
             }
         }
         
         // Add ringback if specified
         if (file.ringDuration > 0)
-            playlist->append("ringback", file.ringDuration);
+            desiredNodes.emplace_back("ringback", 0, file.ringDuration);
         
         // Add the main audio file
-        playlist->append(PlaylistNode(file.audioKey, file.gap, file.duration));
+        desiredNodes.emplace_back(file.audioKey, file.gap, file.duration);
         
-        // Add click after main audio
-        playlist->append("click", 0);
+        // Add click after main audio (only if "click" is a registered key)
+        if (keyRegistry.hasKey("click"))
+            desiredNodes.emplace_back("click", 0, 0);
         
-        // Parse "next" array and append to playlist
+        // Parse "next" array
         if (entryData["next"].is<JsonArray>()) {
             JsonArray nextArray = entryData["next"].as<JsonArray>();
             for (JsonVariant item : nextArray) {
                 const char* nextKey = item.as<const char*>();
                 if (nextKey && strlen(nextKey) > 0) {
-                    playlist->append(nextKey, 0);
+                    desiredNodes.emplace_back(nextKey, 0, 0);
                 }
             }
         }
+        
+        // Create or update the playlist
+        Playlist *playlist = playlistRegistry.getPlaylistMutable(key);
+        if (playlist) {
+            playlist->update(desiredNodes);
+        } else {
+            playlist = playlistRegistry.createPlaylist(key);
+            if (playlist) {
+                for (const auto& node : desiredNodes) {
+                    playlist->append(node);
+                }
+            }
+        }
+#else
+        // Simple mode: no playlist creation, just use audio keys directly
+#endif
         
         // Invoke callback if provided
         if (callback)
@@ -1196,6 +1217,30 @@ void invalidateAudioCache()
 }
 
 // ============================================================================
+// AUDIO MAINTENANCE LOOP
+// ============================================================================
+
+void audioMaintenanceLoop()
+{
+    // 1. Periodic catalog refresh: re-download if cache is stale
+    //    isCacheStale() is lightweight — only does HTTP when enough time has passed
+    static unsigned long lastCatalogCheck = 0;
+    unsigned long now = millis();
+    if (now - lastCatalogCheck >= CACHE_CHECK_INTERVAL_MS)
+    {
+        lastCatalogCheck = now;
+        if (WiFi.status() == WL_CONNECTED && isCacheStale())
+        {
+            Logger.println("🔄 Cache stale — refreshing audio catalog...");
+            downloadAudio(1, 0);  // Single attempt, no delay (non-blocking context)
+        }
+    }
+
+    // 2. Process download queue (rate-limited internally)
+    processAudioDownloadQueue();
+}
+
+// ============================================================================
 // DOWNLOAD QUEUE MANAGEMENT FUNCTIONS
 // ============================================================================
 
@@ -1302,4 +1347,20 @@ bool registerAudioFile(const AudioFile* file)
     keyRegistry.registerKey(file->audioKey, file->data, file->ext);
     
     return true;
+}
+
+unsigned long getAudioKeyRingDuration(const char* key)
+{
+    if (!key) return 0;
+    
+    const Playlist* playlist = playlistRegistry.getPlaylist(key);
+    if (!playlist) return 0;
+    
+    // Look for a "ringback" node in the playlist and return its duration
+    for (const auto& node : playlist->nodes) {
+        if (node.audioKey == "ringback" && node.durationMs > 0) {
+            return node.durationMs;
+        }
+    }
+    return 0;
 }

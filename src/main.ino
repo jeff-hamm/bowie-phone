@@ -33,7 +33,7 @@ AudioSource *source = nullptr;          // to be initialized in setup()
 MultiDecoder multi_decoder;
 MP3DecoderHelix mp3_decoder;
 WAVDecoder wav_decoder;
-ExtendedAudioPlayer audioPlayer = getExtendedAudioPlayer();
+ExtendedAudioPlayer& audioPlayer = getExtendedAudioPlayer();
 
 // Goertzel-based DTMF detection (more efficient during dial tone)
 GoertzelStream goertzel;                // Goertzel detector
@@ -258,6 +258,7 @@ void loop()
     {
         // Check for off-hook timeout (play warning tone if inactive too long)
         static bool offHookWarningPlayed = false;
+        static unsigned long warningPlayedTime = 0;
         unsigned long now = millis();
         unsigned long lastActivity = max(getLastDigitTime(), audioPlayer.getLastActive());
         
@@ -265,29 +266,42 @@ void loop()
             Logger.println("⚠️ Off-hook timeout - playing warning tone");
             audioPlayer.playAudioKey("off_hook");
             offHookWarningPlayed = true;
+            warningPlayedTime = now;
         }
         
-        // Reset warning flag when there's activity
-        if (getLastDigitTime() > lastActivity || audioPlayer.isActive()) {
-            offHookWarningPlayed = false;
+        // Reset warning flag when new digit arrives or warning audio finishes
+        if (offHookWarningPlayed) {
+            if (getLastDigitTime() > warningPlayedTime) {
+                offHookWarningPlayed = false;  // New digit → restart timeout
+            } else if (!audioPlayer.isActive() && (now - warningPlayedTime) > 2000) {
+                offHookWarningPlayed = false;  // Warning finished → allow re-trigger
+            }
         }
         
         // Handle audio playback FIRST - highest priority for smooth audio
         if (audioPlayer.isActive())
         {
-            // For non-dial-tone audio, normal processing with DTMF detection
             audioPlayer.copy();
-            if (!audioPlayer.isAudioKeyPlaying("dialtone")) {
+            bool playingDialtone = audioPlayer.isAudioKeyPlaying("dialtone");
+            // Mute Goertzel during non-dialtone playback to suppress
+            // false DTMF from ES8388 DAC→ADC internal loopback
+            setGoertzelMuted(!playingDialtone);
+            if (!playingDialtone) {
                 return;
             }
+        } else {
+            // Mute Goertzel if sequence is locked (waiting for hangup)
+            setGoertzelMuted(isSequenceLocked());
         }
         
         // Goertzel runs on separate task - just check for detected keys
         char goertzelKey = getGoertzelKey();
         if (goertzelKey != 0) {
             addDtmfDigit(goertzelKey);
-            
-            // readDTMFSequence now handles playback internally
+        }
+        
+        // Process ready sequences (from Goertzel, simulated input, or telnet)
+        if (isSequenceReady()) {
             readDTMFSequence(true);
         }
 
@@ -308,6 +322,8 @@ void loop()
 
         // Handle WiFi management (config portal and OTA)
         handleWiFiLoop();
+        // Audio maintenance: catalog refresh (if stale) + download queue processing
+        audioMaintenanceLoop();
         // Process debug commands from Serial and Telnet
         processDebugInput(Serial);
         processDebugInput(telnet);

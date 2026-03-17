@@ -33,7 +33,8 @@ struct PhoneConfig {
     float freqScale;
     
     // Detection thresholds
-    float fundamentalMagnitudeThreshold;  // Threshold for detecting row/col fundamentals
+    float fundamentalMagnitudeThreshold;  // Threshold for detecting row/col fundamentals (GoertzelStream callback)
+    float minDetectionMagnitude;          // Floor for evaluateBlock() — reject loopback artifacts below this
     float summedMagnitudeThreshold;       // Threshold for detecting summed frequencies
     float freqTolerance;                  // Hz tolerance for frequency matching
     float summedFreqTolerance;            // Hz tolerance for summed frequency matching

@@ -61,6 +61,7 @@ static const PhoneConfig DREAM_PHONE_CONFIG = {
     // Detection thresholds
     // Try lower threshold with standard frequencies
     .fundamentalMagnitudeThreshold = 20.0f,  // Lower threshold for standard DTMF
+    .minDetectionMagnitude = 40.0f,          // Reject DAC→ADC loopback artifacts
     .summedMagnitudeThreshold = 100.0f,      // Strong signals (200-500 observed)
     .freqTolerance = 50.0f,                  // Standard tolerance
     .summedFreqTolerance = 70.0f,            // Hz tolerance for summed frequency

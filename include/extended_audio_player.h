@@ -17,10 +17,15 @@
 #include "AudioTools/CoreAudio/AudioEffects/SoundGenerator.h"
 #include "AudioTools/Communication/HTTP/URLStream.h"
 #include "AudioTools/AudioCodecs/MultiDecoder.h"
+#include "AudioTools/AudioCodecs/CodecCopy.h"
 #include "audio_key_registry.h"
 #include "audio_playlist_registry.h"
 #include "file_utils.h"
-#include <SD.h>
+#if SD_USE_MMC
+  #include <SD_MMC.h>
+#else
+  #include <SD.h>
+#endif
 #include <vector>
 
 using namespace audio_tools;
@@ -86,7 +91,7 @@ using namespace audio_tools;
  * This source manages file streams, URL streams, and generated tones,
  * providing a unified interface for the AudioPlayer.
  */
-class ExtendedAudioSource : public AudioSource {
+class ExtendedAudioSource : public AudioSource, public MimeSource {
 public:
     ExtendedAudioSource();
     ~ExtendedAudioSource();
@@ -102,6 +107,11 @@ public:
     bool begin() override;
     void end();  // Not in base class, but useful for cleanup
     bool isAutoNext() override { return false; }  // We handle advancement ourselves
+    
+    // MimeSource interface - provides MIME type hint for MultiDecoder
+    const char* mime() override {
+        return currentType == AudioStreamType::GENERATOR ? "audio/pcm" : nullptr;
+    }
     
     // ========================================================================
     // REGISTRY
@@ -401,6 +411,8 @@ public:
      * @param mime The MIME type for this decoder
      */
     void addDecoder(AudioDecoder& newDecoder, const char* mime);
+
+    AudioStreamType getCurrentStreamType() const { return currentType; }
     
 protected:
     // Core components
@@ -409,6 +421,8 @@ protected:
     AudioDecoder* decoder = nullptr;
     MultiDecoder* ownedMultiDecoder = nullptr;  // Owned if we created it
     bool isMultiDecoder = false;  // Track if decoder is a MultiDecoder
+    CopyDecoder pcmDecoder{true};  // Passthrough for raw PCM (generators)
+    char firstDecoderMime[32] = {0};  // MIME of first decoder for MultiDecoder conversion
     AudioStream* output = nullptr;
     VolumeStream volumeStream;
     

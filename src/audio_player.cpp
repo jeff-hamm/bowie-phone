@@ -14,7 +14,13 @@
 #include "file_utils.h"
 #include "logging.h"
 #include <Preferences.h>
-#include <SD.h>
+#if SD_USE_MMC
+  #include <SD_MMC.h>
+  #define SD_FS SD_MMC
+#else
+  #include <SD.h>
+  #define SD_FS SD
+#endif
 #include <WiFi.h>
 #include "tone_generators.h"
 #include "AudioTools/CoreAudio/AudioEffects/SoundGenerator.h"
@@ -51,10 +57,6 @@ static VolumeStream volume_out;
     static GeneratedSoundStream<int16_t>
         toneStream;
 
-// Available tone generators
-static DualToneGenerator dialToneGenerator(350.0f, 440.0f, 16000.0f);
-static DualToneGenerator ringbackToneGenerator(440.0f, 480.0f, 16000.0f);
-static RepeatingToneGenerator<int16_t> ringbackRepeater(ringbackToneGenerator, 2000, 4000);
 
 // ============================================================================
 // GLOBAL VARIABLESs
@@ -416,7 +418,7 @@ bool playAudioPath(const char* filePath)
         return false;
     }
     
-    if (!SD.exists(filePath))
+    if (!SD_FS.exists(filePath))
     {
         Logger.printf("❌ Audio file not found: %s\n", filePath);
         return false;

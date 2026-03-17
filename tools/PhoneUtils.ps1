@@ -263,6 +263,12 @@ function Ensure-RemoteDependencies {
     }
     
     # Remote target - use SSH commands
+    if (-not (Test-SshConnection -TargetHost $targetConfig.Host)) {
+        Write-Failure "Cannot reach $Target host over SSH: $($targetConfig.Host)"
+        Write-Host "   Verify network/Tailscale and SSH access, then retry." -ForegroundColor Yellow
+        return $false
+    }
+
     if ($FlashMethod -eq "ota") {
         # OTA mode - uses HTTP OTA (curl POST to /update endpoint)
         # This works reliably over WireGuard since it uses TCP, unlike espota.py which uses UDP
@@ -937,19 +943,192 @@ function Send-DeviceCommand {
 
     Write-Host "   → $Command" -ForegroundColor Cyan
 
+    # Fail fast when endpoint is unreachable to avoid hanging telnet clients.
+    $preflightCmd = @"
+python3 - <<'PY'
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.settimeout(2.0)
+rc = s.connect_ex(("$ip", $TelnetPort))
+s.close()
+print(rc)
+sys.exit(0 if rc == 0 else 2)
+PY
+"@
+    $preflight = Invoke-SshCommand -TargetHost $sshHost -Command $preflightCmd -Silent -Timeout 8
+    if (-not $preflight.Success) {
+        $probe = if ($preflight.Output) { ($preflight.Output | Select-Object -Last 1).ToString().Trim() } else { "unknown" }
+        Write-Warning (("Device telnet endpoint {0}:{1} is unreachable from {2} (probe={3})" -f $ip, $TelnetPort, $sshHost, $probe))
+        return $false
+    }
+
     # Base64-encode the bash fragment to bypass SSH/shell quoting entirely.
     # Sends the command to the device's telnet port via nc, waits 2 s for any response.
     $escapedCmd = $Command -replace "'", "'\''"
-    $bashScript = "printf '%s\n' '$escapedCmd' | nc -w2 $ip $TelnetPort 2>/dev/null"
+    $bashScript = @'
+if command -v ncat >/dev/null 2>&1; then
+    printf '%s\r\n' '@@CMD@@' | ncat @@IP@@ @@PORT@@ -w2 2>/dev/null
+elif command -v nc >/dev/null 2>&1; then
+    printf '%s\r\n' '@@CMD@@' | nc -w2 @@IP@@ @@PORT@@ 2>/dev/null
+elif command -v telnet >/dev/null 2>&1; then
+    { printf '%s\r\n' '@@CMD@@'; sleep 1; } | telnet @@IP@@ @@PORT@@ 2>/dev/null
+else
+    echo "ERROR: nc/ncat/telnet not found on remote host"
+    exit 127
+fi
+'@
+    $bashScript = $bashScript.Replace('@@CMD@@', $escapedCmd).Replace('@@IP@@', $ip).Replace('@@PORT@@', [string]$TelnetPort)
+    $bashScript = $bashScript -replace "`r`n", "`n"
     $b64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($bashScript))
-    $result = Invoke-SshCommand -TargetHost $sshHost -Command "echo $b64 | base64 -d | bash" -Silent -Timeout 8
+    $result = Invoke-SshCommand -TargetHost $sshHost -Command "echo $b64 | base64 -d | bash" -Silent -Timeout 10
 
     if ($result.Success -and $result.Output) {
-        $result.Output | Where-Object { $_.Trim() } | ForEach-Object {
-            Write-Host "   ← $_" -ForegroundColor DarkGray
+        $result.Output | ForEach-Object {
+            $line = $_.ToString()
+            if ($line.Trim()) {
+                Write-Host "   ← $line" -ForegroundColor DarkGray
+            }
         }
     }
     return $result.Success
+}
+
+function Monitor-TelnetLogs {
+    <#
+    .SYNOPSIS
+        Show recent remote logs, then attach to live device telnet stream
+    .DESCRIPTION
+        For TelnetLogs targets, this prints a snapshot of recent server-side logs
+        first, then opens a direct interactive telnet connection to the device.
+        This keeps stdin/stdout bound to the real telnet session so typed commands
+        (e.g. "help", "state", "*#08#") are handled immediately by the device.
+    .PARAMETER Target
+        Target whose SSH host and device ID are used
+    .PARAMETER DeviceIp
+        Optional explicit device IP (default: target DefaultOtaDeviceIp)
+    .PARAMETER TelnetPort
+        Device telnet port (default: 23)
+    .PARAMETER Lines
+        Number of recent server-log lines to show before attaching (default: 120)
+    #>
+    param(
+        [ValidateSet("mac", "unraid", "bowie-phone", "local")]
+        [string]$Target = "bowie-phone",
+        [string]$DeviceIp,
+        [int]$TelnetPort = 23,
+        [int]$Lines = 120
+    )
+
+    if (Test-IsLocalTarget -Target $Target) {
+        Write-Warning "Telnet log monitor requires a remote SSH target"
+        return $false
+    }
+
+    $targetConfig = $Script:Config.Targets[$Target]
+    $deviceId = $targetConfig.DeviceId
+    $sshHost  = $targetConfig.Host
+    $logBase  = $Script:Config.RemoteLogBasePath
+    $logDir   = "$logBase/$deviceId"
+
+    $ip = if ($DeviceIp) { $DeviceIp }
+          elseif ($targetConfig.DefaultOtaDeviceIp) { $targetConfig.DefaultOtaDeviceIp }
+          else { $null }
+
+    if (-not $ip) {
+        Write-Warning "No device IP configured for target '$Target' - cannot open telnet"
+        return $false
+    }
+
+    Write-Host "`n📡 Telnet Monitor" -ForegroundColor Yellow
+    Write-Host "   Device:  $deviceId" -ForegroundColor DarkGray
+    Write-Host "   Via SSH: $sshHost" -ForegroundColor DarkGray
+    Write-Host "   Logs:    $logDir" -ForegroundColor DarkGray
+    Write-Host "   Telnet:  $ip`:$TelnetPort" -ForegroundColor DarkGray
+    Write-Host ""
+
+    # Show a quick snapshot of server-side logs before switching to live telnet.
+    $historyScript = @'
+latest_file=""
+if [ -d "@@LOGDIR@@" ]; then
+    latest_file=$(ls -1t "@@LOGDIR@@"/*.log 2>/dev/null | head -1)
+fi
+if [ -n "$latest_file" ] && [ -f "$latest_file" ]; then
+    echo "----- BEGIN RECENT LOGS ($latest_file) -----"
+    tail -n @@LINES@@ "$latest_file"
+    echo "----- END RECENT LOGS -----"
+else
+    echo "No existing log files in @@LOGDIR@@"
+fi
+'@
+    $historyScript = $historyScript.Replace('@@LOGDIR@@', $logDir).Replace('@@LINES@@', [string]$Lines)
+
+    Write-Host "📜 Recent server logs" -ForegroundColor Yellow
+    $history = Invoke-SshCommand -TargetHost $sshHost -Command $historyScript -Silent -Timeout 20
+    if ($history.Success -and $history.Output) {
+        foreach ($rawLine in $history.Output) {
+            $line = $rawLine.ToString()
+            if ($line -match 'ERROR|FAIL') {
+                Write-Host "   $line" -ForegroundColor Red
+            } elseif ($line -match 'WARN') {
+                Write-Host "   $line" -ForegroundColor Yellow
+            } else {
+                Write-Host "   $line" -ForegroundColor DarkGray
+            }
+        }
+    } else {
+        Write-Warning "Could not read recent server logs (continuing to live telnet)"
+    }
+
+    Write-Host ""
+
+    # Fail fast before opening an interactive telnet client.
+    $preflightCmd = @"
+python3 - <<'PY'
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.settimeout(2.0)
+rc = s.connect_ex(("$ip", $TelnetPort))
+s.close()
+print(rc)
+sys.exit(0 if rc == 0 else 2)
+PY
+"@
+    $preflight = Invoke-SshCommand -TargetHost $sshHost -Command $preflightCmd -Silent -Timeout 10
+    if (-not $preflight.Success) {
+        $probe = if ($preflight.Output) { ($preflight.Output | Select-Object -Last 1).ToString().Trim() } else { "unknown" }
+        Write-Warning (("Cannot reach {0}:{1} from {2} (probe={3})" -f $ip, $TelnetPort, $sshHost, $probe))
+        return $false
+    }
+
+    Write-Host "🔌 Connecting to live telnet stream..." -ForegroundColor Yellow
+    Write-Host "   Type commands and press Enter (example: help)" -ForegroundColor DarkGray
+    Write-Host "   Press Ctrl+C to stop" -ForegroundColor DarkGray
+    Write-Host ""
+
+    $connectScript = @'
+if command -v telnet >/dev/null 2>&1; then
+    exec telnet @@IP@@ @@PORT@@
+elif command -v ncat >/dev/null 2>&1; then
+    exec ncat @@IP@@ @@PORT@@
+elif command -v nc >/dev/null 2>&1; then
+    exec nc @@IP@@ @@PORT@@
+else
+    echo "ERROR: nc/ncat/telnet not found on remote host"
+    exit 127
+fi
+'@
+    $connectScript = $connectScript.Replace('@@IP@@', $ip).Replace('@@PORT@@', [string]$TelnetPort)
+    $connectScript = $connectScript -replace "`r`n", "`n"
+    $connectB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($connectScript))
+
+    & ssh -t $sshHost "echo '$connectB64' | base64 -d | bash"
+
+    if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 130) {
+        Write-Warning "Telnet session ended with exit code $LASTEXITCODE"
+        return $false
+    }
+
+    return $true
 }
 
 function Monitor-SerialOutput {
@@ -981,81 +1160,12 @@ function Monitor-SerialOutput {
     
     $targetConfig = $Script:Config.Targets[$Target]
 
-    # TelnetLogs target: tail log files stored on the server by the remote log service
+    # TelnetLogs target: show recent server logs, then attach stdin/stdout to live telnet
     if ($targetConfig.TelnetLogs) {
-        $deviceId = $targetConfig.DeviceId
-        $sshHost  = $targetConfig.Host
-        $logBase  = $Script:Config.RemoteLogBasePath
-        $logDir   = "$logBase/$deviceId"
-
-        Write-Host "`n📡 Remote Log Monitor (server files)" -ForegroundColor Yellow
-        Write-Host "   Device:  $deviceId" -ForegroundColor DarkGray
-        Write-Host "   Via SSH: $sshHost" -ForegroundColor DarkGray
-        Write-Host "   Logs:    $logDir" -ForegroundColor DarkGray
-        Write-Host "   Type a command + Enter to send to device ('help' for list)" -ForegroundColor DarkGray
-        Write-Host "   Press Ctrl+C to stop" -ForegroundColor DarkGray
-        Write-Host ""
-
-        # tail-remote-log.sh is read from disk; @@LOGDIR@@ is substituted before encoding
-        $tailContent = Get-Content (Join-Path $PSScriptRoot "scripts\tail-remote-log.sh") -Raw
-        $tailContent = $tailContent.Replace("@@LOGDIR@@", $logDir) -replace "`r`n", "`n"
-        $b64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($tailContent))
-
-        # Run SSH log tail in a background job so stdin can also be read concurrently
-        $sshJob = Start-Job -ScriptBlock {
-            param($h, $b)
-            & ssh $h "echo $b | base64 -d | bash" 2>&1
-        } -ArgumentList $sshHost, $b64
-
-        # Drain stdin in a separate runspace so the poll loop never blocks on keyboard input
-        $inputQueue = [System.Collections.Concurrent.ConcurrentQueue[string]]::new()
-        $stdinRS = [System.Management.Automation.Runspaces.RunspaceFactory]::CreateRunspace()
-        $stdinRS.Open()
-        $stdinPS = [System.Management.Automation.PowerShell]::Create()
-        $stdinPS.Runspace = $stdinRS
-        $stdinPS.AddScript({
-            param($q)
-            while ($true) {
-                $line = [Console]::ReadLine()
-                if ($null -eq $line) { break }
-                $q.Enqueue($line)
-            }
-        }).AddArgument($inputQueue) | Out-Null
-        $stdinHandle = $stdinPS.BeginInvoke()
-
-        try {
-            while ($true) {
-                # Forward SSH tail output to the console
-                $lines = Receive-Job $sshJob -ErrorAction SilentlyContinue
-                foreach ($rawLine in $lines) {
-                    $line = $rawLine.ToString()
-                    if ($line -match 'ERROR|FAIL') {
-                        Write-Host "   $line" -ForegroundColor Red
-                    } elseif ($line -match 'WARN') {
-                        Write-Host "   $line" -ForegroundColor Yellow
-                    } else {
-                        Write-Host "   $line" -ForegroundColor DarkGray
-                    }
-                    Write-Output $line
-                }
-
-                # Forward any typed input to the device as a debug command
-                $cmd = $null
-                while ($inputQueue.TryDequeue([ref]$cmd)) {
-                    if ($cmd) {
-                        Send-DeviceCommand -Target $Target -Command $cmd
-                    }
-                }
-
-                if ($sshJob.State -in @('Completed', 'Failed', 'Stopped')) { break }
-                Start-Sleep -Milliseconds 100
-            }
-        } finally {
-            Stop-Job  $sshJob -ErrorAction SilentlyContinue
-            Remove-Job $sshJob -Force -ErrorAction SilentlyContinue
-            $stdinPS.Stop() | Out-Null
-            $stdinRS.Close()
+        if ($Replay) {
+            Write-Warning "Replay is not supported in telnet mode; opening live telnet session"
         }
+        Monitor-TelnetLogs -Target $Target | Out-Null
         return
     }
 
@@ -1938,6 +2048,7 @@ Write-Host "     • Deploy-ToDevice" -ForegroundColor Green
 Write-Host "     • Bump-Version" -ForegroundColor Green
 Write-Host "     • Publish-Firmware" -ForegroundColor Green
 Write-Host "     • Monitor-SerialOutput" -ForegroundColor Green
+Write-Host "     • Monitor-TelnetLogs" -ForegroundColor Green
 Write-Host "     • Send-DeviceCommand" -ForegroundColor Green
 Write-Host "     • Watch-RemoteLogs" -ForegroundColor Green
 Write-Host "     • Get-RemoteDeployLog" -ForegroundColor Green
