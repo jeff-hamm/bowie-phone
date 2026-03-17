@@ -289,6 +289,10 @@ char getGoertzelKey() {
     return key;
 }
 
+void processGoertzelBlock() {
+    evaluateBlock();
+}
+
 void resetGoertzelState() {
     for (int i = 0; i < 4; i++) {
         blockRowMags[i] = 0;

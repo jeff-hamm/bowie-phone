@@ -11,6 +11,9 @@
   #include "AudioTools/Disk/AudioSourceSD.h"
 #endif
 #include "AudioTools/AudioCodecs/CodecMP3Helix.h"
+#include "AudioTools/AudioCodecs/CodecAACHelix.h"
+#include "AudioTools/AudioCodecs/ContainerM4A.h"
+#include "AudioTools/CoreAudio/AudioMetaData/MimeDetector.h"
 #include "sequence_processor.h"
 #include "special_command_processor.h"
 #include "audio_file_manager.h"
@@ -33,6 +36,9 @@ AudioSource *source = nullptr;          // to be initialized in setup()
 MultiDecoder multi_decoder;
 MP3DecoderHelix mp3_decoder;
 WAVDecoder wav_decoder;
+AACDecoderHelix aac_decoder;       // Decodes AAC frames extracted from M4A
+MultiDecoder m4a_inner_decoder;    // Routes demuxed AAC frames to aac_decoder
+ContainerM4A m4a_decoder;          // Demuxes M4A/MP4 container
 ExtendedAudioPlayer& audioPlayer = getExtendedAudioPlayer();
 
 // Goertzel-based DTMF detection (more efficient during dial tone)
@@ -156,6 +162,12 @@ void setup()
     audioPlayer.addDecoder(wav_decoder, "audio/wav");
     audioPlayer.addDecoder(wav_decoder, "audio/vnd.wave");
     audioPlayer.addDecoder(wav_decoder, "audio/wave");
+    // Register M4A decoder: ContainerM4A demuxes the MP4 box structure,
+    // then m4a_inner_decoder routes the extracted AAC frames to aac_decoder.
+    // checkM4A is inactive by default in MimeDetector — the 3-arg overload activates it.
+    m4a_inner_decoder.addDecoder(aac_decoder, "audio/aac");
+    m4a_decoder.setDecoder(m4a_inner_decoder);
+    audioPlayer.addDecoder(m4a_decoder, "audio/m4a", MimeDetector::checkM4A);
     audioPlayer.begin(kit, source != nullptr);
     
     // Initialize Goertzel-based DTMF decoder

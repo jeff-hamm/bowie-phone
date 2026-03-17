@@ -751,6 +751,7 @@ bool ExtendedAudioPlayer::copy() {
     // Process audio
     if (player->isActive()) {
         size_t bytesCopied = player->copy();
+        lastCopyBytes = bytesCopied;
         // Periodic diagnostic for generator streams
         if (source && source->getCurrentStreamType() == AudioStreamType::GENERATOR) {
             static unsigned long lastDiag = 0;
@@ -905,6 +906,18 @@ bool ExtendedAudioPlayer::hasAudioKey(const char* audioKey) const {
 // ============================================================================
 // DECODER MANAGEMENT
 // ============================================================================
+
+void ExtendedAudioPlayer::addDecoder(AudioDecoder& newDecoder, const char* mime,
+                                     bool (*check)(uint8_t* data, size_t len)) {
+    // First ensure the decoder is registered (this may create the MultiDecoder)
+    addDecoder(newDecoder, mime);
+
+    // Now wire the custom detection function so this MIME is active
+    if (isMultiDecoder && ownedMultiDecoder) {
+        ownedMultiDecoder->mimeDetector().setCheck(mime, check);
+        Logger.printf("🎵 Activated custom MIME detection for %s\n", mime);
+    }
+}
 
 void ExtendedAudioPlayer::addDecoder(AudioDecoder& newDecoder, const char* mime) {
     if (!decoder) {

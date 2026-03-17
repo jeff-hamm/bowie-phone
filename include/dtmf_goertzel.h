@@ -25,6 +25,9 @@ char getGoertzelKey();
 // Reset Goertzel detection state (clear any stale partial detections)
 void resetGoertzelState();
 
+// Process accumulated Goertzel block data (call after feeding samples via StreamCopy)
+void processGoertzelBlock();
+
 // Mute/unmute Goertzel detection (suppresses false detections from DAC→ADC loopback)
 void setGoertzelMuted(bool muted);
 bool isGoertzelMuted();

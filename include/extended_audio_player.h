@@ -304,6 +304,11 @@ public:
      * @return Timestamp in milliseconds when last audio started playing
      */
     unsigned long getLastActive() const { return playbackStartTime; }
+
+    /**
+     * @brief Get bytes written by the last copy() call
+     */
+    size_t getLastCopyBytes() const { return lastCopyBytes; }
     
     /**
      * @brief Set active state (false clears queue)
@@ -412,6 +417,20 @@ public:
      */
     void addDecoder(AudioDecoder& newDecoder, const char* mime);
 
+    /**
+     * @brief Add a decoder with a custom MIME detection function
+     *
+     * Same as the two-argument overload but also registers a custom byte-level
+     * detection function in the MultiDecoder's MimeDetector.  Use this to
+     * activate format checks that are disabled by default (e.g. audio/m4a).
+     *
+     * @param newDecoder The decoder to add
+     * @param mime       The MIME type string
+     * @param check      Function that inspects raw bytes and returns true on match
+     */
+    void addDecoder(AudioDecoder& newDecoder, const char* mime,
+                    bool (*check)(uint8_t* data, size_t len));
+
     AudioStreamType getCurrentStreamType() const { return currentType; }
     
 protected:
@@ -445,6 +464,7 @@ protected:
     char currentKey[64] = {0};
     unsigned long currentDurationMs = 0;
     unsigned long playbackStartTime = 0;
+    size_t lastCopyBytes = 0;
     
     // Audio queue
     std::vector<QueuedAudioItem> audioQueue;

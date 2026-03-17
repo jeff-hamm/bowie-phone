@@ -863,6 +863,42 @@ static void registerWebServerRoutes()
         esp_restart();
     });
 
+    // File upload endpoint — write raw data to SD card
+    // Usage: curl -X POST --data-binary @debug_audio.raw http://DEVICE_IP/upload/debug_audio.raw
+    server.on("/upload", HTTP_POST, []() {
+        // Final response sent in upload handler
+    }, []() {
+        static File uploadFile;
+        static size_t totalWritten;
+        HTTPUpload& upload = server.upload();
+
+        if (upload.status == UPLOAD_FILE_START) {
+            // Use the uploaded filename as the SD path
+            String path = "/" + upload.filename;
+            Logger.printf("📤 Upload start: %s → SD:%s\n", upload.filename.c_str(), path.c_str());
+            uploadFile = SD_MMC.open(path.c_str(), FILE_WRITE);
+            totalWritten = 0;
+            if (!uploadFile) {
+                Logger.printf("❌ Cannot open %s for writing\n", path.c_str());
+            }
+        } else if (upload.status == UPLOAD_FILE_WRITE) {
+            if (uploadFile) {
+                size_t written = uploadFile.write(upload.buf, upload.currentSize);
+                totalWritten += written;
+            }
+        } else if (upload.status == UPLOAD_FILE_END) {
+            if (uploadFile) {
+                uploadFile.close();
+                Logger.printf("✅ Upload complete: %u bytes → SD\n", (unsigned)totalWritten);
+                server.send(200, "application/json",
+                    "{\"ok\":true,\"bytes\":" + String(totalWritten) + "}");
+            } else {
+                server.send(500, "application/json",
+                    "{\"ok\":false,\"error\":\"Failed to open file on SD\"}");
+            }
+        }
+    });
+
     initVPNConfigRoutes(&server);
     initRemoteLoggerRoutes(&server);
 }

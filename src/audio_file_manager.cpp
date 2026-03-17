@@ -366,6 +366,28 @@ static void enqueueMissingAudioFilesFromRegistry()
 }
 
 /**
+ * @brief Map a MIME type string to a file extension (without leading dot)
+ * @param contentType Content-Type header value (may include parameters e.g. "audio/mpeg; charset=UTF-8")
+ * @return Extension string (e.g. "mp3"), or nullptr if unrecognised
+ */
+static const char* mimeTypeToExtension(const char* contentType)
+{
+    if (!contentType || contentType[0] == '\0') return nullptr;
+    if (strncmp(contentType, "audio/mpeg", 10) == 0) return "mp3";
+    if (strncmp(contentType, "audio/mp3",  9) == 0) return "mp3";
+    if (strncmp(contentType, "audio/wav",  9) == 0) return "wav";
+    if (strncmp(contentType, "audio/wave", 10) == 0) return "wav";
+    if (strncmp(contentType, "audio/x-wav", 11) == 0) return "wav";
+    if (strncmp(contentType, "audio/vnd.wave", 14) == 0) return "wav";
+    if (strncmp(contentType, "audio/m4a",  9) == 0) return "m4a";
+    if (strncmp(contentType, "audio/mp4",  9) == 0) return "m4a";
+    if (strncmp(contentType, "audio/aac",  9) == 0) return "aac";
+    if (strncmp(contentType, "audio/ogg",  9) == 0) return "ogg";
+    if (strncmp(contentType, "audio/flac", 10) == 0) return "flac";
+    return nullptr;
+}
+
+/**
  * @brief Download next item in queue (non-blocking)
  * @return true if download started or completed, false if error or queue empty
  */
@@ -416,11 +438,34 @@ static bool processDownloadQueueInternal()
     http.addHeader("User-Agent", USER_AGENT_HEADER);
     http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
     http.setTimeout(30000);  // 30 second timeout for file downloads
+    // Collect Content-Type so we can correct the file extension after the response
+    const char* wantedHeaders[] = {"Content-Type"};
+    http.collectHeaders(wantedHeaders, 1);
     
     int httpCode = http.GET();
     
     if (httpCode == 200)
     {
+        // Detect actual audio format from Content-Type header and fix path/registry if needed
+        String contentType = http.header("Content-Type");
+        const char* detectedExt = mimeTypeToExtension(contentType.c_str());
+        if (detectedExt && (item->ext[0] == '\0' || strcmp(item->ext, detectedExt) != 0))
+        {
+            Logger.printf("🔍 Content-Type '%s' → format '%s' (was '%s')\n",
+                          contentType.c_str(), detectedExt,
+                          item->ext[0] ? item->ext : "(default)");
+            char newLocalPath[128];
+            if (getLocalPathForUrl(item->url, newLocalPath, detectedExt))
+            {
+                strncpy(item->localPath, newLocalPath, sizeof(item->localPath) - 1);
+                item->localPath[sizeof(item->localPath) - 1] = '\0';
+                strncpy(item->ext, detectedExt, sizeof(item->ext) - 1);
+                item->ext[sizeof(item->ext) - 1] = '\0';
+                // Re-register with the correct extension so the player finds the right file
+                keyRegistry.registerKey(item->description, item->url, detectedExt);
+            }
+        }
+
         // Get content length for progress tracking
         int contentLength = http.getSize();
         
@@ -432,8 +477,8 @@ static bool processDownloadQueueInternal()
         char* dot = strrchr(filenameBase, '.');
         if (dot) *dot = '\0';
         
-        const char* extensions[] = {".mp3", ".wav", ".ogg", ".flac", ".aac"};
-        for (int i = 0; i < 5; i++)
+        const char* extensions[] = {".mp3", ".wav", ".ogg", ".flac", ".aac", ".m4a"};
+        for (int i = 0; i < 6; i++)
         {
             char oldPath[128];
             snprintf(oldPath, sizeof(oldPath), "%s/%s%s", AUDIO_FILES_DIR, filenameBase, extensions[i]);
