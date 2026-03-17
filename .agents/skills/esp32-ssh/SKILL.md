@@ -22,6 +22,16 @@ compatibility: Requires PowerShell on Windows host. PlatformIO OTA needs WireGua
 | `diag` | Diagnostics build (no audio libs) | USB serial |
 | `test-bowie-integration` | Unity integration tests | USB serial |
 
+## Agent Workflow — After Upload
+
+After any build+upload, **always start a monitor session in a background terminal** so firmware output is visible for testing and validation:
+
+```powershell
+C:\Users\Jumper\.platformio\penv\Scripts\platformio.exe device monitor --environment bowie-phone-custom
+```
+
+Run this as a **background terminal** (`isBackground: true`) immediately after upload completes, then use `get_terminal_output` to read the live logs and confirm the change behaved as expected.
+
 ## Quick Start — PlatformIO OTA (Preferred)
 
 The `bowie-phone-custom` environment uses HTTP OTA upload via `tools/http_ota_upload.py`.
@@ -29,23 +39,23 @@ Requires WireGuard active on Windows so the device at `10.253.0.2` is reachable.
 
 1. **Build only:**
    ```powershell
-   pio run -e bowie-phone-custom
+   C:\Users\Jumper\.platformio\penv\Scripts\platformio.exe run --environment bowie-phone-custom
    ```
 
 2. **Build + upload (OTA):**
    ```powershell
-   pio run -e bowie-phone-custom -t upload
+   C:\Users\Jumper\.platformio\penv\Scripts\platformio.exe run --target upload --environment bowie-phone-custom
    ```
 
 3. **Upload + monitor** (build, flash OTA, then stream telnet logs from device):
    ```powershell
-   pio run -e bowie-phone-custom -t upload -t monitor
+   C:\Users\Jumper\.platformio\penv\Scripts\platformio.exe run --target upload --target monitor --environment bowie-phone-custom
    ```
    Monitor connects via telnet to `10.253.0.2:23` (configured as `monitor_port = socket://10.253.0.2:23`).
 
 4. **Monitor only** (no build/upload):
    ```powershell
-   pio device monitor -e bowie-phone-custom
+   C:\Users\Jumper\.platformio\penv\Scripts\platformio.exe device monitor --environment bowie-phone-custom
    ```
 
 5. **Stream remote logs** (device posts via WireGuard to unraid log server):
@@ -143,10 +153,10 @@ For serial flashing via SSH to a remote mac, or SSH-tunneled OTA.
 
 | Task | Command |
 |------|---------|
-| Build + OTA (preferred) | `pio run -e bowie-phone-custom -t upload` |
-| Build + OTA + monitor | `pio run -e bowie-phone-custom -t upload -t monitor` |
-| Build only | `pio run -e bowie-phone-custom` |
-| Monitor only | `pio device monitor -e bowie-phone-custom` |
+| Build + OTA (preferred) | `C:\Users\Jumper\.platformio\penv\Scripts\platformio.exe run --target upload --environment bowie-phone-custom` |
+| Build + OTA + monitor | `C:\Users\Jumper\.platformio\penv\Scripts\platformio.exe run --target upload --target monitor --environment bowie-phone-custom` |
+| Build only | `C:\Users\Jumper\.platformio\penv\Scripts\platformio.exe run --environment bowie-phone-custom` |
+| Monitor only | `C:\Users\Jumper\.platformio\penv\Scripts\platformio.exe device monitor --environment bowie-phone-custom` |
 | Serial deploy (SSH) | `Deploy-ToDevice -Environment bowie-phone-1 -Target mac -FlashMethod serial` |
 | Remote logs | `Watch-RemoteLogs -DeviceId bowie-phone-1` |
 | Publish firmware | `Publish-Firmware -Environment bowie-phone-1` |

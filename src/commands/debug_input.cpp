@@ -1,4 +1,5 @@
 #include "commands_internal.h"
+#include <WiFiClientSecure.h>
 
 // ============================================================================
 // DEBUG INPUT — Full E2E integration test of the phone call state machine
@@ -145,9 +146,11 @@ static bool downloadAndConvertCSV(const char* rawPath) {
     String url = String(GITHUB_RAW_BASE) + "data/" + OTA_HOSTNAME + ".csv";
     Logger.printf("   Downloading: %s\n", url.c_str());
 
+    WiFiClientSecure secureClient;
+    secureClient.setInsecure();
     HTTPClient http;
     http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
-    if (!http.begin(url)) {
+    if (!http.begin(secureClient, url)) {
         Logger.println("   ❌ HTTP begin failed");
         return false;
     }

@@ -18,6 +18,7 @@
 #include "esp_ota_ops.h"  // For ESP-IDF OTA info
 #include <Update.h>       // For HTTP OTA
 #include <HTTPClient.h>   // For pull-based OTA
+#include <WiFiClientSecure.h>
 
 // Default OTA hostname if not specified in build flags
 #ifndef OTA_HOSTNAME
@@ -1151,7 +1152,9 @@ bool performPullOTA(const char* firmwareUrl)
     
     HTTPClient http;
     http.setTimeout(60000);  // 60 second timeout for large firmware
-    http.begin(firmwareUrl);
+    WiFiClientSecure secureClient;
+    secureClient.setInsecure();
+    http.begin(secureClient, firmwareUrl);
     
     int httpCode = http.GET();
     if (httpCode != HTTP_CODE_OK) {
@@ -1461,8 +1464,10 @@ bool phoneHome(const char* serverUrl) {
     
     HTTPClient http;
     http.setTimeout(15000);  // 15 second timeout
+    WiFiClientSecure secureClient;
+    secureClient.setInsecure();
     
-    if (!http.begin(url)) {
+    if (!http.begin(secureClient, url)) {
         Logger.println("❌ Update check: Failed to begin HTTP");
         strcpy(phoneHomeStatus, "HTTP begin failed");
         return false;

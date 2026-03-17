@@ -9,14 +9,14 @@ PhoneService::PhoneService()
 #ifdef CAN_RING
     : _pinFR(F_R), _pinRM(RM), _pinSHK(SHK),
       _isRinging(false), _isOffHook(false), _lastShkReading(false),
-      _debugOverride(false),
+      _debugOverride(false), _debugOverrideExpiry(0),
       _lastRingToggleTime(0), _ringState(false),
       _lastDebounceTime(0), _debounceDelay(50),
       _hookCallback(nullptr) {
 #else
     : _pinSHK(SHK),
       _isOffHook(false), _lastShkReading(false),
-      _debugOverride(false),
+      _debugOverride(false), _debugOverrideExpiry(0),
       _lastDebounceTime(0), _debounceDelay(50),
       _hookCallback(nullptr) {
 #endif
@@ -54,6 +54,16 @@ void PhoneService::begin() {
 }
 
 void PhoneService::loop() {
+    // Expire timed debug override and restore physical pin state
+    if (_debugOverride && _debugOverrideExpiry != 0 && millis() >= _debugOverrideExpiry) {
+        Logger.println("🔧 [DEBUG] Hook override EXPIRED - resuming automatic detection");
+        _debugOverride = false;
+        _debugOverrideExpiry = 0;
+        // Immediately sync to whatever the pin currently reads
+        bool pinState = digitalRead(_pinSHK);
+        setOffHook(pinState, false);
+    }
+
     checkHookState();
     
 #ifdef CAN_RING
@@ -165,15 +175,19 @@ void PhoneService::setHookCallback(HookStateCallback callback) {
 void PhoneService::resetDebugOverride() {
     if (_debugOverride) {
         _debugOverride = false;
+        _debugOverrideExpiry = 0;
         Logger.println("🔧 [DEBUG] Hook override DISABLED - resuming automatic detection");
     }
 }
 
-void PhoneService::setOffHook(bool offHook, bool override) {
+void PhoneService::setOffHook(bool offHook, bool override, unsigned long overrideForMs) {
     // When called from debug, enable override to ignore physical pin
     _debugOverride = override;
     if (override) {
-        Logger.println("🔧 [DEBUG] Hook override ENABLED - physical pin ignored");
+        _debugOverrideExpiry = (overrideForMs > 0) ? (millis() + overrideForMs) : 0;
+        Logger.printf("🔧 [DEBUG] Hook override ENABLED - physical pin ignored for %lums\n", overrideForMs);
+    } else {
+        _debugOverrideExpiry = 0;
     }
     
     if (offHook != _isOffHook) {

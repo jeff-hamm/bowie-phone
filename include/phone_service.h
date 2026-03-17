@@ -27,7 +27,7 @@ public:
     void setHookCallback(HookStateCallback callback);
     
     // Debug/simulation methods
-    void setOffHook(bool offHook, bool fromDebug = true);  // Simulate hook state change
+    void setOffHook(bool offHook, bool fromDebug = true, unsigned long overrideForMs = 60000);  // Simulate hook state change
     void resetDebugOverride();  // Reset to automatic hook detection
 
 private:
@@ -45,7 +45,8 @@ private:
     // State variables
     bool _isOffHook;
     bool _lastShkReading;
-    bool _debugOverride;  // When true, ignore physical hook pin
+    bool _debugOverride;          // When true, ignore physical hook pin
+    unsigned long _debugOverrideExpiry;  // millis() time when override expires (0 = indefinite)
     
     unsigned long _lastDebounceTime;
     unsigned long _debounceDelay;

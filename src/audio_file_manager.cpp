@@ -17,6 +17,7 @@
 #include "logging.h"
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 #include <SD.h>
 #include <SD_MMC.h>
@@ -433,8 +434,10 @@ static bool processDownloadQueueInternal()
     }
     
     // Download the file
+    WiFiClientSecure secureClient;
+    secureClient.setInsecure();
     HTTPClient http;
-    http.begin(item->url);
+    http.begin(secureClient, item->url);
     http.addHeader("User-Agent", USER_AGENT_HEADER);
     http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
     http.setTimeout(30000);  // 30 second timeout for file downloads
@@ -535,7 +538,7 @@ static bool processDownloadQueueInternal()
     }
     else
     {
-        Logger.printf("❌ HTTP download failed: %d for %s\n", httpCode, item->url);
+        Logger.printf("❌ HTTP download failed: %d (%s) for %s\n", httpCode, http.errorToString(httpCode).c_str(), item->url);
     }
     
     http.end();
@@ -635,8 +638,10 @@ static bool checkRemoteCacheValid()
         checkUrl += "?action=getLastModified";
     }
     
+    WiFiClientSecure secureClient;
+    secureClient.setInsecure();
     HTTPClient http;
-    http.begin(checkUrl);
+    http.begin(secureClient, checkUrl);
     http.addHeader("User-Agent", USER_AGENT_HEADER);
     http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
     http.setTimeout(5000);  // Short timeout for lightweight check
@@ -1125,8 +1130,10 @@ static bool downloadAudioInternal()
         Logger.println("🌐 URL streaming mode - requesting authenticated URLs");
     }
     
+    WiFiClientSecure secureClient;
+    secureClient.setInsecure();
     HTTPClient http;
-    http.begin(catalogUrl);
+    http.begin(secureClient, catalogUrl);
     http.addHeader("Content-Type", "application/json");
     http.addHeader("User-Agent", USER_AGENT_HEADER);
     http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
@@ -1144,7 +1151,7 @@ static bool downloadAudioInternal()
     
     if (httpResponseCode != 200)
     {
-        Logger.printf("❌ HTTP request failed: %d\n", httpResponseCode);
+        Logger.printf("❌ HTTP request failed: %d (%s)\n", httpResponseCode, http.errorToString(httpResponseCode).c_str());
         http.end();
         return false;
     }

@@ -68,6 +68,7 @@ void setup()
     Logger.addLogger(Serial);
 
     Logger.printf("\n\n=== Bowie Phone Starting ===\n");
+    Logger.printf("🔧 Firmware: %s  Build: %s %s\n", FIRMWARE_VERSION, __DATE__, __TIME__);
     
 #ifdef RUN_SD_DEBUG_FIRST
     // Build flag to run SD debug before ANY other initialization
@@ -189,6 +190,7 @@ void setup()
         // Start telnet server for remote logging
         telnet.onConnect([](String ip) {
             Logger.printf("📡 Telnet client connected from: %s\n", ip.c_str());
+            Logger.printf("🔧 Firmware: %s  Build: %s %s\n", FIRMWARE_VERSION, __DATE__, __TIME__);
             Logger.addLogger(telnet);  // Add telnet as a log output stream
         });
         telnet.onConnectionAttempt([](String ip) {
