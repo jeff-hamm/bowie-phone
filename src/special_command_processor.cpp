@@ -1684,7 +1684,7 @@ static int replayAudioThroughGoertzel(
 // Returns true on success.
 static bool downloadAndConvertCSV(const char* rawPath) {
     // Construct URL: GITHUB_RAW_BASE + logs/<OTA_HOSTNAME>.csv
-    String url = String(GITHUB_RAW_BASE) + "logs/" + OTA_HOSTNAME + ".csv";
+    String url = String(GITHUB_RAW_BASE) + "data/" + OTA_HOSTNAME + ".csv";
     Logger.printf("   Downloading: %s\n", url.c_str());
 
     HTTPClient http;
