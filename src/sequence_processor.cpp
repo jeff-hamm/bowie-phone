@@ -3,6 +3,7 @@
 #include "audio_key_registry.h"
 #include "extended_audio_player.h"
 #include "notifications.h"
+#include "phone_service.h"
 #include "config.h"
 #include "logging.h"
 
@@ -178,7 +179,12 @@ void addDtmfDigit(char digit)
         Logger.printf("⚠️ Invalid DTMF digit: %c\n", digit);
         return;
     }
-
+    // Ignore digits when phone is on-hook
+    if (!Phone.isOffHook())
+    {
+        Logger.debugf("[DEBUG] Ignoring digit '%c' - phone is on hook\n", digit);
+        return;
+    }
     // If a sequence is already waiting to be processed, ignore new digits
     if (sequenceReady)
     {
