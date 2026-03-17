@@ -1,0 +1,18 @@
+{
+  "bowie-phone": {
+    "version": "1.0.4",
+    "firmware_url": "https://bowie-phone.infinitebutts.com/firmware/bowie-phone/firmware.bin",
+    "release_notes": "Fixed OTA updates with dual app partition layout",
+    "min_version": "0.0.0",
+    "action": "none",
+    "message": ""
+  },
+  "default": {
+    "version": "1.0.4",
+    "firmware_url": "https://bowie-phone.infinitebutts.com/firmware/bowie-phone/firmware.bin",
+    "release_notes": "Fixed OTA updates with dual app partition layout",
+    "min_version": "0.0.0",
+    "action": "none",
+    "message": ""
+  }
+}
