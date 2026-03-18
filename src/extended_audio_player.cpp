@@ -65,6 +65,27 @@ ExtendedAudioSource::~ExtendedAudioSource() {
     // Note: We don't delete generators - caller retains ownership
 }
 
+static const char* extensionToMime(const char* path) {
+    const char* dot = strrchr(path, '.');
+    if (!dot) return nullptr;
+    if (strcasecmp(dot, ".mp3") == 0)  return "audio/mpeg";
+    if (strcasecmp(dot, ".wav") == 0)  return "audio/wav";
+    if (strcasecmp(dot, ".m4a") == 0)  return "audio/m4a";
+    if (strcasecmp(dot, ".aac") == 0)  return "audio/aac";
+    if (strcasecmp(dot, ".ogg") == 0)  return "audio/ogg";
+    if (strcasecmp(dot, ".flac") == 0) return "audio/flac";
+    return nullptr;
+}
+
+const char* ExtendedAudioSource::mime() {
+    if (currentType == AudioStreamType::GENERATOR) return "audio/pcm";
+    if (currentKey[0] != '\0') {
+        const char* m = extensionToMime(currentKey);
+        if (m) return m;
+    }
+    return nullptr;
+}
+
 bool ExtendedAudioSource::begin() {
     Logger.println("🔧 ExtendedAudioSource::begin()");
     return true;
@@ -169,9 +190,8 @@ bool ExtendedAudioSource::setURLStream(const char* url) {
     Logger.printf("🌐 Opening URL stream: %s\n", url);
     
     // Determine MIME type from URL extension
-    const char* mimeType = "audio/mpeg";
-    if (strstr(url, ".wav") != nullptr) mimeType = "audio/wav";
-    else if (strstr(url, ".ogg") != nullptr) mimeType = "audio/ogg";
+    const char* mimeType = extensionToMime(url);
+    if (!mimeType) mimeType = "audio/mpeg";
     
     if (!urlStream->begin(url, mimeType)) {
         Logger.printf("❌ Failed to open URL stream: %s\n", url);

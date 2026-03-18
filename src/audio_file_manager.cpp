@@ -362,6 +362,29 @@ static void enqueueMissingAudioFilesFromRegistry()
             continue; // Already cached under the corrected path
         }
 
+        // Check if the file exists with a different extension (e.g., catalog says
+        // .wav but a previous download detected Content-Type audio/mp4 and saved
+        // as .m4a).  If found, re-register with the actual extension so the player
+        // finds it and we don't re-download every boot.
+        {
+            static const char* knownExts[] = {"wav", "mp3", "m4a", "aac", "ogg", "flac"};
+            bool found = false;
+            for (int i = 0; i < 6; i++)
+            {
+                // Skip the extension we already checked above
+                if (ext && strcmp(ext, knownExts[i]) == 0) continue;
+                if (audioFileExists(downloadPath, knownExts[i]))
+                {
+                    Logger.printf("🔄 Found cached file for '%s' with ext '%s' (registry had '%s'), re-registering\n",
+                                  entry.audioKey.c_str(), knownExts[i], ext ? ext : "(none)");
+                    keyRegistry.registerKey(entry.audioKey.c_str(), downloadPath, knownExts[i]);
+                    found = true;
+                    break;
+                }
+            }
+            if (found) continue;
+        }
+
         if (addToDownloadQueue(downloadPath, entry.audioKey.c_str(), ext))
         {
             queued++;
@@ -631,7 +654,7 @@ static bool checkRemoteCacheValid()
         checkUrl += "?action=getLastModified";
     }
     
-    HttpClient http(HTTP_TIMEOUT_SHORT_MS);
+    HttpClient http(HTTP_TIMEOUT_CATALOG_MS);
     
     if (!http.get(checkUrl))
     {
@@ -877,9 +900,11 @@ static bool isCacheStale(int audioFileCount = -1)
         return true;
     }
     
-    // TIER 1: Lightweight check if WiFi connected and enough time has passed
+    // TIER 1: Lightweight check if WiFi connected.
+    // Always check on the first eligible call after boot, then rate-limit.
     unsigned long timeSinceLastCheck = currentTime - lastCacheCheck;
-    if (timeSinceLastCheck > CACHE_CHECK_INTERVAL_MS && WiFi.status() == WL_CONNECTED)
+    bool firstCheckAfterBoot = (lastCacheCheck == 0);
+    if ((firstCheckAfterBoot || timeSinceLastCheck > CACHE_CHECK_INTERVAL_MS) && WiFi.status() == WL_CONNECTED)
     {
         lastCacheCheck = currentTime;
         Logger.println("🔍 Performing lightweight cache validation...");
@@ -1231,13 +1256,27 @@ void invalidateAudioCache()
 {
     Logger.println("🔄 Invalidating audio cache...");
     lastCacheTime = 0;  // Force cache to be considered stale
+    lastCacheCheck = 0;
+    cachedEtag[0] = '\0';
+
+    // Clear pending downloads so the next catalog load repopulates from fresh state.
+    downloadQueueCount = 0;
+    downloadQueueIndex = 0;
     
-    // Also remove timestamp file from SD card
+    // Remove all persisted cache artifacts from SD card.
     if (sdCardAvailable && initializeSDCard())
     {
         if (SD_EXISTS(CACHE_TIMESTAMP_FILE))
         {
             SD_REMOVE(CACHE_TIMESTAMP_FILE);
+        }
+        if (SD_EXISTS(CACHE_ETAG_FILE))
+        {
+            SD_REMOVE(CACHE_ETAG_FILE);
+        }
+        if (SD_EXISTS(AUDIO_JSON_FILE))
+        {
+            SD_REMOVE(AUDIO_JSON_FILE);
         }
     }
     Logger.println("✅ Cache invalidated - next download will fetch fresh data");

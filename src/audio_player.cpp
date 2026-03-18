@@ -378,6 +378,9 @@ bool playAudioFromURL(const char* url)
     // Determine MIME type from URL extension
     const char* mimeType = "audio/mpeg";
     if (strstr(url, ".wav") != nullptr) mimeType = "audio/wav";
+    else if (strstr(url, ".m4a") != nullptr) mimeType = "audio/m4a";
+    else if (strstr(url, ".aac") != nullptr) mimeType = "audio/aac";
+    else if (strstr(url, ".ogg") != nullptr) mimeType = "audio/ogg";
     
     if (!urlStream->begin(url, mimeType))
     {

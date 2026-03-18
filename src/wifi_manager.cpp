@@ -900,6 +900,30 @@ static void registerWebServerRoutes()
         }
     });
 
+    // File delete endpoint — remove a file from the SD card
+    // Usage: curl -X DELETE "http://DEVICE_IP/delete?path=/audio/audio_40a38a0f.m4a"
+    server.on("/delete", HTTP_DELETE, []() {
+        if (!server.hasArg("path")) {
+            server.send(400, "application/json", "{\"ok\":false,\"error\":\"Missing 'path' parameter\"}");
+            return;
+        }
+        String path = server.arg("path");
+        if (path.indexOf("..") >= 0) {
+            server.send(400, "application/json", "{\"ok\":false,\"error\":\"Invalid path\"}");
+            return;
+        }
+        if (!SD_MMC.exists(path.c_str())) {
+            server.send(404, "application/json", "{\"ok\":false,\"error\":\"File not found\"}");
+            return;
+        }
+        if (SD_MMC.remove(path.c_str())) {
+            Logger.printf("🗑️ Deleted file: %s\n", path.c_str());
+            server.send(200, "application/json", "{\"ok\":true}");
+        } else {
+            server.send(500, "application/json", "{\"ok\":false,\"error\":\"Failed to delete file\"}");
+        }
+    });
+
     initVPNConfigRoutes(&server);
     initRemoteLoggerRoutes(&server);
 }

@@ -149,8 +149,17 @@ size_t RemoteLoggerClass::write(const uint8_t* buffer, size_t size) {
 
 void RemoteLoggerClass::flush() {
     static bool flushing = false;
+    static int consecutiveFailures = 0;
+    static unsigned long backoffUntil = 0;
+
     if (flushing || !enabled || logBuffer.length() == 0 || millis() - lastFlushTime < REMOTE_LOG_FLUSH_INTERVAL_MS)
         return;
+
+    // Exponential backoff: 10s, 20s, 40s, 80s … capped at 5 min
+    if (consecutiveFailures > 0 && millis() < backoffUntil) {
+        return;
+    }
+
     flushing = true;
     // Check VPN requirement
     if (vpnRequired && !isTailscaleConnected()) {
@@ -178,6 +187,11 @@ void RemoteLoggerClass::flush() {
     if (sendLogs(logBuffer)) {
         logBuffer = "";
         lineCount = 0;
+        consecutiveFailures = 0;
+    } else {
+        consecutiveFailures++;
+        unsigned long delay = min(300000UL, 10000UL << min(consecutiveFailures - 1, 5));
+        backoffUntil = millis() + delay;
     }
     
     lastFlushTime = millis();
@@ -260,11 +274,10 @@ bool RemoteLoggerClass::sendBootNotification() {
     if (tsIp) {
         json += "\"tailscale_ip\":\"" + String(tsIp) + "\",";
     }
-    // Include pre-connect boot logs as first log payload
-    json += "\"logs\":\"";
-    // The preConnectBuffer was already moved to logBuffer in begin(),
-    // so this notification carries an empty logs field — the real logs
-    // follow immediately in the normal flush.
+    // Include a compact boot line so receivers that require a non-empty
+    // `logs` field do not reject boot notifications with HTTP 400.
+    json += "\"logs\":\"BOOT firmware=" FIRMWARE_VERSION " reason=";
+    json += String(reasonStr);
     json += "\"}";
     
     HttpClient::Header hdrs[] = {

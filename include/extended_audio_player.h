@@ -109,9 +109,7 @@ public:
     bool isAutoNext() override { return false; }  // We handle advancement ourselves
     
     // MimeSource interface - provides MIME type hint for MultiDecoder
-    const char* mime() override {
-        return currentType == AudioStreamType::GENERATOR ? "audio/pcm" : nullptr;
-    }
+    const char* mime() override;
     
     // ========================================================================
     // REGISTRY

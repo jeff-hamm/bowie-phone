@@ -124,7 +124,7 @@
 
 // AudioTools library log level (Error=1, Warning=2, Info=3, Debug=4)
 #ifndef AUDIOTOOLS_LOG_LEVEL
-#define AUDIOTOOLS_LOG_LEVEL AudioToolsLogLevel::Warning
+#define AUDIOTOOLS_LOG_LEVEL AudioToolsLogLevel::Info
 #endif
 
 // ============================================================================
