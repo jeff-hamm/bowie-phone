@@ -53,6 +53,14 @@ void AudioKeyRegistry::registerKey(const char* audioKey, const char* primaryPath
         // Local path only
         registerKey(audioKey, primaryPath, AudioStreamType::FILE_STREAM, nullptr);
     }
+    // Store the extension so enqueueMissingAudioFilesFromRegistry() can check
+    // the correct filename (e.g. .m4a detected from Content-Type, not default .wav)
+    if (ext && strlen(ext) > 0) {
+        auto it = registry.find(std::string(audioKey));
+        if (it != registry.end()) {
+            it->second.ext = ext;
+        }
+    }
 }
 
 void AudioKeyRegistry::registerGenerator(const char* audioKey, SoundGenerator<int16_t>* generator) {

@@ -1582,7 +1582,7 @@ function Deploy-ToDevice {
     # Step 2: Upload files
     $step++
     Write-Step $step $totalSteps "Uploading to $Target"
-    if (-not (Copy-FirmwareToRemote -Target $Target -Environment $BuildEnvironment -FlashMethod $FlashMethod)) {
+    if (-not (Copy-FirmwareToRemote -Target $Target -BuildEnvironment $BuildEnvironment -FlashMethod $FlashMethod)) {
         return $false
     }
     

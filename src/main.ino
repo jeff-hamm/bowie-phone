@@ -69,6 +69,7 @@ void setup()
     // Add remote logger early so pre-VPN boot logs are buffered and shipped later
     Logger.addLogger(RemoteLogger);
 
+
     Logger.printf("\n\n=== Bowie Phone Starting ===\n");
     Logger.printf("🔧 Firmware: %s  Build: %s %s\n", FIRMWARE_VERSION, __DATE__, __TIME__);
     
@@ -264,9 +265,6 @@ void setup()
 
 void loop()
 {
-    // if(!Phone.isRinging())
-    //     Phone.startRinging();
-
     // Process Phone Service
     static unsigned long lastMaintenanceCheck = 0;
     Phone.loop();

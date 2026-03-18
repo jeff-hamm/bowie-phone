@@ -1,5 +1,5 @@
 #include "commands_internal.h"
-
+#ifdef TEST_MODE
 // ============================================================================
 // SD CARD DEBUG — Test various initialization methods and pin configurations
 // ============================================================================
@@ -305,3 +305,5 @@ void performSDCardDebug() {
     Logger.println();
     Logger.println("⚠️  Reboot required to restore normal SD operation");
 }
+
+#endif

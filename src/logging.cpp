@@ -167,7 +167,6 @@ void LoggerClass::debugf(const char* format, ...) {
 }
 
 void LoggerClass::addMessageToBuffer(const String& message) {
-    // Add to circular buffer
     logBuffer[logIndex] = message;
     logIndex = (logIndex + 1) % LOG_BUFFER_SIZE;
     
@@ -249,3 +248,5 @@ void LoggerClass::writeRawLine(const char* line) {
     writeRaw(line, strlen(line));
     writeRaw("\n", 1);
 }
+
+

@@ -53,7 +53,7 @@ using namespace audio_tools;
 #define AUDIO_FILES_DIR "/audio"    ///< Directory for cached audio files
 #endif
 #ifndef MAX_DOWNLOAD_QUEUE
-#define MAX_DOWNLOAD_QUEUE 20       ///< Maximum items in download queue
+#define MAX_DOWNLOAD_QUEUE 4        ///< Active download page size (auto-refills from registry)
 #endif
 #ifndef MAX_FILENAME_LENGTH
 #define MAX_FILENAME_LENGTH 64      ///< Maximum length for generated filenames

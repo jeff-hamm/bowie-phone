@@ -368,7 +368,7 @@ void startGoertzelTask(StreamCopy &copier) {
     xTaskCreatePinnedToCore(
         goertzelTaskFunction,
         "GoertzelTask",
-        16384,
+        8192,
         &copier,
         1,
         &goertzelTaskHandle,

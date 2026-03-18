@@ -293,6 +293,8 @@ static void processDebugCommand(const String& cmd) {
         Logger.println("   Pick up the phone to trigger capture");
         Logger.println("   (Saved to NVS - survives reboot)");
     }
+#ifdef TEST_MODE
+
     else if (cmd.equalsIgnoreCase("audiotest") || cmd.equalsIgnoreCase("atest")) {
         performAudioOutputTest();
     }
@@ -330,6 +332,7 @@ static void processDebugCommand(const String& cmd) {
     else if (cmd.equalsIgnoreCase("sddebug") || cmd.equalsIgnoreCase("sdtest")) {
         performSDCardDebug();
     }
+    #endif
     else if (cmd.startsWith("pullota ") || cmd.startsWith("otapull ")) {
         String url = cmd.substring(cmd.indexOf(' ') + 1);
         url.trim();

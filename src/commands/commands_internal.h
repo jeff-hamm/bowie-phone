@@ -54,9 +54,11 @@
 
 // audio_capture.cpp — called by processDebugCommand and checkAndExecuteOffHookCapture
 void performAudioCapture(int durationSec);
+#ifdef TEST_MODE
 
 // audio_output_test.cpp — called by processDebugCommand
 void performAudioOutputTest();
 
 // debug_input.cpp — called by processDebugCommand
 void performDebugInput(const char* filename, const char* expectedDigits = nullptr);
+#endif

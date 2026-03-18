@@ -348,9 +348,18 @@ static void enqueueMissingAudioFilesFromRegistry()
         const char* downloadPath = entry.getUrl();
         const char* ext = entry.getExt();
         
+        // Check using ext from registry (set after Content-Type detection)
         if (audioFileExists(downloadPath, ext))
         {
             continue; // Already cached
+        }
+        
+        // Also check if the primary local path already exists on disk
+        // (covers the case where Content-Type changed the extension and
+        //  the registry path was updated but ext field wasn't set yet)
+        if (!entry.path.empty() && SD_EXISTS(entry.path.c_str()))
+        {
+            continue; // Already cached under the corrected path
         }
 
         if (addToDownloadQueue(downloadPath, entry.audioKey.c_str(), ext))
@@ -393,9 +402,25 @@ static const char* mimeTypeToExtension(const char* contentType)
  */
 static bool processDownloadQueueInternal()
 {
+    static int consecutiveFailures = 0;
+    static unsigned long backoffUntil = 0;
+
+    // Exponential backoff after failures: 10s, 20s, 40s … capped at 5 min
+    if (consecutiveFailures > 0 && millis() < backoffUntil) {
+        return false;
+    }
+
     if (downloadQueueIndex >= downloadQueueCount)
     {
-        return false; // Queue empty or fully processed
+        // Current page exhausted — reset and refill from registry.
+        // enqueueMissingAudioFilesFromRegistry() skips already-downloaded files,
+        // so this naturally pages through the full catalog.
+        downloadQueueCount = 0;
+        downloadQueueIndex = 0;
+        enqueueMissingAudioFilesFromRegistry();
+        if (downloadQueueCount == 0) {
+            return false; // Nothing left to download
+        }
     }
     
     if (WiFi.status() != WL_CONNECTED)
@@ -442,6 +467,10 @@ static bool processDownloadQueueInternal()
         Logger.printf("❌ HTTP download failed: %d for %s\n", http.statusCode(), item->url);
         item->inProgress = false;
         downloadQueueIndex++;
+        consecutiveFailures++;
+        unsigned long delay = min(300000UL, 10000UL << min(consecutiveFailures - 1, 5));
+        backoffUntil = millis() + delay;
+        Logger.printf("⏳ Download backoff: %lus after %d failure(s)\n", delay / 1000, consecutiveFailures);
         return false;
     }
     
@@ -503,6 +532,7 @@ static bool processDownloadQueueInternal()
     if (totalBytes > 0)
     {
         Logger.printf("✅ Downloaded %d bytes to: %s\n", totalBytes, item->localPath);
+        consecutiveFailures = 0;
     }
     
     item->inProgress = false;

@@ -6,6 +6,8 @@
 #include <Update.h>
 #include "config.h"
 #include "logging.h"
+#include "mbedtls/platform.h"
+#include "esp_heap_caps.h"
 
 #ifndef FIRMWARE_VERSION
 #define FIRMWARE_VERSION "0.0.0"
@@ -52,7 +54,6 @@ public:
     // Construct with optional timeout override (default HTTP_TIMEOUT_MS from config.h)
     explicit HttpClient(int timeoutMs = HTTP_TIMEOUT_MS, const Header* headers = nullptr, size_t headerCount = 0)
         : _statusCode(0), _timeoutMs(timeoutMs), _headerCount(0) {
-        _secure.setInsecure();
         _http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
         if (headers) {
             for (size_t i = 0; i < headerCount && i < MAX_HEADERS; i++) {
@@ -265,9 +266,28 @@ public:
     // Access the underlying HTTPClient for edge cases (e.g. errorToString)
     HTTPClient& raw() { return _http; }
 
+    // Process-wide shared WiFiClientSecure — allocated once, never freed.
+    // All HTTP runs on core 1 (main loop), so no mutex needed.
+    static WiFiClientSecure& sharedSecure() {
+        static WiFiClientSecure* s = nullptr;
+        if (!s) {
+            // Redirect mbedtls allocations to PSRAM — internal RAM is too
+            // fragmented for the ~40 KB SSL needs (max_block ≈ 34 KB).
+            mbedtls_platform_set_calloc_free(
+                [](size_t n, size_t sz) -> void* {
+                    void* p = heap_caps_calloc(n, sz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+                    return p ? p : heap_caps_calloc(n, sz, MALLOC_CAP_8BIT);
+                },
+                [](void* p) { heap_caps_free(p); }
+            );
+            s = new WiFiClientSecure();
+            s->setInsecure();
+        }
+        return *s;
+    }
+
 private:
     HTTPClient _http;
-    WiFiClientSecure _secure;
     int _statusCode;
     int _timeoutMs;
     String _statusMsg;
@@ -294,11 +314,17 @@ private:
         }
     }
 
-    // Begin a URL (HTTPS via _secure, HTTP via plain begin)
+    // Begin a URL (HTTPS via shared WiFiClientSecure, HTTP via plain begin)
     bool beginUrl(const char* url) {
         _http.setTimeout(_timeoutMs);
         if (strncmp(url, "https", 5) == 0) {
-            return _http.begin(_secure, url);
+            size_t freeHeap = ESP.getFreeHeap();
+            size_t maxBlock = ESP.getMaxAllocHeap();
+            if (maxBlock < 40000) {
+                Logger.printf("⚠️ HTTPS low heap: free=%u max_block=%u\n",
+                              (unsigned)freeHeap, (unsigned)maxBlock);
+            }
+            return _http.begin(sharedSecure(), url);
         }
         return _http.begin(url);
     }

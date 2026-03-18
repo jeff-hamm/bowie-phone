@@ -130,8 +130,5 @@ void loop() {
         lastCheck = now;
         handleNetworkLoop();        // WiFi status, fallbacks, OTA, HTTP server
     }
-
-    // Also check for updates periodically
-    checkForRemoteUpdates();
 }
 

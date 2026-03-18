@@ -1,5 +1,5 @@
 #include "commands_internal.h"
-
+#ifdef TEST_MODE
 // ============================================================================
 // DEBUG INPUT — Full E2E integration test of the phone call state machine
 // ============================================================================
@@ -612,3 +612,5 @@ void performDebugInput(const char* filename, const char* expectedDigits) {
 
     #undef TEST_CHECK
 }
+
+#endif

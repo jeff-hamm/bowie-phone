@@ -14,9 +14,6 @@
 // Global instance
 RemoteLoggerClass RemoteLogger;
 
-// Persistent HTTP client for log shipping (avoids per-request TLS setup)
-static HttpClient s_logClient(HTTP_TIMEOUT_SHORT_MS);
-
 // NVS namespace for remote logger config
 #define REMOTE_LOG_NVS_NAMESPACE "remotelog"
 
@@ -26,15 +23,24 @@ RemoteLoggerClass::RemoteLoggerClass()
     : lineCount(0), lastFlushTime(0), enabled(false), vpnRequired(true), bootSent(false) {
     serverUrl[0] = '\0';
     deviceId[0] = '\0';
-    // Generate a random boot id (6 random bytes → 12 hex chars)
-    uint32_t r1 = esp_random();
-    uint32_t r2 = esp_random();
-    snprintf(bootId, sizeof(bootId), "%08x%04x", r1, (uint16_t)(r2 & 0xFFFF));
-    preConnectBuffer.reserve(REMOTE_LOG_BUFFER_SIZE);
+    bootId[0] = '\0';
+    // NOTE: Do NOT call esp_random() or String::reserve() here.
+    // Global constructors run before FreeRTOS starts — heap allocs and
+    // hardware API calls at this stage can prevent the idle-task stack
+    // from being allocated, causing a boot crash.  Deferred to begin().
 }
 
 void RemoteLoggerClass::begin(const char* server, const char* devId, bool requireVpn) {
     vpnRequired = requireVpn;
+
+    // Deferred from constructor — safe now that FreeRTOS + heap are running
+    if (bootId[0] == '\0') {
+        uint32_t r1 = esp_random();
+        uint32_t r2 = esp_random();
+        snprintf(bootId, sizeof(bootId), "%08x%04x", r1, (uint16_t)(r2 & 0xFFFF));
+        logBuffer.reserve(REMOTE_LOG_BUFFER_SIZE);
+        preConnectBuffer.reserve(REMOTE_LOG_BUFFER_SIZE);
+    }
     
     // Set server URL
     if (server && strlen(server) > 0) {
@@ -61,8 +67,6 @@ void RemoteLoggerClass::begin(const char* server, const char* devId, bool requir
     
     if (enabled) {
         Serial.printf("📡 Remote Logger: %s -> %s (boot %s)\n", deviceId, serverUrl, bootId);
-        s_logClient.setPersistentHeader("X-Device-ID", deviceId);
-        s_logClient.setPersistentHeader("Content-Type", "application/json");
         // Move any pre-connect logs into the main buffer so they ship on first flush
         if (preConnectBuffer.length() > 0) {
             logBuffer = preConnectBuffer;
@@ -100,16 +104,18 @@ size_t RemoteLoggerClass::write(uint8_t byte) {
         return 1;
     }
     
-    logBuffer += (char)byte;
-    
     if (byte == '\n') {
         lineCount++;
     }
+    logBuffer += (char)byte;
     
-    // Check if we should flush
-    if (lineCount >= REMOTE_LOG_BATCH_SIZE || 
-        logBuffer.length() >= REMOTE_LOG_BUFFER_SIZE - 256) {
-        flush();
+    // Drop oldest lines if buffer is full (flush happens from loop())
+    if (logBuffer.length() >= REMOTE_LOG_BUFFER_SIZE - 256) {
+        int nl = logBuffer.indexOf('\n');
+        if (nl >= 0) {
+            logBuffer.remove(0, nl + 1);
+            lineCount--;
+        }
     }
     
     return 1;
@@ -117,31 +123,35 @@ size_t RemoteLoggerClass::write(uint8_t byte) {
 
 size_t RemoteLoggerClass::write(const uint8_t* buffer, size_t size) {
     if (!enabled) {
-        for (size_t i = 0; i < size && preConnectBuffer.length() < REMOTE_LOG_BUFFER_SIZE; i++) {
-            preConnectBuffer += (char)buffer[i];
-        }
+        size_t room = REMOTE_LOG_BUFFER_SIZE - preConnectBuffer.length();
+        size_t n = size < room ? size : room;
+        if (n > 0) preConnectBuffer.concat((const char*)buffer, n);
         return size;
     }
     
+    // Bulk append — single allocation instead of char-by-char
+    logBuffer.concat((const char*)buffer, size);
     for (size_t i = 0; i < size; i++) {
-        logBuffer += (char)buffer[i];
-        if (buffer[i] == '\n') {
-            lineCount++;
-        }
+        if (buffer[i] == '\n') lineCount++;
     }
     
-    // Check if we should flush
-    if (lineCount >= REMOTE_LOG_BATCH_SIZE || 
-        logBuffer.length() >= REMOTE_LOG_BUFFER_SIZE - 256) {
-        flush();
+    // Drop oldest lines if buffer is full (flush happens from loop())
+    if (logBuffer.length() >= REMOTE_LOG_BUFFER_SIZE - 256) {
+        int nl = logBuffer.indexOf('\n');
+        if (nl >= 0) {
+            logBuffer.remove(0, nl + 1);
+            lineCount--;
+        }
     }
     
     return size;
 }
 
 void RemoteLoggerClass::flush() {
-    if (!enabled || logBuffer.length() == 0 || millis() - lastFlushTime < REMOTE_LOG_FLUSH_INTERVAL_MS)
+    static bool flushing = false;
+    if (flushing || !enabled || logBuffer.length() == 0 || millis() - lastFlushTime < REMOTE_LOG_FLUSH_INTERVAL_MS)
         return;
+    flushing = true;
     // Check VPN requirement
     if (vpnRequired && !isTailscaleConnected()) {
         // Don't flush, keep buffering (up to limit)
@@ -149,10 +159,11 @@ void RemoteLoggerClass::flush() {
             // Buffer full, drop oldest data
             int newlinePos = logBuffer.indexOf('\n');
             if (newlinePos > 0) {
-                logBuffer = logBuffer.substring(newlinePos + 1);
+                logBuffer.remove(0, newlinePos + 1);
                 lineCount--;
             }
         }
+        flushing = false;
         return;
     }
 
@@ -170,6 +181,7 @@ void RemoteLoggerClass::flush() {
     }
     
     lastFlushTime = millis();
+    flushing = false;
 }
 
 bool RemoteLoggerClass::sendLogs(const String& logs) {
@@ -177,14 +189,18 @@ bool RemoteLoggerClass::sendLogs(const String& logs) {
         return false;
     }
     
-    // Build JSON payload
-    String json = "{";
-    json += "\"device\":\"" + String(deviceId) + "\",";
-    json += "\"boot_id\":\"" + String(bootId) + "\",";
-    json += "\"uptime_sec\":" + String(millis() / 1000) + ",";
+    // Pre-size JSON: header ~120 bytes + escaped logs (worst case 6× for \uXXXX)
+    String json;
+    json.reserve(200 + logs.length() * 2);
     
-    // Escape and add logs
-    json += "\"logs\":\"";
+    // Build JSON payload using snprintf for the fixed parts
+    char header[160];
+    snprintf(header, sizeof(header),
+             "{\"device\":\"%s\",\"boot_id\":\"%s\",\"uptime_sec\":%lu,\"logs\":\"",
+             deviceId, bootId, millis() / 1000);
+    json += header;
+    
+    // Escape log content
     for (size_t i = 0; i < logs.length(); i++) {
         char c = logs[i];
         switch (c) {
@@ -196,14 +212,17 @@ bool RemoteLoggerClass::sendLogs(const String& logs) {
             default:
                 if (c >= 32 && c < 127) {
                     json += c;
-                } else {
-                    // Skip non-printable characters
                 }
         }
     }
-    json += "\"}";
+    json += "\"}"; 
     
-    return s_logClient.post(serverUrl, json);
+    HttpClient::Header hdrs[] = {
+        {"Content-Type", "application/json"},
+        {"X-Device-ID", deviceId}
+    };
+    HttpClient http(HTTP_TIMEOUT_SHORT_MS);
+    return http.post(serverUrl, json, hdrs, 2);
 }
 
 bool RemoteLoggerClass::sendBootNotification() {
@@ -247,8 +266,13 @@ bool RemoteLoggerClass::sendBootNotification() {
     // so this notification carries an empty logs field — the real logs
     // follow immediately in the normal flush.
     json += "\"}";
-
-    return s_logClient.post(serverUrl, json);
+    
+    HttpClient::Header hdrs[] = {
+        {"Content-Type", "application/json"},
+        {"X-Device-ID", deviceId}
+    };
+    HttpClient http(HTTP_TIMEOUT_SHORT_MS);
+    return http.post(serverUrl, json, hdrs, 2);
 }
 
 // ============================================================================

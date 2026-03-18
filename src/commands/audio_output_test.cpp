@@ -1,5 +1,5 @@
 #include "commands_internal.h"
-
+#ifdef TEST_MODE
 // ============================================================================
 // AUDIO OUTPUT TEST — Verify I2S data flow without physical speaker access
 // ============================================================================
@@ -182,3 +182,4 @@ void performAudioOutputTest() {
         Logger.println("📞 Leaving dialtone running (phone is off-hook)");
     }
 }
+#endif

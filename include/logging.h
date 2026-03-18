@@ -4,7 +4,7 @@
 #include <Print.h>
 #include <WString.h>
 
-#define LOG_BUFFER_SIZE 100
+#define LOG_BUFFER_SIZE 50
 #define MAX_LOG_MESSAGE_LENGTH 256
 #define MAX_LOG_STREAMS 3  // Serial + Telnet + future expansion
 
