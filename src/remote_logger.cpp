@@ -19,6 +19,9 @@ RemoteLoggerClass RemoteLogger;
 
 static Preferences remoteLogPrefs;
 
+static const char* REMOTE_LOG_DROPPED_LINE =
+    "[I] StreamCopy.h : 187 - StreamCopy::copy  2048 -> 2048 -> 2048 bytes - in 1 hops";
+
 RemoteLoggerClass::RemoteLoggerClass() 
     : lineCount(0), lastFlushTime(0), enabled(false), vpnRequired(true), bootSent(false) {
     serverUrl[0] = '\0';
@@ -28,6 +31,50 @@ RemoteLoggerClass::RemoteLoggerClass()
     // Global constructors run before FreeRTOS starts — heap allocs and
     // hardware API calls at this stage can prevent the idle-task stack
     // from being allocated, causing a boot crash.  Deferred to begin().
+}
+
+bool RemoteLoggerClass::isDroppedRemoteLogLine(const String& line) {
+    return line == REMOTE_LOG_DROPPED_LINE;
+}
+
+void RemoteLoggerClass::trimLogBuffer() {
+    while (logBuffer.length() >= REMOTE_LOG_BUFFER_SIZE - 256) {
+        int nl = logBuffer.indexOf('\n');
+        if (nl < 0) {
+            // Keep recent bytes if we don't have a full line break yet.
+            if (logBuffer.length() > REMOTE_LOG_BUFFER_SIZE / 2) {
+                logBuffer.remove(0, logBuffer.length() - (REMOTE_LOG_BUFFER_SIZE / 2));
+            }
+            break;
+        }
+        logBuffer.remove(0, nl + 1);
+        if (lineCount > 0) {
+            lineCount--;
+        }
+    }
+}
+
+void RemoteLoggerClass::appendFilteredTo(String& targetBuffer, const uint8_t* buffer, size_t size, bool countLines) {
+    for (size_t i = 0; i < size; i++) {
+        char c = (char)buffer[i];
+        if (c == '\r') {
+            continue;
+        }
+
+        if (c == '\n') {
+            if (!isDroppedRemoteLogLine(lineAssembleBuffer)) {
+                targetBuffer += lineAssembleBuffer;
+                targetBuffer += '\n';
+                if (countLines) {
+                    lineCount++;
+                }
+            }
+            lineAssembleBuffer = "";
+            continue;
+        }
+
+        lineAssembleBuffer += c;
+    }
 }
 
 void RemoteLoggerClass::begin(const char* server, const char* devId, bool requireVpn) {
@@ -96,53 +143,34 @@ void RemoteLoggerClass::setDeviceId(const char* id) {
 }
 
 size_t RemoteLoggerClass::write(uint8_t byte) {
+    const uint8_t oneByte[] = {byte};
+
     if (!enabled) {
         // Capture early boot logs before begin() enables us
-        if (preConnectBuffer.length() < REMOTE_LOG_BUFFER_SIZE) {
-            preConnectBuffer += (char)byte;
+        appendFilteredTo(preConnectBuffer, oneByte, 1, false);
+        if (preConnectBuffer.length() > REMOTE_LOG_BUFFER_SIZE) {
+            preConnectBuffer.remove(0, preConnectBuffer.length() - REMOTE_LOG_BUFFER_SIZE);
         }
         return 1;
     }
-    
-    if (byte == '\n') {
-        lineCount++;
-    }
-    logBuffer += (char)byte;
-    
-    // Drop oldest lines if buffer is full (flush happens from loop())
-    if (logBuffer.length() >= REMOTE_LOG_BUFFER_SIZE - 256) {
-        int nl = logBuffer.indexOf('\n');
-        if (nl >= 0) {
-            logBuffer.remove(0, nl + 1);
-            lineCount--;
-        }
-    }
+
+    appendFilteredTo(logBuffer, oneByte, 1, true);
+    trimLogBuffer();
     
     return 1;
 }
 
 size_t RemoteLoggerClass::write(const uint8_t* buffer, size_t size) {
     if (!enabled) {
-        size_t room = REMOTE_LOG_BUFFER_SIZE - preConnectBuffer.length();
-        size_t n = size < room ? size : room;
-        if (n > 0) preConnectBuffer.concat((const char*)buffer, n);
+        appendFilteredTo(preConnectBuffer, buffer, size, false);
+        if (preConnectBuffer.length() > REMOTE_LOG_BUFFER_SIZE) {
+            preConnectBuffer.remove(0, preConnectBuffer.length() - REMOTE_LOG_BUFFER_SIZE);
+        }
         return size;
     }
-    
-    // Bulk append — single allocation instead of char-by-char
-    logBuffer.concat((const char*)buffer, size);
-    for (size_t i = 0; i < size; i++) {
-        if (buffer[i] == '\n') lineCount++;
-    }
-    
-    // Drop oldest lines if buffer is full (flush happens from loop())
-    if (logBuffer.length() >= REMOTE_LOG_BUFFER_SIZE - 256) {
-        int nl = logBuffer.indexOf('\n');
-        if (nl >= 0) {
-            logBuffer.remove(0, nl + 1);
-            lineCount--;
-        }
-    }
+
+    appendFilteredTo(logBuffer, buffer, size, true);
+    trimLogBuffer();
     
     return size;
 }

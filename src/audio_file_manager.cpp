@@ -70,6 +70,7 @@ struct AudioDownloadItem
 static unsigned long lastCacheTime = 0;
 static unsigned long lastCacheCheck = 0;  // Last lightweight cache check time
 static char cachedEtag[64] = {0};         // Cached ETag/lastModified for quick validation
+static bool pendingBootCacheValidation = false; // Run one non-blocking cache check in first maintenance loop
 static bool sdCardAvailable = false;  // True if SD card is mounted and accessible
 static bool sdCardInitFailed = false; // True if SD init was attempted and failed (don't retry)
 static bool spiInitialized = false;   // True after SPI.begin() has been called
@@ -843,7 +844,7 @@ static int parseAndRegisterAudioFiles(const String& jsonString, AudioFileProcess
  * @param audioFileCount Optional count - if not provided, uses registry size
  * @return true if cache needs refresh, false otherwise
  */
-static bool isCacheStale(int audioFileCount = -1)
+static bool isCacheStale(int audioFileCount = -1, bool allowRemoteValidation = true)
 {
     // Use registry size if count not provided
     if (audioFileCount < 0)
@@ -904,7 +905,7 @@ static bool isCacheStale(int audioFileCount = -1)
     // Always check on the first eligible call after boot, then rate-limit.
     unsigned long timeSinceLastCheck = currentTime - lastCacheCheck;
     bool firstCheckAfterBoot = (lastCacheCheck == 0);
-    if ((firstCheckAfterBoot || timeSinceLastCheck > CACHE_CHECK_INTERVAL_MS) && WiFi.status() == WL_CONNECTED)
+    if (allowRemoteValidation && (firstCheckAfterBoot || timeSinceLastCheck > CACHE_CHECK_INTERVAL_MS) && WiFi.status() == WL_CONNECTED)
     {
         lastCacheCheck = currentTime;
         Logger.println("🔍 Performing lightweight cache validation...");
@@ -1012,6 +1013,7 @@ AudioSource *initializeAudioFileManager()
         source = new AudioSourceSD(SD_AUDIO_PATH, "wav", SD_CS_PIN, SPI);
         Logger.println("✅ AudioSourceSD created");
 #endif
+
     }
     else
     {
@@ -1027,10 +1029,16 @@ AudioSource *initializeAudioFileManager()
         Logger.println("✅ Audio files loaded from SD card cache");
         
         // Check if cache is stale
-        bool stale = isCacheStale(audioFileCount);
+        // Keep boot fast: skip remote validation here and defer it to maintenance loop.
+        bool stale = isCacheStale(audioFileCount, false);
         if (stale)
         {
             Logger.println("⏰ Cache is stale, will refresh when WiFi is available");
+        }
+        else
+        {
+            // Cache looks fresh locally - verify remotely in the first loop without delaying boot.
+            pendingBootCacheValidation = true;
         }
         keyRegistry.listKeys();
         
@@ -1288,6 +1296,25 @@ void invalidateAudioCache()
 
 void audioMaintenanceLoop()
 {
+    // One-time post-boot validation: do a remote cache check after startup
+    // instead of blocking initialization.
+    if (pendingBootCacheValidation)
+    {
+        if (WiFi.status() == WL_CONNECTED)
+        {
+            pendingBootCacheValidation = false;
+            if (isCacheStale())
+            {
+                Logger.println("🔄 Post-boot cache validation detected changes, refreshing catalog...");
+                downloadAudio(1, 0);
+            }
+            else
+            {
+                Logger.println("✅ Post-boot cache validation confirmed catalog is current");
+            }
+        }
+    }
+
     // 1. Periodic catalog refresh: re-download if cache is stale
     //    isCacheStale() is lightweight — only does HTTP when enough time has passed
     static unsigned long lastCatalogCheck = 0;

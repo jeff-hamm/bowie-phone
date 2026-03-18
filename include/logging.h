@@ -38,6 +38,9 @@ private:
     int bufferPos;
     LogLevel currentLogLevel;
 
+    bool shouldFilterLine(const char* line) const;
+    void flushBufferedLine();
+
 public:
     LoggerClass();
     

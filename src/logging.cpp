@@ -12,6 +12,39 @@ LoggerClass::LoggerClass() : streamCount(0), logIndex(0), logCount(0), bufferPos
     }
 }
 
+bool LoggerClass::shouldFilterLine(const char* line) const {
+    if (!line) {
+        return false;
+    }
+    return strstr(line, "StreamCopy::copy") != nullptr;
+}
+
+void LoggerClass::flushBufferedLine() {
+    if (bufferPos <= 0) {
+        return;
+    }
+
+    messageBuffer[bufferPos] = '\0';
+    if (shouldFilterLine(messageBuffer)) {
+        bufferPos = 0;
+        messageBuffer[0] = '\0';
+        return;
+    }
+
+    for (int i = 0; i < streamCount; i++) {
+        if (streams[i]) {
+            streams[i]->write((const uint8_t*)messageBuffer, bufferPos);
+            streams[i]->write('\n');
+        }
+    }
+
+    String timestampedMessage = String(millis()) + "ms: " + String(messageBuffer);
+    addMessageToBuffer(timestampedMessage);
+
+    bufferPos = 0;
+    messageBuffer[0] = '\0';
+}
+
 void LoggerClass::addLogger(Print& print) {
     if (streamCount < MAX_LOG_STREAMS) {
         streams[streamCount++] = &print;
@@ -37,47 +70,26 @@ size_t LoggerClass::write(uint8_t byte) {
     if (currentLogLevel == LOG_QUIET) {
         return 1; // Pretend we wrote it
     }
-    
-    // Write to all output streams (Serial, Telnet, etc.)
-    size_t result = 1;
-    for (int i = 0; i < streamCount; i++) {
-        if (streams[i]) {
-            streams[i]->write(byte);
-        }
+
+    if (byte == '\r') {
+        return 1;
     }
-    
-    // Buffer the character for log messages
+
+    if (byte == '\n') {
+        flushBufferedLine();
+        return 1;
+    }
+
     if (bufferPos < MAX_LOG_MESSAGE_LENGTH - 1) {
-        messageBuffer[bufferPos++] = byte;
-        messageBuffer[bufferPos] = '\0';
-        
-        // If we hit a newline, add the message to log buffer
-        if (byte == '\n' || byte == '\r') {
-            if (bufferPos > 1) { // Only if there's actual content (more than just the newline)
-                // Remove the newline from the buffer
-                messageBuffer[bufferPos - 1] = '\0';
-                
-                // Add timestamped message to log buffer
-                String timestampedMessage = String(millis()) + "ms: " + String(messageBuffer);
-                addMessageToBuffer(timestampedMessage);
-            }
-            
-            // Reset buffer
-            bufferPos = 0;
-            messageBuffer[0] = '\0';
-        }
+        messageBuffer[bufferPos++] = (char)byte;
     } else {
-        // Buffer full, add what we have and reset
-        String timestampedMessage = String(millis()) + "ms: " + String(messageBuffer);
-        addMessageToBuffer(timestampedMessage);
-        
-        // Reset buffer and add current byte
-        bufferPos = 0;
-        messageBuffer[bufferPos++] = byte;
-        messageBuffer[bufferPos] = '\0';
+        // Prevent overrun by flushing the current line fragment first.
+        flushBufferedLine();
+        messageBuffer[bufferPos++] = (char)byte;
     }
-    
-    return result;
+    messageBuffer[bufferPos] = '\0';
+
+    return 1;
 }
 
 size_t LoggerClass::write(const uint8_t* buffer, size_t size) {
@@ -85,52 +97,12 @@ size_t LoggerClass::write(const uint8_t* buffer, size_t size) {
     if (currentLogLevel == LOG_QUIET) {
         return size; // Pretend we wrote it
     }
-    
-    // Write to all output streams
-    size_t result = size;
-    for (int i = 0; i < streamCount; i++) {
-        if (streams[i]) {
-            streams[i]->write(buffer, size);
-        }
-    }
-    
-    // Process each byte for log buffer (without calling serial again)
+
     for (size_t i = 0; i < size; i++) {
-        uint8_t byte = buffer[i];
-        
-        // Buffer the character for log messages
-        if (bufferPos < MAX_LOG_MESSAGE_LENGTH - 1) {
-            messageBuffer[bufferPos++] = byte;
-            messageBuffer[bufferPos] = '\0';
-            
-            // If we hit a newline, add the message to log buffer
-            if (byte == '\n' || byte == '\r') {
-                if (bufferPos > 1) { // Only if there's actual content (more than just the newline)
-                    // Remove the newline from the buffer
-                    messageBuffer[bufferPos - 1] = '\0';
-                    
-                    // Add timestamped message to log buffer
-                    String timestampedMessage = String(millis()) + "ms: " + String(messageBuffer);
-                    addMessageToBuffer(timestampedMessage);
-                }
-                
-                // Reset buffer
-                bufferPos = 0;
-                messageBuffer[0] = '\0';
-            }
-        } else {
-            // Buffer full, add what we have and reset
-            String timestampedMessage = String(millis()) + "ms: " + String(messageBuffer);
-            addMessageToBuffer(timestampedMessage);
-            
-            // Reset buffer and add current byte
-            bufferPos = 0;
-            messageBuffer[bufferPos++] = byte;
-            messageBuffer[bufferPos] = '\0';
-        }
+        write(buffer[i]);
     }
-    
-    return result;
+
+    return size;
 }
 
 // ============================================================================

@@ -44,6 +44,7 @@ class RemoteLoggerClass : public Print {
 private:
     String logBuffer;
     String preConnectBuffer;  // Logs captured before VPN is ready
+    String lineAssembleBuffer; // Partial line buffer for per-line filtering
     int lineCount;
     unsigned long lastFlushTime;
     char serverUrl[128];
@@ -52,6 +53,10 @@ private:
     bool enabled;
     bool vpnRequired;  // Only send when VPN is connected
     bool bootSent;     // True after boot notification delivered
+
+    static bool isDroppedRemoteLogLine(const String& line);
+    void trimLogBuffer();
+    void appendFilteredTo(String& targetBuffer, const uint8_t* buffer, size_t size, bool countLines);
     
     bool sendLogs(const String& logs);
     bool sendBootNotification();
