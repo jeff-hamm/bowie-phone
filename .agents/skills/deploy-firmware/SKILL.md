@@ -27,7 +27,7 @@ compatibility: Requires PowerShell on Windows host. PlatformIO OTA needs WireGua
 After any build+upload, **always start a monitor session in a background terminal** so firmware output is visible for testing and validation:
 
 ```powershell
-~\.platformio\penv\Scripts\platformio.exe device monitor --environment bowie-phone-custom
+~\.platformio\penv\Scripts\pio.exe device monitor --environment bowie-phone-custom
 ```
 
 Run this as a **background terminal** (`isBackground: true`) immediately after upload completes, then use `get_terminal_output` to read the live logs and confirm the change behaved as expected.

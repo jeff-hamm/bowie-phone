@@ -71,10 +71,10 @@ After `OFF_HOOK_TIMEOUT_MS` (30 s) of inactivity, `"off_hook"` warning tone play
 
 ## Threading
 
-- Goertzel task: core 0. Writes `volatile char goertzelPendingKey`.
-- Main loop: core 1. Reads via `getGoertzelKey()` (atomic read-and-clear).
+- Goertzel task: core 0. Sends detected keys to FreeRTOS queue (`goertzelKeyQueue`).
+- Main loop: core 1. Reads via `getGoertzelKey()` (dequeues one key per call).
 - `goertzelMuted`: `volatile bool`, written core 1, read core 0.
-- No mutex needed — single-char and single-bool operations are atomic on ESP32.
+- Queue is thread-safe; `volatile bool` is atomic on ESP32.
 
 ## Detailed Documentation
 

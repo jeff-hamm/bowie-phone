@@ -79,6 +79,10 @@ static const char* extensionToMime(const char* path) {
 
 const char* ExtendedAudioSource::mime() {
     if (currentType == AudioStreamType::GENERATOR) return "audio/pcm";
+    // For file streams, prefer magic-bytes detection over extension
+    if (currentType == AudioStreamType::FILE_STREAM && detectedFileMime[0] != '\0') {
+        return detectedFileMime;
+    }
     if (currentKey[0] != '\0') {
         const char* m = extensionToMime(currentKey);
         if (m) return m;
@@ -96,6 +100,7 @@ void ExtendedAudioSource::end() {
 }
 
 void ExtendedAudioSource::closeCurrentStream() {
+    detectedFileMime[0] = '\0';
     switch (currentType) {
         case AudioStreamType::URL_STREAM:
             if (urlStream) {
@@ -248,6 +253,39 @@ bool ExtendedAudioSource::setGeneratorStream(const char* generatorName) {
     return true;
 }
 
+const char* ExtendedAudioSource::detectMimeFromFileContent(File& file) {
+    if (!file || file.size() < 12) return nullptr;
+    
+    size_t pos = file.position();
+    uint8_t header[12];
+    size_t bytesRead = file.read(header, sizeof(header));
+    file.seek(pos);  // Restore position
+    
+    if (bytesRead < 12) return nullptr;
+    
+    // WAV: "RIFF" at 0, "WAVE" at 8
+    if (memcmp(header, "RIFF", 4) == 0 && memcmp(header + 8, "WAVE", 4) == 0) {
+        return "audio/wav";
+    }
+    // MP4/M4A: "ftyp" at offset 4
+    if (memcmp(header + 4, "ftyp", 4) == 0) {
+        return "audio/m4a";
+    }
+    // OGG: "OggS" at 0
+    if (memcmp(header, "OggS", 4) == 0) {
+        return "audio/ogg";
+    }
+    // FLAC: "fLaC" at 0
+    if (memcmp(header, "fLaC", 4) == 0) {
+        return "audio/flac";
+    }
+    // MP3: ID3 tag or sync word
+    if (memcmp(header, "ID3", 3) == 0 || (header[0] == 0xFF && (header[1] & 0xE0) == 0xE0)) {
+        return "audio/mpeg";
+    }
+    return nullptr;
+}
+
 bool ExtendedAudioSource::setFileStream(const char* filePath) {
     if (!filePath) {
         Logger.println("❌ Invalid file path");
@@ -265,6 +303,19 @@ bool ExtendedAudioSource::setFileStream(const char* filePath) {
     if (!currentFile) {
         Logger.printf("❌ Failed to open file: %s\n", filePath);
         return false;
+    }
+    
+    // Detect actual format from magic bytes — don't trust the file extension
+    detectedFileMime[0] = '\0';
+    const char* detected = detectMimeFromFileContent(currentFile);
+    if (detected) {
+        strncpy(detectedFileMime, detected, sizeof(detectedFileMime) - 1);
+        detectedFileMime[sizeof(detectedFileMime) - 1] = '\0';
+        const char* extMime = extensionToMime(filePath);
+        if (extMime && strcmp(extMime, detected) != 0) {
+            Logger.printf("⚠️ Format mismatch: file '%s' extension says %s but content is %s\n",
+                          filePath, extMime, detected);
+        }
     }
     
     currentType = AudioStreamType::FILE_STREAM;
@@ -694,6 +745,10 @@ bool ExtendedAudioPlayer::startStream(AudioStreamType type, const char* audioKey
     // Start playback
     player->play();
     
+    // Reset stall detector for the new stream
+    lastNonZeroCopyTime = millis();
+    zeroCopyCount = 0;
+    
     // Notify callback
     if (eventCallback) {
         eventCallback(true);
@@ -711,6 +766,35 @@ void ExtendedAudioPlayer::stop() {
     
     // Stop playback
     stopInternal();
+}
+
+void ExtendedAudioPlayer::emergencyStop() {
+    Logger.println("🚨 emergencyStop() — aborting all audio and resetting state");
+    
+    // Clear queue first so onStreamEnd() doesn't try to advance
+    audioQueue.clear();
+    
+    // Force-stop the player (may be in a bad state)
+    if (player) {
+        player->stop();
+    }
+    if (source) {
+        source->end();
+    }
+    
+    // Reset all playback state
+    currentType = AudioStreamType::NONE;
+    currentKey[0] = '\0';
+    currentDurationMs = 0;
+    isPlaying = false;
+    lastCopyBytes = 0;
+    zeroCopyCount = 0;
+    lastNonZeroCopyTime = 0;
+    
+    // Notify callback
+    if (eventCallback) {
+        eventCallback(false);
+    }
 }
 
 void ExtendedAudioPlayer::stopInternal() {
@@ -755,6 +839,13 @@ void ExtendedAudioPlayer::setActive(bool active) {
     }
 }
 
+// Maximum time (ms) copy() can return 0 bytes before we declare a stall.
+// Generators produce data every call; file/URL streams may briefly stall
+// during seeks, but >3 s of nothing means the decoder is stuck.
+static const unsigned long COPY_STALL_TIMEOUT_MS = 3000;
+// Maximum consecutive zero-byte copy() calls before stall (secondary check)
+static const int COPY_STALL_MAX_ZERO = 300;
+
 bool ExtendedAudioPlayer::copy() {
     if (!initialized || !player) {
         return false;
@@ -774,6 +865,23 @@ bool ExtendedAudioPlayer::copy() {
     if (player->isActive()) {
         size_t bytesCopied = player->copy();
         lastCopyBytes = bytesCopied;
+        
+        // Stall detection: if decoder is stuck (e.g. wrong format) it loops
+        // consuming input but producing 0 output.  Detect and abort.
+        if (bytesCopied > 0) {
+            lastNonZeroCopyTime = millis();
+            zeroCopyCount = 0;
+        } else {
+            zeroCopyCount++;
+            unsigned long stallMs = millis() - lastNonZeroCopyTime;
+            if (lastNonZeroCopyTime > 0 &&
+                (stallMs >= COPY_STALL_TIMEOUT_MS || zeroCopyCount >= COPY_STALL_MAX_ZERO)) {
+                Logger.printf("🛑 Audio stall detected: 0 bytes for %lu ms (%d calls) on '%s' — aborting\n",
+                              stallMs, zeroCopyCount, currentKey);
+                emergencyStop();
+                return false;
+            }
+        }
         // Periodic diagnostic for generator streams
         if (source && source->getCurrentStreamType() == AudioStreamType::GENERATOR) {
             static unsigned long lastDiag = 0;

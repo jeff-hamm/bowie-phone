@@ -200,18 +200,10 @@ static void processDebugCommand(const String& cmd) {
         Logger.println("   tailscale     - Toggle Tailscale VPN on/off");
         Logger.println("   pullota <url> - Pull firmware from URL");
         Logger.println("   update        - Enter firmware bootloader mode");
+        Logger.println("   refresh-audio - Refresh audio catalog from server");
+        Logger.println("   reboot        - Reboot Device");
         Logger.println("   <digits>      - Simulate DTMF sequence");
         Logger.println();
-        Logger.println("📱 Phone Commands (dial these):");
-        Logger.println("   *123#  - System Status");
-        Logger.println("   *789#  - Reboot Device");
-        Logger.println("   *#06#  - Device Info");
-        Logger.println("   clear-cache  - Clear Cache & Reboot");
-        Logger.println("   *#07#  - Refresh Audio");
-        Logger.println("   *#08#  - Prepare for OTA");
-        Logger.println("   *#09#  - Phone Home Check-in");
-        Logger.println("   *#88#  - Tailscale Status");
-        Logger.println("   *#00#  - List All Commands");
     }
     else if (cmd.equalsIgnoreCase("scan") || cmd.equalsIgnoreCase("wifiscan")) {
         Logger.println("🔧 [DEBUG] Scanning for WiFi networks...");
@@ -347,6 +339,12 @@ static void processDebugCommand(const String& cmd) {
     }
     else if (cmd.equalsIgnoreCase("bootloader") || cmd.equalsIgnoreCase("flash") || cmd.equalsIgnoreCase("update")) {
         enterFirmwareUpdateMode();
+    }
+    else if (cmd.equalsIgnoreCase("reboot") || cmd.equalsIgnoreCase("restart")) {
+        executeReboot();
+    }
+    else if (cmd.equalsIgnoreCase("refresh-audio") || cmd.equalsIgnoreCase("refreshaudio")) {
+        executeRefreshAudio();
     }
     else if (cmd.startsWith("level ")) {
         int level = cmd.substring(6).toInt();

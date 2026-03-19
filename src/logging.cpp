@@ -71,11 +71,7 @@ size_t LoggerClass::write(uint8_t byte) {
         return 1; // Pretend we wrote it
     }
 
-    if (byte == '\r') {
-        return 1;
-    }
-
-    if (byte == '\n') {
+    if (byte == '\n' || byte == '\r') {
         flushBufferedLine();
         return 1;
     }

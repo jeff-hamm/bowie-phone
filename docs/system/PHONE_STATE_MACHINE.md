@@ -122,7 +122,7 @@ playback. Reads from the I2S RX (ADC/mic) DMA channel independently of the TX
 |---|---|
 | `initGoertzelDecoder()` | Register 8 DTMF frequencies, set thresholds |
 | `startGoertzelTask()` | Launch task on core 0: `copy()` → `evaluateBlock()` |
-| `getGoertzelKey()` | Consume pending detected digit (single `volatile char`) |
+| `getGoertzelKey()` | Consume pending detected digit (FreeRTOS queue) |
 | `setGoertzelMuted(bool)` | Suppress detection during non-dialtone playback |
 | `isGoertzelMuted()` | Query mute state |
 | `resetGoertzelState()` | Clear accumulators and pending key |
@@ -131,7 +131,7 @@ playback. Reads from the I2S RX (ADC/mic) DMA channel independently of the TX
 frequency above threshold → magnitudes accumulated in `blockRowMags[4]` /
 `blockColMags[4]` → `evaluateBlock()` finds strongest row+col → magnitude
 floor check → twist ratio check → consecutive-block debounce →
-`goertzelPendingKey` set.
+digit queued via FreeRTOS queue.
 
 **ES8388 DAC→ADC loopback**: The codec has an internal loopback that feeds
 speaker output back into the mic path. Two mitigations:
@@ -225,12 +225,9 @@ Key design points:
 ## Thread Safety
 
 The Goertzel task (core 0) and the main loop (core 1) communicate through a
-single `volatile char goertzelPendingKey`. The main loop reads it with
-`getGoertzelKey()` (read-and-clear). No mutex is needed because:
-
-- Only the Goertzel task writes non-zero values.
-- Only the main loop reads and clears.
-- A single `char` write/read is atomic on ESP32 (32-bit aligned access).
+FreeRTOS queue (`goertzelKeyQueue`, size 8). The main loop reads keys with
+`getGoertzelKey()` which dequeues one digit per call. The queue prevents digit
+loss when the main loop is briefly busy (e.g. stopping dialtone).
 
 The `goertzelMuted` flag is a `volatile bool` written from core 1 and read
 from core 0 — also atomic.

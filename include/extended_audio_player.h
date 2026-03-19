@@ -165,9 +165,13 @@ protected:
     
     // File streaming (uses SD card)
     File currentFile;
+    char detectedFileMime[32] = {0};  // Actual MIME from file magic bytes (may differ from extension)
     
     // Helper to close current stream
     void closeCurrentStream();
+    
+    // Detect actual audio format from first bytes of an open file
+    static const char* detectMimeFromFileContent(File& file);
 };
 
 // ============================================================================
@@ -291,6 +295,14 @@ public:
      * @brief Stop current audio and clear the queue
      */
     void stop();
+    
+    /**
+     * @brief Emergency stop: abort playback and return to idle state.
+     *
+     * Call this when a decoder error or stall is detected. Clears everything
+     * and resets state so the main loop resumes normal hook-state polling.
+     */
+    void emergencyStop();
     
     /**
      * @brief Check if audio is currently playing
@@ -466,6 +478,10 @@ protected:
     unsigned long playbackStartTime = 0;
     unsigned long playbackEndTime = 0;   // Set when playback naturally ends (not on stop())
     size_t lastCopyBytes = 0;
+    
+    // Stall detection: force-stop if copy() produces 0 useful bytes too long
+    unsigned long lastNonZeroCopyTime = 0;  // millis() of last copy() that returned >0
+    int zeroCopyCount = 0;                  // Consecutive copy() calls returning 0
     
     // Audio queue
     std::vector<QueuedAudioItem> audioQueue;

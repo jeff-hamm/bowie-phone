@@ -2,6 +2,7 @@
 #include "dtmf_goertzel.h"
 #include "esp_wifi.h"
 #include "esp_system.h"
+#include "esp_task_wdt.h"
 #include "driver/gpio.h"
 #include "AudioTools.h"
 #include "AudioTools/AudioLibs/AudioBoardStream.h"
@@ -56,6 +57,68 @@ const int FIRMWARE_UPDATE_KEY = 19;  // GPIO 19 = KEY3
 // Flag to track if audio board was initialized
 static bool audioKitInitialized = false;
 
+// ============================================================================
+// CRASH COUNTER — boot-loop protection via RTC memory
+// ============================================================================
+// RTC_NOINIT_ATTR survives soft resets (panic, WDT) but is undefined after
+// power-on or brownout.  A magic sentinel validates stored data.
+static const uint32_t CRASH_COUNTER_MAGIC = 0xDEAD0042;
+static const uint32_t SAFE_MODE_RETRY_MAGIC = 0xBEEF0001;
+RTC_NOINIT_ATTR static uint32_t rtcCrashMagic;
+RTC_NOINIT_ATTR static uint32_t rtcCrashCount;
+RTC_NOINIT_ATTR static uint32_t rtcSafeModeRetry;
+
+#ifndef CRASH_SAFE_MODE_THRESHOLD
+#define CRASH_SAFE_MODE_THRESHOLD 3
+#endif
+#ifndef CRASH_STABILITY_MS
+#define CRASH_STABILITY_MS 60000   // 60 s normal uptime = stable → clear counter
+#endif
+#ifndef SAFE_MODE_REBOOT_MS
+#define SAFE_MODE_REBOOT_MS 300000 // 5 min in safe mode before retrying normal boot
+#endif
+
+static bool inSafeMode = false;
+
+// Evaluate crash history and return true if safe mode should be entered.
+// Called once at the very top of setup(), after Logger is ready.
+static bool evaluateCrashCounter() {
+    esp_reset_reason_t reason = esp_reset_reason();
+
+    // Invalid magic or power-on/brownout → RTC data is garbage, initialize
+    if (rtcCrashMagic != CRASH_COUNTER_MAGIC ||
+        reason == ESP_RST_POWERON || reason == ESP_RST_BROWNOUT) {
+        rtcCrashMagic = CRASH_COUNTER_MAGIC;
+        rtcCrashCount = 0;
+        rtcSafeModeRetry = 0;
+        return false;
+    }
+
+    // Safe-mode retry flag set before last reboot → try normal boot once
+    if (rtcSafeModeRetry == SAFE_MODE_RETRY_MAGIC) {
+        rtcSafeModeRetry = 0;
+        Logger.printf("🔄 Safe-mode retry: attempting normal boot (crash count: %d)\n",
+                      rtcCrashCount);
+        return false;
+    }
+
+    // Crash-type resets → increment
+    switch (reason) {
+        case ESP_RST_PANIC:
+        case ESP_RST_INT_WDT:
+        case ESP_RST_TASK_WDT:
+        case ESP_RST_WDT:
+            rtcCrashCount++;
+            Logger.printf("⚠️ Crash detected (reason %d), count: %d/%d\n",
+                          reason, rtcCrashCount, CRASH_SAFE_MODE_THRESHOLD);
+            break;
+        default:
+            break;  // ESP_RST_SW etc. — preserve counter, don't increment
+    }
+
+    return rtcCrashCount >= CRASH_SAFE_MODE_THRESHOLD;
+}
+
 
 // DTMF sequence checking moved to sequence_processor.cpp
 
@@ -72,6 +135,40 @@ void setup()
 
     Logger.printf("\n\n=== Bowie Phone Starting ===\n");
     Logger.printf("🔧 Firmware: %s  Build: %s %s\n", FIRMWARE_VERSION, __DATE__, __TIME__);
+
+    // === CRASH COUNTER — boot-loop safe mode ===
+    inSafeMode = evaluateCrashCounter();
+    if (inSafeMode) {
+        Logger.printf("\n🛡️ SAFE MODE: %d consecutive crashes detected (threshold %d)\n",
+                      rtcCrashCount, CRASH_SAFE_MODE_THRESHOLD);
+        Logger.println("🛡️ Only WiFi + OTA active. Will retry normal boot in "
+                       + String(SAFE_MODE_REBOOT_MS / 1000) + "s.");
+
+        initNotifications();
+
+        // Firmware update key still checked in safe mode
+        pinMode(FIRMWARE_UPDATE_KEY, INPUT_PULLUP);
+        delay(50);
+        if (digitalRead(FIRMWARE_UPDATE_KEY) == LOW) {
+            Logger.println("🔧 KEY3 held — entering firmware update mode...");
+            enterFirmwareUpdateMode();
+        }
+
+        initWiFi([]() {
+            telnet.onConnect([](String ip) {
+                Logger.printf("📡 Telnet: %s\n", ip.c_str());
+                Logger.printf("🛡️ SAFE MODE — crash count: %d\n", rtcCrashCount);
+                Logger.addLogger(telnet);
+            });
+            telnet.onDisconnect([](String ip) {
+                Logger.removeLogger(telnet);
+            });
+            telnet.begin(23);
+        });
+
+        Logger.println("🛡️ Safe mode ready — OTA at /update, retry timer running");
+        return; // Skip all heavy init (audio, phone, Goertzel, etc.)
+    }
     
 #ifdef RUN_SD_DEBUG_FIRST
     // Build flag to run SD debug before ANY other initialization
@@ -255,6 +352,13 @@ void setup()
     
     Logger.println("✅ Bowie Phone Ready!");
     Logger.println("🔧 Serial Debug Mode ACTIVE - type 'help' for commands");
+    
+    // Enable task watchdog for the main loop (10 s timeout, panic on expiry).
+    // This catches hard hangs — e.g. a decoder stuck in an infinite loop
+    // or a bad pointer deref that doesn't trigger a normal panic.
+    esp_task_wdt_init(10, true);
+    esp_task_wdt_add(NULL);  // Add current (loopTask) to WDT
+    
     // Check if phone is already off hook at boot - play dial tone
     if (Phone.isOffHook())
     {
@@ -265,6 +369,28 @@ void setup()
 
 void loop()
 {
+    // === Safe mode: minimal loop (WiFi + OTA + telnet only) ===
+    if (inSafeMode) {
+        static unsigned long lastCheck = 0;
+        unsigned long now = millis();
+        if (now - lastCheck >= 100) {
+            lastCheck = now;
+            telnet.loop();
+            handleNetworkLoop();
+        }
+        // Retry normal boot after SAFE_MODE_REBOOT_MS
+        if (millis() >= SAFE_MODE_REBOOT_MS) {
+            Logger.println("🔄 Safe mode: retrying normal boot...");
+            delay(500);
+            rtcSafeModeRetry = SAFE_MODE_RETRY_MAGIC;
+            ESP.restart();
+        }
+        return;
+    }
+
+    // Feed the task watchdog — if we don't reach here within 10 s, the WDT resets the chip
+    esp_task_wdt_reset();
+    
     // Process Phone Service
     static unsigned long lastMaintenanceCheck = 0;
     Phone.loop();
@@ -341,5 +467,16 @@ void loop()
         processDebugInput(Serial);
         processDebugInput(telnet);
         // Handle Tailscale VPN keepalive/reconnection and remote logging
+
+        // Clear crash counter once uptime exceeds stability threshold
+        static bool crashCounterCleared = false;
+        if (!crashCounterCleared && millis() >= CRASH_STABILITY_MS) {
+            if (rtcCrashCount > 0) {
+                Logger.printf("✅ Stable for %ds — crash counter cleared (was %d)\n",
+                              CRASH_STABILITY_MS / 1000, rtcCrashCount);
+            }
+            rtcCrashCount = 0;
+            crashCounterCleared = true;
+        }
     }
 }

@@ -153,7 +153,7 @@ void executeDeviceInfo();
 /**
  * @brief Invalidate the audio file cache and reboot the device
  */
-void executeClearCacheAndReboot();
+void executeClearCache();
 
 /**
  * @brief Refresh audio catalog from server

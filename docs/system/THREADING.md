@@ -40,16 +40,18 @@ ISR context (not a regular task).
 ### Goertzel → Main Loop (safe)
 
 ```
-Core 0: goertzelPendingKey = digit;     // volatile char, single write
-Core 1: char k = getGoertzelKey();      // atomic read-and-clear
+Core 0: xQueueSend(goertzelKeyQueue, &digit, 0);  // FreeRTOS queue, non-blocking
+Core 1: char k = getGoertzelKey();                 // xQueueReceive, non-blocking
 ```
 
-Single `char` and `bool` writes are atomic on ESP32 (32-bit aligned). No mutex
-needed for these:
+Detected DTMF digits are passed through a FreeRTOS queue (size 8) which
+prevents digit loss when the main loop is briefly busy (e.g. stopping dialtone).
+`goertzelMuted` remains a `volatile bool` — single-bool writes are atomic on
+ESP32 (32-bit aligned).
 
 | Variable | Type | Written by | Read by |
-|----------|------|-----------|---------|
-| `goertzelPendingKey` | `volatile char` | Core 0 (Goertzel) | Core 1 (loop) |
+|----------|------|-----------|--------|
+| `goertzelKeyQueue` | `QueueHandle_t` | Core 0 (Goertzel) | Core 1 (loop) |
 | `goertzelMuted` | `volatile bool` | Core 1 (loop) | Core 0 (Goertzel) |
 
 ### Logger → RemoteLogger (race condition)

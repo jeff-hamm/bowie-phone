@@ -3,7 +3,9 @@
  * @brief Audio tone generators for synthesizing dial tones, ringback, etc.
  * 
  * This file contains:
- * - DualToneGenerator: Generates two simultaneous sine waves
+ * - ToneGenerator<N>: Generates N simultaneous sine waves (N = 1–4, compile-time)
+ * - DualToneGenerator: Convenience alias for ToneGenerator<2> with two-arg constructor
+ * - MultiToneGenerator: Type alias for ToneGenerator<4>
  * - RepeatingToneGenerator: Wraps a generator to add silence gaps
  * 
  * @date 2025
@@ -11,88 +13,101 @@
 
 #pragma once
 
+#include <array>
 #include <config.h>
 #include "AudioTools/CoreAudio/AudioEffects/SoundGenerator.h"
 
 using namespace audio_tools;
 
 // ============================================================================
-// DUAL TONE GENERATOR
+// TONE GENERATOR (template — 1 to 4 simultaneous tones)
 // ============================================================================
 
 /**
- * @brief Generator for dual-tone audio signals
- * 
- * Generates two simultaneous sine waves with independent frequencies and
- * combines them into a single output stream. Commonly used for creating
- * dial tones (350 Hz + 440 Hz North American standard).
+ * @brief Generator for N simultaneous sine waves (N fixed at compile time)
+ *
+ * N must be 1–4. Because N is a template parameter the compiler can fully
+ * unroll the inner loops, giving the same performance as hand-written code
+ * while sharing a single implementation.
+ *
+ * Amplitude is automatically divided by N so the combined output never clips.
+ *
+ * Usage:
+ *   ToneGenerator<3> gen(std::array<float, 3>{350.0f, 440.0f, 480.0f});
  */
-class DualToneGenerator : public SoundGenerator<int16_t> {
+template<int N>
+class ToneGenerator : public SoundGenerator<int16_t> {
+    static_assert(N >= 1 && N <= 4, "ToneGenerator: N must be 1–4");
 public:
     /**
-     * @brief Construct a new DualToneGenerator
-     * @param freq1 First frequency in Hz (default: 350 Hz)
-     * @param freq2 Second frequency in Hz (default: 440 Hz)
+     * @brief Construct with a fixed-size array of frequencies
+     * @param freqs  std::array of N frequencies in Hz
      * @param amplitude Peak amplitude (default: 16000)
      */
-    DualToneGenerator(float freq1 = 350.0f, float freq2 = 440.0f, float amplitude = 16000.0f) 
-        : m_freq1(freq1), m_freq2(freq2), m_amplitude(amplitude) {
-        m_sampleRate = AUDIO_SAMPLE_RATE;
+    ToneGenerator(std::array<float, N> freqs, float amplitude = 16000.0f)
+        : m_amplitude(amplitude), m_sampleRate(AUDIO_SAMPLE_RATE) {
+        for (int i = 0; i < N; i++) m_freq[i] = freqs[i];
         recalcPhaseIncrements();
     }
-    
-    /**
-     * @brief Initialize the generator with audio format info
-     * @param info Audio format configuration
-     * @return true if initialization succeeded
-     */
+
     bool begin(AudioInfo info) override {
         SoundGenerator<int16_t>::begin(info);
         m_sampleRate = info.sample_rate;
         recalcPhaseIncrements();
-        m_phase1 = 0.0f;
-        m_phase2 = 0.0f;
+        for (int i = 0; i < N; i++) m_phase[i] = 0.0f;
         return true;
     }
-        
-    /**
-     * @brief Recalculate phase increments based on current sample rate
-     */
+
     void recalcPhaseIncrements() {
-        // Phase increment per sample (radians)
-        m_phaseInc1 = 2.0f * PI * m_freq1 / (float)m_sampleRate;
-        m_phaseInc2 = 2.0f * PI * m_freq2 / (float)m_sampleRate;
+        for (int i = 0; i < N; i++)
+            m_phaseInc[i] = 2.0f * PI * m_freq[i] / (float)m_sampleRate;
     }
-    
-    /**
-     * @brief Generate next audio sample
-     * @return 16-bit audio sample combining both tones
-     */
+
     int16_t readSample() override {
-        // Generate two sine waves and add them together
-        float sample1 = sinf(m_phase1) * m_amplitude * 0.5f;
-        float sample2 = sinf(m_phase2) * m_amplitude * 0.5f;
-        
-        // Advance phases
-        m_phase1 += m_phaseInc1;
-        m_phase2 += m_phaseInc2;
-        
-        // Wrap phases to avoid floating point overflow (wrap at 2*PI)
-        if (m_phase1 >= 2.0f * PI) m_phase1 -= 2.0f * PI;
-        if (m_phase2 >= 2.0f * PI) m_phase2 -= 2.0f * PI;
-        
-        return (int16_t)(sample1 + sample2);
+        float sum = 0.0f;
+        for (int i = 0; i < N; i++) {
+            sum += sinf(m_phase[i]);
+            m_phase[i] += m_phaseInc[i];
+            if (m_phase[i] >= 2.0f * PI) m_phase[i] -= 2.0f * PI;
+        }
+        return (int16_t)(sum * (m_amplitude / N));
     }
-    
+
 private:
-    float m_freq1, m_freq2;      ///< Frequencies of the two tones
-    float m_amplitude;            ///< Peak amplitude
-    int m_sampleRate;             ///< Current sample rate
-    float m_phaseInc1 = 0.0f;     ///< Phase increment for tone 1
-    float m_phaseInc2 = 0.0f;     ///< Phase increment for tone 2
-    float m_phase1 = 0.0f;        ///< Current phase for tone 1
-    float m_phase2 = 0.0f;        ///< Current phase for tone 2
+    float m_freq[N];         ///< Tone frequencies
+    float m_phaseInc[N] {};  ///< Phase increments per sample
+    float m_phase[N] {};     ///< Current phase accumulators
+    float m_amplitude;       ///< Peak amplitude
+    int m_sampleRate;        ///< Current sample rate
 };
+
+// ============================================================================
+// DUAL TONE GENERATOR
+// ============================================================================
+
+/**
+ * @brief Convenience wrapper for ToneGenerator<2> with the classic two-arg constructor.
+ *
+ * Commonly used for dial tones (350 Hz + 440 Hz North American standard).
+ */
+class DualToneGenerator : public ToneGenerator<2> {
+public:
+    /**
+     * @brief Construct a DualToneGenerator
+     * @param freq1     First frequency in Hz (default: 350 Hz)
+     * @param freq2     Second frequency in Hz (default: 440 Hz)
+     * @param amplitude Peak amplitude (default: 16000)
+     */
+    DualToneGenerator(float freq1 = 350.0f, float freq2 = 440.0f, float amplitude = 16000.0f)
+        : ToneGenerator<2>(std::array<float, 2>{freq1, freq2}, amplitude) {}
+};
+
+// ============================================================================
+// MULTI TONE GENERATOR
+// ============================================================================
+
+/// @brief Four-tone generator. Alias for ToneGenerator<4>.
+using MultiToneGenerator = ToneGenerator<4>;
 
 // ============================================================================
 // REPEATING TONE GENERATOR

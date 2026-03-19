@@ -1,0 +1,632 @@
+diff --git a/include/audio_file_manager.h b/include/audio_file_manager.h
+index ae69f1a..f134001 100644
+--- a/include/audio_file_manager.h
++++ b/include/audio_file_manager.h
+@@ -17,6 +17,7 @@
+ // ============================================================================
+ #include <Arduino.h>
+ #include "config.h"
++#include "audio_key_registry.h"
+ 
+ // Forward declarations
+ namespace audio_tools {
+@@ -59,25 +60,6 @@ using namespace audio_tools;
+ #define MAX_FILENAME_LENGTH 64      ///< Maximum length for generated filenames
+ #endif
+ 
+-// ============================================================================
+-// STRUCTURES
+-// ============================================================================
+-
+-/**
+- * @brief Structure representing an audio file entry
+- */
+-struct AudioFile
+-{
+-    const char *audioKey;    ///< Audio key (e.g., "dialtone", "busy", or DTMF sequence like "123")
+-    const char *description; ///< Human-readable description
+-    const char *type;        ///< Entry type (e.g., "audio", "service", "shortcut", "url")
+-    const char *data;        ///< File path or URL
+-    const char *ext;         ///< File extension (e.g., "wav", "mp3") - from server metadata
+-    unsigned long ringDuration; ///< Ring duration in ms (how long ringback plays before audio)
+-    unsigned long gap;          ///< Gap duration in ms between audio files in a playlist
+-    unsigned long duration;          ///< Gap duration in ms between audio files in a playlist
+-};
+-
+ // ============================================================================
+ // FUNCTION DECLARATIONS
+ // ============================================================================
+@@ -207,15 +189,15 @@ bool isDownloadQueueEmpty();
+ void preCacheDNS();
+ 
+ /**
+- * @brief Register a single audio file with the AudioKeyRegistry and create its playlist
++ * @brief Register a single audio entry with the AudioKeyRegistry and create its playlist
+  * 
+- * This function is idempotent - calling it multiple times with the same AudioFile
++ * This function is idempotent - calling it multiple times with the same AudioEntry
+  * will produce the same result. If the key is already registered, it will be
+  * updated with the new values.
+  * 
+- * @param file Pointer to the AudioFile to register
++ * @param entry Pointer to the AudioEntry to register
+  * @return true if registration successful, false if skipped or failed
+  */
+-bool registerAudioFile(const AudioFile* file);
++bool registerAudioFile(const AudioEntry* entry);
+ 
+ #endif // AUDIO_FILE_MANAGER_H
+diff --git a/include/audio_key_registry.h b/include/audio_key_registry.h
+index 115ace8..304fd48 100644
+--- a/include/audio_key_registry.h
++++ b/include/audio_key_registry.h
+@@ -7,7 +7,7 @@
+  * - URLs
+  * - Tone generators
+  * 
+- * Uses a unified KeyEntry structure that can hold either a path or a generator.
++ * Uses a unified AudioEntry structure that can hold either a path or a generator.
+  * 
+  * @date 2025
+  */
+@@ -37,97 +37,82 @@ enum class AudioStreamType {
+ };
+ 
+ // ============================================================================
+-// KEY ENTRY STRUCTURE
++// AUDIO ENTRY — discriminated union for all audio resource types
+ // ============================================================================
+ 
+ /**
+- * @brief Unified entry for audio keys - contains either a path or a generator
++ * @brief Type-specific data for file/URL-based audio entries
++ */
++struct FileData {
++    std::string path;            ///< Local file path (for FILE_STREAM)
++    std::string alternatePath;   ///< Original URL for streaming fallback
++    std::string ext;             ///< File extension (e.g., "wav", "mp3")
++};
++
++/**
++ * @brief Type-specific data for tone generator entries
++ */
++struct GeneratorData {
++    SoundGenerator<int16_t>* instance = nullptr;  ///< Generator pointer (caller retains ownership)
++    unsigned long onTimeMs  = 0;   ///< Tone-on duration in ms (0 = continuous)
++    unsigned long offTimeMs = 0;   ///< Silence duration in ms (0 = no gap)
++};
++
++/**
++ * @brief Unified entry for audio keys — holds file, URL, or generator data
+  * 
+- * Each KeyEntry holds:
+- * - The audioKey name
+- * - The stream type
+- * - Either a path (for files/URLs) or a generator pointer (for tones)
+- * - Optional metadata (description, extension)
++ * Discriminated by `type`:
++ * - FILE_STREAM / URL_STREAM → `file` sub-struct is valid
++ * - GENERATOR → `generator` sub-struct is valid
+  */
+-struct KeyEntry {
++struct AudioEntry {
+     std::string audioKey;           ///< The key name
+-    AudioStreamType type;           ///< Type of audio stream
+-    
+-    // Union-like storage: either path or generator (only one is valid based on type)
+-    std::string path;               ///< Local file path (for FILE_STREAM)
+-    std::string alternatePath;       ///< Original URL for streaming fallback
+-    SoundGenerator<int16_t>* generator = nullptr;  ///< Generator pointer (for GENERATOR type)
+-    
+-    // Metadata
+     std::string description;        ///< Human-readable description
+-    std::string ext;                ///< File extension (e.g., "wav", "mp3")
+-    
+-    KeyEntry() : type(AudioStreamType::NONE) {}
+-    
++    AudioStreamType type;           ///< Discriminant
++
++    FileData file;                  ///< Valid when type is FILE_STREAM or URL_STREAM
++    GeneratorData generator;        ///< Valid when type is GENERATOR
++
++    AudioEntry() : type(AudioStreamType::NONE) {}
++
+     /**
+      * @brief Construct a path-based entry (file or URL)
+-     * @param key The audio key name
+-     * @param pathStr Local file path
+-     * @param streamType The stream type
+-     * @param urlStr Optional streaming URL for fallback
+      */
+-    KeyEntry(const char* key, const char* pathStr, AudioStreamType streamType, const char* urlStr = nullptr)
++    AudioEntry(const char* key, const char* pathStr, AudioStreamType streamType, const char* urlStr = nullptr)
+         : audioKey(key ? key : "")
+-        , type(streamType)
+-        , path(pathStr ? pathStr : "")
+-        , alternatePath(urlStr ? urlStr : "")
+-        , generator(nullptr) {}
+-    
++        , type(streamType) {
++        file.path = pathStr ? pathStr : "";
++        file.alternatePath = urlStr ? urlStr : "";
++    }
++
+     /**
+      * @brief Construct a generator-based entry
+      */
+-    KeyEntry(const char* key, SoundGenerator<int16_t>* gen)
++    AudioEntry(const char* key, SoundGenerator<int16_t>* gen,
++               unsigned long onMs = 0, unsigned long offMs = 0)
+         : audioKey(key ? key : "")
+-        , type(AudioStreamType::GENERATOR)
+-        , path("")
+-        , generator(gen) {}
+-    
+-    /**
+-     * @brief Check if this entry represents a generator
+-     */
+-    bool isGenerator() const { return type == AudioStreamType::GENERATOR && generator != nullptr; }
+-    
+-    /**
+-     * @brief Check if this entry represents a path (file or URL)
+-     */
+-    bool isPath() const { return type != AudioStreamType::GENERATOR && !path.empty(); }
+-    
+-    /**
+-     * @brief Check if this entry has a streaming URL
+-     */
+-    bool hasUrl() const { return !alternatePath.empty(); }
++        , type(AudioStreamType::GENERATOR) {
++        generator.instance = gen;
++        generator.onTimeMs  = onMs;
++        generator.offTimeMs = offMs;
++    }
+ 
+-    /**
+-     * @brief Get the path or nullptr if this is a generator
+-     */
+-    const char* getPath() const { return isPath() ? path.c_str() : nullptr; }
+-    
+-    /**
+-     * @brief Get the streaming URL or nullptr if not set
+-     */
+-    const char* getUrl() const { return hasUrl() ? alternatePath.c_str() : nullptr; }
+-    
+-    /**
+-     * @brief Get the generator or nullptr if this is a path
+-     */
+-    SoundGenerator<int16_t>* getGenerator() const { return isGenerator() ? generator : nullptr; }
+-    
+-    /**
+-     * @brief Get the description
+-     */
++    // — Convenience accessors (gate on type) ——————————————————
++
++    bool isGenerator() const { return type == AudioStreamType::GENERATOR && generator.instance != nullptr; }
++    bool isFile()      const { return type != AudioStreamType::GENERATOR && !file.path.empty(); }
++    bool hasUrl()      const { return !file.alternatePath.empty(); }
++
++    const char* getPath()        const { return isFile() ? file.path.c_str() : nullptr; }
++    const char* getUrl()         const { return hasUrl() ? file.alternatePath.c_str() : nullptr; }
++    const char* getExt()         const { return file.ext.empty() ? nullptr : file.ext.c_str(); }
+     const char* getDescription() const { return description.empty() ? nullptr : description.c_str(); }
+-    
+-    /**
+-     * @brief Get the file extension
+-     */
+-    const char* getExt() const { return ext.empty() ? nullptr : ext.c_str(); }
++    SoundGenerator<int16_t>* getGenerator() const { return isGenerator() ? generator.instance : nullptr; }
+ };
+ 
++// Backward-compatible alias — remove once all call-sites are migrated
++using KeyEntry = AudioEntry;
++
+ // ============================================================================
+ // CALLBACK TYPES
+ // ============================================================================
+@@ -230,10 +215,10 @@ public:
+     virtual bool hasKeyWithPrefix(const char* prefix) const;
+     
+     /**
+-     * @brief Get a KeyEntry by audioKey
++     * @brief Get an AudioEntry by audioKey
+      * @return Pointer to the entry, or nullptr if not found
+      */
+-    virtual const KeyEntry* getEntry(const char* audioKey) const;
++    virtual const AudioEntry* getEntry(const char* audioKey) const;
+     
+     /**
+      * @brief Check if the key is a registered generator
+@@ -283,12 +268,12 @@ public:
+     /**
+      * @brief Get iterator to beginning of registry
+      */
+-    std::map<std::string, KeyEntry>::const_iterator begin() const { return registry.begin(); }
++    std::map<std::string, AudioEntry>::const_iterator begin() const { return registry.begin(); }
+     
+     /**
+      * @brief Get iterator to end of registry
+      */
+-    std::map<std::string, KeyEntry>::const_iterator end() const { return registry.end(); }
++    std::map<std::string, AudioEntry>::const_iterator end() const { return registry.end(); }
+     
+     /**
+      * @brief List all registered keys to serial output
+@@ -299,7 +284,7 @@ public:
+     
+ protected:
+     // Unified registry - single map for all entry types
+-    std::map<std::string, KeyEntry> registry;
++    std::map<std::string, AudioEntry> registry;
+     
+     // Dynamic resolution callbacks (fallback when key not in registry)
+     AudioKeyResolverCallback keyResolver = nullptr;
+diff --git a/include/audio_playlist_registry.h b/include/audio_playlist_registry.h
+index 28fd783..142568a 100644
+--- a/include/audio_playlist_registry.h
++++ b/include/audio_playlist_registry.h
+@@ -23,7 +23,7 @@
+ /**
+  * @brief A single item in a playlist
+  * 
+- * Stores an audioKey name and duration. The actual KeyEntry is resolved
++ * Stores an audioKey name and duration. The actual AudioEntry is resolved
+  * by the playlist's registry when needed.
+  */
+ struct PlaylistNode {
+@@ -308,13 +308,13 @@ public:
+     virtual bool appendToPlaylist(const char* playlistName, const char* audioKey, unsigned long durationMs = 0);
+     
+     /**
+-     * @brief Append a KeyEntry to a playlist
++     * @brief Append an AudioEntry to a playlist
+      * @param playlistName The playlist to modify
+      * @param entry The entry to append
+      * @param durationMs Duration in ms (0 = play to completion)
+      * @return true if appended successfully
+      */
+-    virtual bool appendToPlaylist(const char* playlistName, const KeyEntry* entry, unsigned long durationMs = 0);
++    virtual bool appendToPlaylist(const char* playlistName, const AudioEntry* entry, unsigned long durationMs = 0);
+     
+     /**
+      * @brief Clear a playlist's contents
+diff --git a/src/audio_file_manager.cpp b/src/audio_file_manager.cpp
+index ade7d55..a0a4f22 100644
+--- a/src/audio_file_manager.cpp
++++ b/src/audio_file_manager.cpp
+@@ -65,7 +65,7 @@ struct AudioDownloadItem
+ // GLOBAL VARIABLES
+ // ============================================================================
+ 
+-//static AudioFile audioFiles[MAX_AUDIO_FILES];
++//static AudioEntry audioEntries[MAX_AUDIO_FILES];
+ //static int audioFileCount = 0;
+ static unsigned long lastCacheTime = 0;
+ static unsigned long lastCacheCheck = 0;  // Last lightweight cache check time
+@@ -338,7 +338,7 @@ static void enqueueMissingAudioFilesFromRegistry()
+ 
+     for (const auto& pair : keyRegistry)
+     {
+-        const KeyEntry& entry = pair.second;
++        const AudioEntry& entry = pair.second;
+         
+         // Only queue entries that have a streaming URL (means original was a URL)
+         if (!entry.getUrl())
+@@ -358,7 +358,7 @@ static void enqueueMissingAudioFilesFromRegistry()
+         // Also check if the primary local path already exists on disk
+         // (covers the case where Content-Type changed the extension and
+         //  the registry path was updated but ext field wasn't set yet)
+-        if (!entry.path.empty() && SD_EXISTS(entry.path.c_str()))
++        if (!entry.file.path.empty() && SD_EXISTS(entry.file.path.c_str()))
+         {
+             continue; // Already cached under the corrected path
+         }
+@@ -557,6 +557,37 @@ static bool processDownloadQueueInternal()
+     {
+         Logger.printf("✅ Downloaded %d bytes to: %s\n", totalBytes, item->localPath);
+         consecutiveFailures = 0;
++        
++        // Validate actual file content against the saved extension.
++        // Google Drive may serve MP4/M4A content for files labelled as .wav.
++        File savedFile = SD_OPEN(item->localPath, FILE_READ);
++        if (savedFile && savedFile.size() >= 12) {
++            uint8_t hdr[12];
++            savedFile.read(hdr, 12);
++            savedFile.close();
++            const char* actualExt = nullptr;
++            if (memcmp(hdr + 4, "ftyp", 4) == 0) actualExt = "m4a";
++            else if (memcmp(hdr, "RIFF", 4) == 0 && memcmp(hdr + 8, "WAVE", 4) == 0) actualExt = "wav";
++            else if (memcmp(hdr, "ID3", 3) == 0 || (hdr[0] == 0xFF && (hdr[1] & 0xE0) == 0xE0)) actualExt = "mp3";
++            else if (memcmp(hdr, "OggS", 4) == 0) actualExt = "ogg";
++            else if (memcmp(hdr, "fLaC", 4) == 0) actualExt = "flac";
++            
++            if (actualExt && item->ext[0] && strcmp(actualExt, item->ext) != 0) {
++                Logger.printf("⚠️ Downloaded '%s' but content is actually %s (not %s) — renaming\n",
++                              item->description, actualExt, item->ext);
++                char newPath[128];
++                if (getLocalPathForUrl(item->url, newPath, actualExt)) {
++                    SD_CARD.rename(item->localPath, newPath);
++                    strncpy(item->localPath, newPath, sizeof(item->localPath) - 1);
++                    item->localPath[sizeof(item->localPath) - 1] = '\0';
++                    strncpy(item->ext, actualExt, sizeof(item->ext) - 1);
++                    item->ext[sizeof(item->ext) - 1] = '\0';
++                    keyRegistry.registerKey(item->description, item->url, actualExt);
++                }
++            }
++        } else if (savedFile) {
++            savedFile.close();
++        }
+     }
+     
+     item->inProgress = false;
+@@ -700,16 +731,16 @@ static bool checkRemoteCacheValid()
+  * @param userData Optional user data pointer for context
+  * @return true if processing was successful
+  */
+-typedef void (*AudioFileProcessCallback)(const AudioFile* file, void* userData);
++typedef void (*AudioEntryProcessCallback)(const AudioEntry* entry, void* userData);
+ 
+ /**
+- * @brief Parse JSON string and process audio files with a callback
++ * @brief Parse JSON string and process audio entries with a callback
+  * @param jsonString JSON string containing audio file entries
+- * @param callback Function to call for each audio file entry
++ * @param callback Function to call for each audio entry
+  * @param userData Optional user data to pass to callback
+- * @return Number of files successfully processed, -1 on parse error
++ * @return Number of entries successfully processed, -1 on parse error
+  */
+-static int parseAndRegisterAudioFiles(const String& jsonString, AudioFileProcessCallback callback=nullptr, void* userData = nullptr)
++static int parseAndRegisterAudioFiles(const String& jsonString, AudioEntryProcessCallback callback=nullptr, void* userData = nullptr)
+ {
+     // Parse JSON response
+     JsonDocument doc;
+@@ -755,19 +786,21 @@ static int parseAndRegisterAudioFiles(const String& jsonString, AudioFileProcess
+         JsonObject entryData = kv.value().as<JsonObject>();
+         const char* key = kv.key().c_str();
+ 
+-        // Create temporary AudioFile on stack
+-        AudioFile file;
+-        file.audioKey = key;
+-        file.description = entryData["description"] | "Unknown";
+-        file.type = entryData["type"] | "unknown";
+-        file.data = entryData["path"] | entryData["data"]  | "";
+-        file.ext = entryData["ext"] | "";
+-        file.gap = entryData["gap"] | 0;
+-        file.duration = entryData["duration"] | 0;
+-        file.ringDuration = entryData["ring_duration"] | 0;
++        // Create temporary AudioEntry on stack — only file fields populated from JSON
++        AudioEntry entry;
++        entry.audioKey = key;
++        entry.description = entryData["description"] | "Unknown";
++        entry.type = AudioStreamType::FILE_STREAM;  // JSON entries are always file/URL
++        entry.file.path = entryData["path"] | entryData["data"] | "";
++        entry.file.ext = entryData["ext"] | entryData["metadata"] | "";
++
++        // Playlist-related fields stored temporarily for enrichment below
++        unsigned long gap = entryData["gap"] | 0;
++        unsigned long duration = entryData["duration"] | 0;
++        unsigned long ringDuration = entryData["ring_duration"] | 0;
+         
+-        // Register the main audio file
+-        if (!registerAudioFile(&file)) {
++        // Register the main audio entry
++        if (!registerAudioFile(&entry)) {
+             continue;
+         }
+         processedCount++;
+@@ -789,11 +822,11 @@ static int parseAndRegisterAudioFiles(const String& jsonString, AudioFileProcess
+         }
+         
+         // Add ringback if specified
+-        if (file.ringDuration > 0)
+-            desiredNodes.emplace_back("ringback", 0, file.ringDuration);
++        if (ringDuration > 0)
++            desiredNodes.emplace_back("ringback", 0, ringDuration);
+         
+         // Add the main audio file
+-        desiredNodes.emplace_back(file.audioKey, file.gap, file.duration);
++        desiredNodes.emplace_back(entry.audioKey.c_str(), gap, duration);
+         
+         // Add click after main audio (only if "click" is a registered key)
+         if (keyRegistry.hasKey("click"))
+@@ -828,7 +861,7 @@ static int parseAndRegisterAudioFiles(const String& jsonString, AudioFileProcess
+         
+         // Invoke callback if provided
+         if (callback)
+-            callback(&file, userData);
++            callback(&entry, userData);
+     }
+ 
+     return processedCount;
+@@ -1189,10 +1222,10 @@ static bool downloadAudioInternal()
+     
+     // Parse and register audio files directly with registry
+     int registeredCount = parseAndRegisterAudioFiles(payload, 
+-            [](const AudioFile* file, void* userData) -> void {
++            [](const AudioEntry* entry, void* userData) -> void {
+         auto* seenKeys = static_cast<std::set<std::string>*>(userData);
+             if (seenKeys) {
+-                seenKeys->insert(file->audioKey);
++                seenKeys->insert(entry->audioKey);
+             }
+     }, &seenKeys);
+     
+@@ -1410,34 +1443,35 @@ bool isDownloadQueueEmpty()
+ // ============================================================================
+ 
+ /**
+- * @brief Register a single audio file with the AudioKeyRegistry and create its playlist
++ * @brief Register a single audio entry with the AudioKeyRegistry and create its playlist
+  * 
+- * This function is idempotent - calling it multiple times with the same AudioFile
++ * This function is idempotent - calling it multiple times with the same AudioEntry
+  * will produce the same result. Existing registrations are updated, playlists are
+  * recreated with the same content.
+  * 
+- * @param file Pointer to the AudioFile to register
++ * @param entry Pointer to the AudioEntry to register
+  * @return true if registration successful, false if skipped or failed
+  */
+-bool registerAudioFile(const AudioFile* file)
++bool registerAudioFile(const AudioEntry* entry)
+ {
+-    if (!file || !file->audioKey || !file->type) {
++    if (!entry || entry->audioKey.empty()) {
+         return false;
+     }
+     
+-    // Only register audio type entries
+-    if (strcmp(file->type, "audio") != 0) {
+-        Logger.printf("⏭️ Skipping non-audio entry: %s (%s)\n", file->audioKey, file->type);
++    // Only register file/URL type entries (generators are registered separately)
++    if (entry->type == AudioStreamType::GENERATOR || entry->type == AudioStreamType::NONE) {
++        Logger.printf("⏭️ Skipping non-file entry: %s\n", entry->audioKey.c_str());
+         return false;
+     }
+     
+-    if (!file->data || strlen(file->data) == 0) {
+-        Logger.printf("⚠️ No data for: %s\n", file->audioKey);
++    if (entry->file.path.empty()) {
++        Logger.printf("⚠️ No path for: %s\n", entry->audioKey.c_str());
+         return false;
+     }
+     // Register the audio key - overload handles stream type detection and URL fallback
+     // registerKey is idempotent - it will update existing entries
+-    keyRegistry.registerKey(file->audioKey, file->data, file->ext);
++    keyRegistry.registerKey(entry->audioKey.c_str(), entry->file.path.c_str(),
++                            entry->file.ext.empty() ? nullptr : entry->file.ext.c_str());
+     
+     return true;
+ }
+diff --git a/src/audio_key_registry.cpp b/src/audio_key_registry.cpp
+index a9602b6..a287c12 100644
+--- a/src/audio_key_registry.cpp
++++ b/src/audio_key_registry.cpp
+@@ -26,7 +26,7 @@ void AudioKeyRegistry::registerKey(const char* audioKey, const char* path, Audio
+         return;
+     }
+     
+-    KeyEntry entry(audioKey, path, type, alternatePath);
++    AudioEntry entry(audioKey, path, type, alternatePath);
+     registry[std::string(audioKey)] = entry;
+     
+     if (alternatePath && strlen(alternatePath) > 0) {
+@@ -58,7 +58,7 @@ void AudioKeyRegistry::registerKey(const char* audioKey, const char* primaryPath
+     if (ext && strlen(ext) > 0) {
+         auto it = registry.find(std::string(audioKey));
+         if (it != registry.end()) {
+-            it->second.ext = ext;
++            it->second.file.ext = ext;
+         }
+     }
+ }
+@@ -66,7 +66,7 @@ void AudioKeyRegistry::registerKey(const char* audioKey, const char* primaryPath
+ void AudioKeyRegistry::registerGenerator(const char* audioKey, SoundGenerator<int16_t>* generator) {
+     if (!audioKey || !generator) return;
+     
+-    KeyEntry entry(audioKey, generator);
++    AudioEntry entry(audioKey, generator);
+     registry[std::string(audioKey)] = entry;
+     
+     Logger.printf("🎵 Registered generator: %s\n", audioKey);
+@@ -123,7 +123,7 @@ bool AudioKeyRegistry::hasKeyWithPrefix(const char* prefix) const {
+     return false;
+ }
+ 
+-const KeyEntry* AudioKeyRegistry::getEntry(const char* audioKey) const {
++const AudioEntry* AudioKeyRegistry::getEntry(const char* audioKey) const {
+     if (!audioKey) return nullptr;
+     
+     auto it = registry.find(std::string(audioKey));
+@@ -150,7 +150,7 @@ SoundGenerator<int16_t>* AudioKeyRegistry::getGenerator(const char* audioKey) co
+     
+     auto it = registry.find(std::string(audioKey));
+     if (it != registry.end() && it->second.isGenerator()) {
+-        return it->second.generator;
++        return it->second.generator.instance;
+     }
+     
+     return nullptr;
+@@ -166,7 +166,7 @@ const char* AudioKeyRegistry::resolveKey(const char* audioKey) const {
+         if (it->second.isGenerator()) {
+             return nullptr;
+         }
+-        return it->second.path.c_str();
++        return it->second.file.path.c_str();
+     }
+     
+     // Try dynamic resolver as fallback
+@@ -213,7 +213,7 @@ void AudioKeyRegistry::listKeys() const {
+     
+     int index = 1;
+     for (auto it = registry.begin(); it != registry.end(); ++it) {
+-        const KeyEntry& entry = it->second;
++        const AudioEntry& entry = it->second;
+         Logger.printf("%2d. %s\n", index++, entry.audioKey.c_str());
+         
+         if (entry.getDescription()) {
+diff --git a/src/audio_playlist_registry.cpp b/src/audio_playlist_registry.cpp
+index 422e0a2..d9f980b 100644
+--- a/src/audio_playlist_registry.cpp
++++ b/src/audio_playlist_registry.cpp
+@@ -139,19 +139,19 @@ bool AudioPlaylistRegistry::appendToPlaylist(const char* playlistName, const cha
+     
+     // Validate entry exists in registry if we have one
+     if (keyRegistry) {
+-        const KeyEntry* entry = keyRegistry->getEntry(audioKey);
++        const AudioEntry* entry = keyRegistry->getEntry(audioKey);
+         if (!entry) {
+-            Logger.printf("⚠️ Warning: audioKey '%s' not found in registry (appending anyway)\n", audioKey);
++            Logger.printf("\u26a0\ufe0f Warning: audioKey '%s' not found in registry (appending anyway)\n", audioKey);
+         }
+     }
+     
+     playlist->nodes.emplace_back(audioKey, durationMs);
+-    Logger.printf("📋 Appended to '%s': %s (duration=%lu)\n", playlistName, audioKey, durationMs);
++    Logger.printf("\U0001f4cb Appended to '%s': %s (duration=%lu)\n", playlistName, audioKey, durationMs);
+     
+     return true;
+ }
+ 
+-bool AudioPlaylistRegistry::appendToPlaylist(const char* playlistName, const KeyEntry* entry, unsigned long durationMs) {
++bool AudioPlaylistRegistry::appendToPlaylist(const char* playlistName, const AudioEntry* entry, unsigned long durationMs) {
+     if (!playlistName || !entry) return false;
+     
+     // Delegate to string-based version
+@@ -209,7 +209,7 @@ size_t AudioPlaylistRegistry::resolvePlaylist(const char* playlistName) {
+     // Validate that each audioKey exists in the registry
+     size_t valid = 0;
+     for (const auto& node : playlist->nodes) {
+-        const KeyEntry* entry = keyRegistry->getEntry(node.audioKey.c_str());
++        const AudioEntry* entry = keyRegistry->getEntry(node.audioKey.c_str());
+         if (entry) {
+             valid++;
+         } else {
+@@ -243,7 +243,7 @@ bool Playlist::appendEntry(const char* audioKey, unsigned long durationMs) {
+     
+     // Validate entry exists in registry if we have one
+     if (keyRegistry) {
+-        const KeyEntry* entry = keyRegistry->getEntry(audioKey);
++        const AudioEntry* entry = keyRegistry->getEntry(audioKey);
+         if (!entry) {
+             Logger.printf("⚠️ Warning: audioKey '%s' not found in registry (appending anyway)\n", audioKey);
+         }
+@@ -258,7 +258,7 @@ bool Playlist::prependEntry(const char* audioKey, unsigned long durationMs) {
+     
+     // Validate entry exists in registry if we have one
+     if (keyRegistry) {
+-        const KeyEntry* entry = keyRegistry->getEntry(audioKey);
++        const AudioEntry* entry = keyRegistry->getEntry(audioKey);
+         if (!entry) {
+             Logger.printf("⚠️ Warning: audioKey '%s' not found in registry (prepending anyway)\n", audioKey);
+         }
+@@ -273,7 +273,7 @@ bool Playlist::replaceEntry(size_t index, const char* audioKey, unsigned long du
+     
+     // Validate entry exists in registry if we have one
+     if (keyRegistry) {
+-        const KeyEntry* entry = keyRegistry->getEntry(audioKey);
++        const AudioEntry* entry = keyRegistry->getEntry(audioKey);
+         if (!entry) {
+             Logger.printf("⚠️ Warning: audioKey '%s' not found in registry (replacing anyway)\n", audioKey);
+         }

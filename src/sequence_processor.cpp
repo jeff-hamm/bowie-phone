@@ -64,16 +64,16 @@ static bool addDigitToSequence(char digit)
     }
 
     // Special case: '*' or '#' key completes the sequence (excluded from the key string)
-    if (digit == '*' || digit == '#')
-    {
-        if (sequenceIndex > 0)
-        {
-            Logger.printf("⭐ '%c' pressed - completing sequence '%s'\n", digit, dtmfSequence);
-            return true; // Process sequence without adding the terminator
-        }
-        // If terminator is first character, ignore it
-        return false;
-    }
+    // if (digit == '*' || digit == '#')
+    // {
+    //     if (sequenceIndex > 0)
+    //     {
+    //         Logger.printf("⭐ '%c' pressed - completing sequence '%s'\n", digit, dtmfSequence);
+    //         return true; // Process sequence without adding the terminator
+    //     }
+    //     // If terminator is first character, ignore it
+    //     return false;
+    // }
 
     // Add digit to sequence
     if (sequenceIndex < maxSequenceLength)
@@ -253,10 +253,9 @@ bool processNumberSequence(const char *sequence)
         // Play ringback for a random number of rings, then the audio.
         // Click is auto-played by onStreamEnd() after the real audio finishes.
         if (RINGBACK_MIN_RINGS > 0) {
-            int rings = random(RINGBACK_MIN_RINGS, RINGBACK_MAX_RINGS + 1);
-            unsigned long ringbackMs = (unsigned long)((float)rings * RINGBACK_RING_MS);
-            Logger.printf("📞 Ringing %d times (%lu ms) before playing '%s'\n",
-                          rings, ringbackMs, sequence);
+            unsigned long ringbackMs = random(RINGBACK_MIN_RINGS * RINGBACK_RING_MS, (RINGBACK_MAX_RINGS * RINGBACK_RING_MS) + 1);
+            Logger.printf("📞 Ringing for %lu ms before playing '%s'\n",
+                          ringbackMs, sequence);
             audioPlayer.playAudioKey("ringback", ringbackMs);
             audioPlayer.queueAudioKey(sequence);
         } else {

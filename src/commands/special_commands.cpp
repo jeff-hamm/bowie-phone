@@ -32,7 +32,7 @@ static Preferences preferences;
 
 // Default special commands (can be overridden via build flags)
 static const SpecialCommand DEFAULT_SPECIAL_COMMANDS[] = {
-    // ========== SYSTEM OPERATIONS (*xxx#) ==========
+// ========== SYSTEM OPERATIONS (*xxx#) ==========
 #ifdef CUSTOM_COMMAND_1_SEQ
     {CUSTOM_COMMAND_1_SEQ, CUSTOM_COMMAND_1_DESC},
 #else
@@ -43,7 +43,7 @@ static const SpecialCommand DEFAULT_SPECIAL_COMMANDS[] = {
 
     // ========== STATUS & INFO (*#xx#) ==========
     {"*#00#", "List Commands"},
-    {"clear-cache", "Clear Cache & Reboot"},
+    {CLEAR_CACHE_SEQUENCE, "Clear Cache & Reboot"},
     {"*#06#", "Device Info"},
     {"*#07#", "Refresh Audio"},
     {"*#08#", "Prepare for OTA"},
@@ -275,9 +275,8 @@ void assignDefaultHandler(int index, const char* sequence) {
     else if (strcmp(sequence, "*789#")      == 0) specialCommands[index].handler = executeReboot;
     else if (strcmp(sequence, "*000#")      == 0) specialCommands[index].handler = executeFactoryReset;
     else if (strcmp(sequence, "*#00#")      == 0) specialCommands[index].handler = executeListCommands;
-    else if (strcmp(sequence, "clear-cache")== 0) specialCommands[index].handler = executeClearCacheAndReboot;
     else if (strcmp(sequence, "*#06#")      == 0) specialCommands[index].handler = executeDeviceInfo;
-    else if (strcmp(sequence, "*#07#")      == 0) specialCommands[index].handler = executeRefreshAudio;
+    else if (strcmp(sequence, CLEAR_CACHE_SEQUENCE)      == 0) specialCommands[index].handler = executeRefreshAudio;
     else if (strcmp(sequence, "*#08#")      == 0) specialCommands[index].handler = executePrepareOTA;
     else if (strcmp(sequence, "*#09#")      == 0) specialCommands[index].handler = executePhoneHome;
     else if (strcmp(sequence, "*#88#")      == 0) specialCommands[index].handler = executeTailscaleStatus;
@@ -370,15 +369,6 @@ void executeDeviceInfo() {
     Logger.printf("   Free Heap: %d bytes\n", ESP.getFreeHeap());
 }
 
-void executeClearCacheAndReboot() {
-    Logger.printf("🗑️  Clearing audio cache and rebooting...\n");
-    invalidateAudioCache();
-    Logger.printf("✅ Cache cleared. Rebooting in 2 seconds...\n");
-    Logger.flush();
-    getExtendedAudioPlayer().stop();
-    delay(2000);
-    ESP.restart();
-}
 
 void executeRefreshAudio() {
     Logger.printf("🔄 Refreshing audio catalog...\n");

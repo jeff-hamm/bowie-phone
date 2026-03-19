@@ -10,10 +10,12 @@
 #ifndef MAX_SEQUENCE_LENGTH
 #define MAX_SEQUENCE_LENGTH 20
 #endif
-
+#ifndef CLEAR_CACHE_SEQUENCE
+#define CLEAR_CACHE_SEQUENCE "*420#"
+#endif
 // Off-hook timeout - play warning tone after this many milliseconds of inactivity
 #ifndef OFF_HOOK_TIMEOUT_MS
-#define OFF_HOOK_TIMEOUT_MS 30000  // 30 seconds
+#define OFF_HOOK_TIMEOUT_MS 10000  // 10 seconds
 #endif
 
 // ============================================================================
@@ -63,7 +65,7 @@
 #define RINGBACK_MIN_RINGS 1
 #endif
 #ifndef RINGBACK_MAX_RINGS
-#define RINGBACK_MAX_RINGS 4
+#define RINGBACK_MAX_RINGS 3
 #endif
 
 // Ringback cadence timings (milliseconds)

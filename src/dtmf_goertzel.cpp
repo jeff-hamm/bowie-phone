@@ -63,8 +63,10 @@ static char candidateDigit = 0;        // Current digit candidate being evaluate
 static int consecutiveHits = 0;        // How many consecutive blocks matched candidateDigit
 static int consecutiveMisses = 0;      // How many consecutive blocks had no valid detection
 
-// Key emission state (thread-safe: written here, read from main loop)
-static volatile char goertzelPendingKey = 0;  // Key waiting to be consumed by getGoertzelKey()
+// Key emission queue (thread-safe: Goertzel task produces, main loop consumes)
+// FreeRTOS queue prevents digit loss when Goertzel detects faster than main loop reads
+static const int GOERTZEL_KEY_QUEUE_SIZE = 8;
+static QueueHandle_t goertzelKeyQueue = nullptr;
 static char emittedKey = 0;                   // Last emitted key (suppress repeat emission)
 
 // Mute flag — when true, evaluateBlock() skips detection entirely.
@@ -205,7 +207,9 @@ static void evaluateBlock() {
     // Emit when we have enough consecutive matching blocks AND it's a new key
     if (consecutiveHits >= config.requiredConsecutive && digit != emittedKey) {
         emittedKey = digit;
-        goertzelPendingKey = digit;
+        if (goertzelKeyQueue != nullptr) {
+            xQueueSend(goertzelKeyQueue, &digit, 0);  // non-blocking
+        }
         
         Logger.printf("🎵 Goertzel DTMF: '%c' (row=%d/%.0f col=%d/%.0f twist=%.1f hits=%d)\n",
                      digit, bestRow, bestRowMag, bestCol, bestColMag,
@@ -253,6 +257,11 @@ void initGoertzelDecoder(GoertzelStream &goertzel, StreamCopy &copier)
     // Set detection callback
     goertzel.setFrequencyDetectionCallback(onGoertzelFrequency);
     
+    // Create key queue (once) for thread-safe digit passing to main loop
+    if (goertzelKeyQueue == nullptr) {
+        goertzelKeyQueue = xQueueCreate(GOERTZEL_KEY_QUEUE_SIZE, sizeof(char));
+    }
+    
     // Configure Goertzel parameters
     auto cfg = goertzel.defaultConfig();
     cfg.setAudioInfo(AUDIO_INFO_DEFAULT());
@@ -282,9 +291,9 @@ void initGoertzelDecoder(GoertzelStream &goertzel, StreamCopy &copier)
 // ============================================================================
 
 char getGoertzelKey() {
-    char key = goertzelPendingKey;
-    if (key != 0) {
-        goertzelPendingKey = 0;
+    char key = 0;
+    if (goertzelKeyQueue != nullptr) {
+        xQueueReceive(goertzelKeyQueue, &key, 0);  // non-blocking
     }
     return key;
 }
@@ -302,7 +311,9 @@ void resetGoertzelState() {
     candidateDigit = 0;
     consecutiveHits = 0;
     consecutiveMisses = 0;
-    goertzelPendingKey = 0;
+    if (goertzelKeyQueue != nullptr) {
+        xQueueReset(goertzelKeyQueue);
+    }
     emittedKey = 0;
 }
 

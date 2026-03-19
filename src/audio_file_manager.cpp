@@ -557,6 +557,37 @@ static bool processDownloadQueueInternal()
     {
         Logger.printf("✅ Downloaded %d bytes to: %s\n", totalBytes, item->localPath);
         consecutiveFailures = 0;
+        
+        // Validate actual file content against the saved extension.
+        // Google Drive may serve MP4/M4A content for files labelled as .wav.
+        File savedFile = SD_OPEN(item->localPath, FILE_READ);
+        if (savedFile && savedFile.size() >= 12) {
+            uint8_t hdr[12];
+            savedFile.read(hdr, 12);
+            savedFile.close();
+            const char* actualExt = nullptr;
+            if (memcmp(hdr + 4, "ftyp", 4) == 0) actualExt = "m4a";
+            else if (memcmp(hdr, "RIFF", 4) == 0 && memcmp(hdr + 8, "WAVE", 4) == 0) actualExt = "wav";
+            else if (memcmp(hdr, "ID3", 3) == 0 || (hdr[0] == 0xFF && (hdr[1] & 0xE0) == 0xE0)) actualExt = "mp3";
+            else if (memcmp(hdr, "OggS", 4) == 0) actualExt = "ogg";
+            else if (memcmp(hdr, "fLaC", 4) == 0) actualExt = "flac";
+            
+            if (actualExt && item->ext[0] && strcmp(actualExt, item->ext) != 0) {
+                Logger.printf("⚠️ Downloaded '%s' but content is actually %s (not %s) — renaming\n",
+                              item->description, actualExt, item->ext);
+                char newPath[128];
+                if (getLocalPathForUrl(item->url, newPath, actualExt)) {
+                    SD_CARD.rename(item->localPath, newPath);
+                    strncpy(item->localPath, newPath, sizeof(item->localPath) - 1);
+                    item->localPath[sizeof(item->localPath) - 1] = '\0';
+                    strncpy(item->ext, actualExt, sizeof(item->ext) - 1);
+                    item->ext[sizeof(item->ext) - 1] = '\0';
+                    keyRegistry.registerKey(item->description, item->url, actualExt);
+                }
+            }
+        } else if (savedFile) {
+            savedFile.close();
+        }
     }
     
     item->inProgress = false;
@@ -1430,7 +1461,7 @@ bool registerAudioFile(const AudioFile* file)
         Logger.printf("⏭️ Skipping non-audio entry: %s (%s)\n", file->audioKey, file->type);
         return false;
     }
-    
+
     if (!file->data || strlen(file->data) == 0) {
         Logger.printf("⚠️ No data for: %s\n", file->audioKey);
         return false;
