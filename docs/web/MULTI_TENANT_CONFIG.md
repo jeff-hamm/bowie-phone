@@ -105,7 +105,7 @@ These will override the CSS variables dynamically.
 For each site configuration:
 
 1. **Create a Google Sheet** for that site
-2. **Deploy the Apps Script** (use `universal-apps-script.js`)
+2. **Deploy the Apps Script** (use [`submodules/to-do/src/appscript/universal-apps-script.js`](../../submodules/to-do/src/appscript/universal-apps-script.js))
 3. **Create a Google Drive folder** for audio uploads
 4. **Add the IDs to config.js**:
 

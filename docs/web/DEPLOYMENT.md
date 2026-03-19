@@ -22,7 +22,7 @@ Create separate Google resources for BroPhone:
 
 2. **Apps Script**: Deploy the universal backend
    - Open the new sheet → Extensions → Apps Script
-   - Copy the code from `universal-apps-script.js`
+   - Copy the code from [`submodules/to-do/src/appscript/universal-apps-script.js`](../../submodules/to-do/src/appscript/universal-apps-script.js)
    - Deploy as Web App
    - Copy the deployment URL
 
