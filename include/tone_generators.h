@@ -135,17 +135,18 @@ public:
         m_sampleRate = AUDIO_SAMPLE_RATE;
         recalcSampleCounts();
     }
+    RepeatingToneGenerator(SoundGenerator<T> &generator, unsigned long repeatMs)  : RepeatingToneGenerator(generator, repeatMs, repeatMs) {}
 
-    /**
-     * @brief Construct owning — takes ownership of a heap-allocated generator
-     */
-    RepeatingToneGenerator(std::unique_ptr<SoundGenerator<T>> generator, unsigned long toneMs, unsigned long silenceMs)
-        : m_ownedGenerator(std::move(generator)), m_generator(m_ownedGenerator.get())
-        , m_toneDurationMs(toneMs), m_silenceDurationMs(silenceMs) {
+        /**
+         * @brief Construct owning — takes ownership of a heap-allocated generator
+         */
+        RepeatingToneGenerator(std::unique_ptr<SoundGenerator<T>> generator, unsigned long toneMs, unsigned long silenceMs)
+        : m_ownedGenerator(std::move(generator)), m_generator(m_ownedGenerator.get()), m_toneDurationMs(toneMs), m_silenceDurationMs(silenceMs)
+    {
         m_sampleRate = AUDIO_SAMPLE_RATE;
         recalcSampleCounts();
     }
-    
+
     bool begin(AudioInfo info) override {
         SoundGenerator<int16_t>::begin(info);
         m_sampleRate = info.sample_rate;

@@ -799,12 +799,22 @@ static void registerWebServerRoutes()
                 }
             }
         } else if (upload.status == UPLOAD_FILE_END) {
-            if (!otaBeginOk) return;
+            if (!otaBeginOk) {
+                // Upload ended but never started successfully — restore WDT
+                esp_task_wdt_add(NULL);
+                return;
+            }
             if (Update.end(true)) {
                 Logger.printf("✅ HTTP OTA: Complete (%u bytes)\n", upload.totalSize);
             } else {
                 Logger.printf("❌ HTTP OTA: End failed: %s\n", Update.errorString());
+                // Flash failed — restore WDT so main loop stays protected
+                esp_task_wdt_add(NULL);
             }
+        } else if (upload.status == UPLOAD_FILE_ABORTED) {
+            // Connection dropped mid-upload — restore WDT
+            Logger.println("⚠️ HTTP OTA: Upload aborted");
+            esp_task_wdt_add(NULL);
         }
     });
 
@@ -1189,6 +1199,8 @@ bool performPullOTA(const char* firmwareUrl)
     HttpClient http(HTTP_TIMEOUT_OTA_MS);
     int written = http.getUpdate(firmwareUrl);
     if (written < 0) {
+        // BUG-6 fix: restore WDT so the main loop is still protected
+        esp_task_wdt_add(NULL);
         return false;
     }
     

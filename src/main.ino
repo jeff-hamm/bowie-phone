@@ -90,10 +90,16 @@ void setup()
         delay(50);
         if (digitalRead(FIRMWARE_UPDATE_KEY) == LOW) {
             Logger.println("🔧 KEY3 held — entering firmware update mode...");
+            rtcCrashCount = 0;  // BUG-5 fix: clear counter so next boot isn't trapped in safe mode
             enterFirmwareUpdateMode();
         }
 
         initWiFi();
+
+        // BUG-1 fix: enable WDT in safe mode so a hang in WiFi/OTA doesn't brick the device
+        esp_task_wdt_init(15, true);  // 15 s — generous for network ops
+        esp_task_wdt_add(NULL);
+
         Logger.println("🛡️ Safe mode ready — OTA at /update, retry timer running");
         return; // Skip all heavy init (audio, phone, Goertzel, etc.)
     }
@@ -193,13 +199,12 @@ void setup()
 
 
     initWiFi([]() {
-        // Download audio catalog (non-critical, can fail)
-        // Uses cached DNS if WireGuard broke public DNS
-        Logger.println("🌐 Downloading audio catalog...");
+        // Enqueue catalog download (non-blocking — tick() drives it)
+        Logger.println("🌐 Requesting audio catalog download...");
         if (downloadAudio()) {
-            Logger.println("✅ Audio catalog downloaded successfully");
+            Logger.println("✅ Audio catalog download enqueued");
         } else {
-            Logger.println("⚠️ Audio catalog download failed - will retry later");
+            Logger.println("⚠️ Audio catalog download failed to enqueue - will retry later");
         }
     });
     
@@ -255,20 +260,20 @@ void setupAudioPlayer()
     audioPlayer.setRegistry(&audioKeyRegistry);
 
     // Dial tone: 350 Hz + 440 Hz (North American standard)
-    audioKeyRegistry.registerEntry(AudioEntry("dialtone",
-                                              new DualToneGenerator(350.0f, 440.0f, 16000.0f)));
+    audioKeyRegistry.registerGenerator("dialtone",new DualToneGenerator(350.0f, 440.0f, 16000.0f));
 
     // Ringback: 440 Hz + 480 Hz with cadence
-    audioKeyRegistry.registerEntry(AudioEntry("ringback",
-                                      new RepeatingToneGenerator<int16_t>(
-                                          std::unique_ptr<SoundGenerator<int16_t>>(new DualToneGenerator(440.0f, 480.0f, 16000.0f)),
-                                          RINGBACK_TONE_MS, RINGBACK_SILENCE_MS)));
-    audioKeyRegistry.registerEntry(AudioEntry("off_hook",
-                                              new RepeatingToneGenerator<int16_t>(
-                                                  std::unique_ptr<SoundGenerator<int16_t>>(
-                                                    new MultiToneGenerator(
-                                                        std::array<float, 4>{1400.0f, 2060.0f, 2450.0f, 2600.0f}, 16000.0f)),
-                                                  OFF_HOOK_MS, OFF_HOOK_MS)));
+    audioKeyRegistry.registerGenerator("ringback",new DualToneGenerator(440.0f, 480.0f, 16000.0f),
+                                                        RINGBACK_TONE_MS,
+                                                        RINGBACK_SILENCE_MS);
+    audioKeyRegistry.registerGenerator("off_hook",new MultiToneGenerator(
+                                                        std::array<float, 4>{
+                                                            1400.0f, 
+                                                            2060.0f, 
+                                                            2450.0f, 
+                                                            2600.0f}, 
+                                                        16000.0f),
+                                                        OFF_HOOK_MS);
 
     // Register decoders with the audio player
     audioPlayer.addDecoder(mp3_decoder, "audio/mpeg");
@@ -291,6 +296,7 @@ void loop()
 {
     // === Safe mode: minimal loop (WiFi + OTA + telnet only) ===
     if (tickSafeMode()) {
+        esp_task_wdt_reset();  // Feed WDT in safe mode too
         static unsigned long lastCheck = 0;
         unsigned long now = millis();
         if (now - lastCheck >= 100) {

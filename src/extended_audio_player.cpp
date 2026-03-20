@@ -9,7 +9,9 @@
  */
 
 #include "extended_audio_player.h"
+#if ENABLE_PLAYLIST_FEATURES
 #include "audio_playlist_registry.h"
+#endif
 #include "logging.h"
 #include <Preferences.h>
 #include <WiFi.h>
@@ -45,8 +47,10 @@ ExtendedAudioPlayer& getExtendedAudioPlayer() {
     return *globalPlayer;
 }
 
+#if ENABLE_PLAYLIST_FEATURES
 // Registry references (initialized on first use)
 static AudioPlaylistRegistry& playlistRegistry = getAudioPlaylistRegistry();
+#endif
 
 // ============================================================================
 // EXTENDED AUDIO SOURCE IMPLEMENTATION
@@ -527,6 +531,7 @@ bool ExtendedAudioPlayer::queueAudioKey(const char* audioKey, unsigned long dura
     return queueAudio(type, audioKey, durationMs);
 }
 
+#if ENABLE_PLAYLIST_FEATURES
 bool ExtendedAudioPlayer::playPlaylist(const char* playlistName) {
     if (!playlistName) return false;
     
@@ -577,6 +582,7 @@ bool ExtendedAudioPlayer::queuePlaylist(const char* playlistName) {
     if (!playlistName) return false;
     
     const Playlist* playlist = playlistRegistry.getPlaylist(playlistName);
+
     
     if (!playlist || playlist->empty()) {
         Logger.printf("❌ Playlist not found or empty: %s\n", playlistName);
@@ -601,6 +607,7 @@ bool ExtendedAudioPlayer::queuePlaylist(const char* playlistName) {
     
     return true;
 }
+#endif // ENABLE_PLAYLIST_FEATURES
 
 AudioStreamType ExtendedAudioPlayer::detectStreamType(const char* audioKey) const {
     if (!audioKey) return AudioStreamType::NONE;
@@ -683,8 +690,8 @@ bool ExtendedAudioPlayer::startStream(AudioStreamType type, const char* audioKey
                 // Get the entry to check for streaming URL
                 const KeyEntry* entry = registry->getEntry(audioKey);
                 if (entry) {
-                    localPath = entry->getPath();
-                    streamingPath = entry->getUrl();
+                    localPath = entry->file->path.c_str();
+                    streamingPath = entry->file->alternatePath.c_str();  // May be null
                 } else {
                     // Try to resolve via callback
                     localPath = registry->resolveKey(audioKey);
@@ -838,13 +845,6 @@ void ExtendedAudioPlayer::setActive(bool active) {
         isPlaying = true;
     }
 }
-
-// Maximum time (ms) copy() can return 0 bytes before we declare a stall.
-// Generators produce data every call; file/URL streams may briefly stall
-// during seeks, but >3 s of nothing means the decoder is stuck.
-static const unsigned long COPY_STALL_TIMEOUT_MS = 3000;
-// Maximum consecutive zero-byte copy() calls before stall (secondary check)
-static const int COPY_STALL_MAX_ZERO = 300;
 
 bool ExtendedAudioPlayer::copy() {
     if (!initialized || !player) {

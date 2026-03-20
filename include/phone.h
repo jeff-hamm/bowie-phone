@@ -28,12 +28,18 @@ struct PhoneConfig {
     // Phone identification
     const char* name;
     const char* description;
-    int releaseBlockCount;
     // Frequency scaling factor (some phones output scaled frequencies)
     float freqScale;
+
+    // Goertzel-specific timing
+    int goertzelBlockSize;   // Goertzel block size (samples)
+    int requiredConsecutive; // Required consecutive detections to confirm
+    int releaseBlockCount;
     // Maximum twist ratio (high/low magnitude) to accept as valid DTMF
     // Bowie Phone has asymmetric band magnitudes: high band 2-9x stronger than low
     float maxTwistRatio;
+    int goertzelCopierBufferSize; // StreamCopy buffer size
+
     // Detection thresholds
     float fundamentalMagnitudeThreshold;  // Threshold for detecting row/col fundamentals (GoertzelStream callback)
     float minDetectionMagnitude;          // Floor for evaluateBlock() — reject loopback artifacts below this
@@ -44,11 +50,6 @@ struct PhoneConfig {
     // Detection timing
     unsigned long detectionCooldown;      // ms between detections (prevent double-detection)
     unsigned long gapThreshold;           // ms silence = new button press
-    int requiredConsecutive;              // Required consecutive detections to confirm
-    
-    // Goertzel-specific timing
-    int goertzelBlockSize;                // Goertzel block size (samples)
-    int goertzelCopierBufferSize;         // StreamCopy buffer size
     
     // Detection mode flags
     bool useSummedFreqDetection;          // Use summed frequency as primary/trigger

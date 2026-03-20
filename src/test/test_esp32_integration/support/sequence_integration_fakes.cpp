@@ -38,9 +38,6 @@ void registerMockAudioKeyForTest(const char* key) {
     g_registry.registerKey(key, "/test/mock.wav", AudioStreamType::FILE_STREAM, nullptr);
 }
 
-AudioKeyRegistry& getAudioKeyRegistry() {
-    return g_registry;
-}
 
 ExtendedAudioPlayer& getExtendedAudioPlayer() {
     return audioPlayer;

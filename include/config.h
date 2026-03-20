@@ -54,9 +54,9 @@
 
 // DEPRECATED: Old playlist enrichment (ringback, click, previous/next chaining)
 // is replaced by the previous/next AudioLink system on AudioEntry.
-// #ifndef ENABLE_PLAYLIST_FEATURES
-// #define ENABLE_PLAYLIST_FEATURES 0
-// #endif
+#ifndef ENABLE_PLAYLIST_FEATURES
+#define ENABLE_PLAYLIST_FEATURES 0
+#endif
 
 // Ringback rings before audio playback (random count in [min, max])
 // Each ring = RINGBACK_TONE_MS + RINGBACK_SILENCE_MS.  Set min to 0 to disable.

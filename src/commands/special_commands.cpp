@@ -374,10 +374,10 @@ void executeRefreshAudio() {
     Logger.printf("🔄 Refreshing audio catalog...\n");
     invalidateAudioCache();
     if (downloadAudio()) {
-        Logger.printf("✅ Audio catalog refreshed successfully\n");
+        Logger.printf("✅ Audio catalog refresh enqueued\n");
         getAudioKeyRegistry().listKeys();
     } else {
-        Logger.printf("❌ Audio catalog refresh failed\n");
+        Logger.printf("❌ Audio catalog refresh failed to enqueue\n");
     }
 }
 

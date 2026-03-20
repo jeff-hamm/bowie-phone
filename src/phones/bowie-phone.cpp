@@ -49,10 +49,12 @@ static const PhoneConfig BOWIE_PHONE_CONFIG = {
     // Number of consecutive silent blocks before considering key released
     .requiredConsecutive = 2, // 2 consecutive matching blocks to confirm
     .releaseBlockCount = 2,   // 2 consecutive silent blocks to consider key released
-
     // Maximum twist ratio (high/low magnitude) to accept as valid DTMF
     // Bowie Phone has asymmetric band magnitudes: high band 2-9x stronger than low
     .maxTwistRatio = 12.0f,
+    // Goertzel-specific timing
+    .goertzelCopierBufferSize = 2048, // Match block size for efficiency
+
     // Detection thresholds
     // GoertzelStream fires callback when magnitude > threshold
     // With normalized magnitudes: noise ~0.1-2.0, real tones ~50-500+
@@ -66,11 +68,6 @@ static const PhoneConfig BOWIE_PHONE_CONFIG = {
     // Detection timing
     .detectionCooldown = 200, // 200ms between distinct digit emissions
     .gapThreshold = 120,      // 120ms silence = button released
-
-    // Goertzel-specific timing
-    .goertzelBlockTimeoutMs = 30,     // Row+Col must be in same block (generous)
-    .goertzelReleaseMs = 120,         // Key released after 120ms silence
-    .goertzelCopierBufferSize = 2048, // Match block size for efficiency
 
     // Detection mode - standard DTMF fundamentals only
     .useSummedFreqDetection = false,

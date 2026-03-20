@@ -169,3 +169,32 @@ size_t RemoteLoggerClass::write(uint8_t byte) {
 
 This eliminates all HTTP-from-core-0 paths and confines `s_logClient` usage
 to core 1 exclusively.
+
+## Download Queue — Core 1 Polled Mode
+
+The `DownloadQueue` used to run as a FreeRTOS task on core 0 (via `start()`),
+but this caused three critical issues:
+
+1. **SD card contention** — SD library is not thread-safe; concurrent access
+   from both cores risks filesystem corruption.
+2. **Registry race conditions** — `audioKeyRegistry` was modified by the
+   download task while the main loop iterated it → undefined behavior.
+3. **Goertzel starvation** — blocking HTTP calls (30s timeout) on core 0
+   delayed DTMF sample processing.
+
+**Current design**: All downloads run via `downloadQueue.tick()` called from
+`audioMaintenanceLoop()` on core 1. The `start()` method is never called.
+
+```
+Core 0:  GoertzelTask only
+Core 1:  loop() → audioMaintenanceLoop()
+           ├─ isCacheStale()? → downloadAudio() → HTTP catalog fetch + parse
+           └─ downloadQueue.tick() → HTTP file download → SD write → registerKey()
+```
+
+`tick()` is rate-limited to `DOWNLOAD_QUEUE_CHECK_INTERVAL_MS` (1s) and
+processes one file per invocation. Downloads only occur at boot or after
+catalog refresh, so the brief main-loop pause (~1-5s per file) doesn't
+affect active call handling.
+
+See [DOWNLOAD_QUEUE.md](DOWNLOAD_QUEUE.md) for the full safety audit.

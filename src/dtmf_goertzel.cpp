@@ -157,7 +157,7 @@ static void evaluateBlock() {
     // Need BOTH a row and a column to be a valid DTMF tone
     if (bestRow < 0 || bestCol < 0) {
         consecutiveMisses++;
-        if (consecutiveMisses >= RELEASE_BLOCK_COUNT) {
+        if (consecutiveMisses >= config.releaseBlockCount) {
             if (emittedKey != 0) {
                 Logger.printf("🎵 Goertzel: key '%c' released (partial)\n", emittedKey);
                 emittedKey = 0;
@@ -179,7 +179,7 @@ static void evaluateBlock() {
     float maxMag = (bestRowMag > bestColMag) ? bestRowMag : bestColMag;
     float minMag = (bestRowMag < bestColMag) ? bestRowMag : bestColMag;
     
-    if (minMag <= 0 || (maxMag / minMag) > MAX_TWIST_RATIO) {
+    if (minMag <= 0 || (maxMag / minMag) > config.maxTwistRatio) {
         // Too imbalanced — likely noise or single-band interference
         consecutiveMisses++;
         return;

@@ -41,8 +41,9 @@ void performAudioOutputTest() {
     Logger.println();
     Logger.println("🔑 Registered keys:");
     for (auto it = reg->begin(); it != reg->end(); ++it) {
+        FileData* f = it->second.getFile();
         Logger.printf("   %s -> %s (type:%d)\n", it->first.c_str(),
-                      it->second.getPath() ? it->second.getPath() : "(no path)",
+                      f && !f->path.empty() ? f->path.c_str() : "(no path)",
                       (int)it->second.type);
     }
 

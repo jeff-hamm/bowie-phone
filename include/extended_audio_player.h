@@ -19,7 +19,6 @@
 #include "AudioTools/AudioCodecs/MultiDecoder.h"
 #include "AudioTools/AudioCodecs/CodecCopy.h"
 #include "audio_key_registry.h"
-#include "audio_playlist_registry.h"
 #include "file_utils.h"
 #if SD_USE_MMC
   #include <SD_MMC.h>
@@ -41,6 +40,13 @@ using namespace audio_tools;
 #ifndef URL_STREAM_BUFFER_SIZE
 #define URL_STREAM_BUFFER_SIZE 2048  ///< Buffer size for URL streaming
 #endif
+
+// Maximum time (ms) copy() can return 0 bytes before we declare a stall.
+// Generators produce data every call; file/URL streams may briefly stall
+// during seeks, but >3 s of nothing means the decoder is stuck.
+static constexpr unsigned long COPY_STALL_TIMEOUT_MS = 3000;
+// Maximum consecutive zero-byte copy() calls before stall (secondary check)
+static constexpr int COPY_STALL_MAX_ZERO = 300;
 
 // ============================================================================
 // QUEUED AUDIO ITEM
@@ -273,6 +279,7 @@ public:
      */
     bool queueAudioKey(const char* audioKey, unsigned long durationMs = 0);
     
+#if ENABLE_PLAYLIST_FEATURES
     /**
      * @brief Play a playlist immediately, clearing queue
      * 
@@ -290,6 +297,7 @@ public:
      * @return true if playlist exists and was queued successfully
      */
     bool queuePlaylist(const char* playlistName);
+#endif
     
     /**
      * @brief Stop current audio and clear the queue
