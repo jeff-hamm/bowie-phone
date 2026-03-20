@@ -1395,16 +1395,31 @@ void initTelnet()
                          Logger.printf("🔧 Firmware: %s  Build: %s %s\n", FIRMWARE_VERSION, __DATE__, __TIME__);
                          Logger.addLogger(telnet); // Add telnet as a log output stream
                          addDebugStream(telnet);
+                         // Best-effort IP match — works when server IP isn't behind NAT
+                         const char* serverHost = RemoteLogger.getServerHost();
+                         if (serverHost[0] && ip == serverHost) {
+                             RemoteLogger.setServerIsTelnetClient(true);
+                             Logger.println("📡 Server identified by IP — suppressing HTTP POSTs");
+                         }
                      });
     telnet.onConnectionAttempt([](String ip)
                                { Logger.printf("📡 Telnet connection attempt from: %s\n", ip.c_str()); });
     telnet.onReconnect([](String ip)
                        { Logger.printf("📡 Telnet client reconnected from: %s\n", ip.c_str()); });
+    // Handshake: server sends "BOWIE-SERVER\n" to identify itself through NAT/proxies
+    telnet.onInputReceived([](String str) {
+        if (str.indexOf("BOWIE-SERVER") >= 0 && !RemoteLogger.isServerConnected()) {
+            RemoteLogger.setServerIsTelnetClient(true);
+            Logger.println("📡 Server identified by handshake — suppressing HTTP POSTs");
+        }
+    });
     telnet.onDisconnect([](String ip)
                         {
                             Logger.printf("📡 Telnet client disconnected from: %s\n", ip.c_str());
                             Logger.removeLogger(telnet); // Remove from logger streams
                             removeDebugStream(telnet);
+                            // Always clear — ESPTelnet is single-client, this was the one
+                            RemoteLogger.setServerIsTelnetClient(false);
                         });
 
     if (telnet.begin(23))
@@ -1415,4 +1430,8 @@ void initTelnet()
     {
         Logger.println("❌ Failed to start telnet server");
     }
+}
+
+bool isTelnetConnected() {
+    return telnet.isConnected();
 }

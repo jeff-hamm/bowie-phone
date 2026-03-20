@@ -62,7 +62,7 @@ These paths apply to **any** dev machine or MCU on the mesh — substitute the d
 - **Example:** Bowie Phone `10.253.0.2` → WG tunnel → Server `10.253.0.1`
 - **DNS:** UDP/TCP port 53 → `esp_wg_proxy` container (dnsmasq) → forwards to 8.8.8.8 / 1.1.1.1
 - **Logs:** HTTP POST to `http://10.253.0.1:3000/logs` → `phone-log-receiver` container
-- **Log storage:** `/mnt/pool/appdata/phone/logs/<device-id>/<session-id>/` — session-based (see [Remote Log System](#remote-log-system))
+- **Log storage:** `/mnt/pool/appdata/phone-receiver/logs/<device-id>/<session-id>/` — session-based (see [Remote Log System](#remote-log-system))
 - **Scaling:** Each new MCU gets its own log subdirectory. The log receiver auto-creates session directories based on the device ID and boot ID.
 
 ### ESP32 → Internet (HTTPS — CURRENTLY BROKEN)
@@ -103,11 +103,11 @@ These paths apply to **any** dev machine or MCU on the mesh — substitute the d
 
 ## Docker Services on Server
 
-Defined in `/mnt/pool/appdata/phone/docker-compose.yml`:
+Defined in `/mnt/pool/appdata/phone-receiver/docker-compose.yml`:
 
 | Container | Image | Ports | Purpose |
 |-----------|-------|-------|---------|
-| `phone-log-receiver` | custom (built from `.`) | 3000 | Receives HTTP log posts from ESP32 |
+| `phone-log-receiver` | custom (built from `.`) | 3000, 2323 | HTTP log receiver + telnet proxy |
 | `esp_wg_proxy` | `jpillora/dnsmasq` | 10.253.0.1:53 (UDP+TCP) | DNS forwarder for WG clients |
 | `phone-log-viewer` | `amir20/dozzle` | 8080 (profile: viewer) | Optional log web UI |
 
@@ -211,6 +211,7 @@ Written at the top of the log file when a `boot=true` POST is received:
 | `GET /logs/:device/download/:date` | GET | `?session=<id>` | Download a specific day's log file |
 | `GET /devices` | GET | — | List known devices and session count |
 | `GET /health` | GET | — | Liveness check |
+| `GET /telnet/:device` | GET | — | Telnet proxy connection info for device |
 
 ---
 
@@ -268,7 +269,7 @@ bash install.sh
 
 ### What `install.sh` Does
 
-1. Sources `tools/server/.env` to get `APP_DATA` (e.g. `/mnt/pool/appdata/phone`) and `PHOME`
+1. Sources `tools/server/.env` to get `APP_DATA` (e.g. `/mnt/pool/appdata/phone-receiver`) and `PHOME`
 2. For each subdirectory (e.g. `phone-receiver/`, `wireguard-bridge/`):
    - Copies the directory to `$APP_DATA/<name>/`
 3. For `phone-receiver`: runs `docker compose up -d --build`
@@ -285,6 +286,174 @@ Each `wireguard-bridge/` file has a header comment:
 ### Route / Peer Management
 
 For SSH-based server administration (add WG peers, edit iptables, manage dnsmasq, restart services), see `.agents/skills/server-routes/SKILL.md`.
+
+---
+
+## Logging & Debug Transport Design
+
+The ESP32 has three outbound logging transports. Each serves a different purpose and has distinct performance characteristics.
+
+### Transport Comparison
+
+| Transport | Direction | Protocol | Core | Latency | CPU cost | When active |
+|-----------|-----------|----------|------|---------|----------|-------------|
+| **USB Serial** | Phone → Dev (wired) | UART @115200 | core 1 (Logger.write) | <1ms | Negligible | Always (hardware) |
+| **ESPTelnet** | Dev → Phone → Dev | TCP :23, server on phone | core 1 (Logger.write) | ~1ms LAN | Low (TCP send) | While client connected |
+| **HTTP POST** | Phone → Server | HTTP :3000 (JSON) | core 0 (postAsync) | ~50-3000ms | High (JSON build, TCP) | VPN up, no telnet |
+
+### Data Flow
+
+```
+Logger.write(byte)   ← called from core 1 (main loop)
+  │
+  ├─→ Serial           always, ~0 cost
+  ├─→ ESPTelnetStream   if client connected (addLogger/removeLogger)
+  └─→ RemoteLogger      always (buffers → flush every 5s)
+                           │
+                           ├─ if telnet connected → skip HTTP POST
+                           └─ else → HttpClient::postAsync() on core 0
+                                       priority=0 (below Goertzel)
+                                       timeout=2500ms
+                                       backoff: 30s→60s→120s→240s→5min
+```
+
+### Serial (USB)
+
+- **Always on.** First stream added to `Logger` at boot.
+- Zero network overhead; limited to physical cable connection.
+- Use `pio device monitor` or PlatformIO Monitor.
+- Good for: early boot debugging, crash output, development.
+
+### ESPTelnet (port 23 on phone)
+
+- **Server runs on the ESP32.** Dev machine connects inbound over WireGuard.
+- Added to `Logger` on connect, removed on disconnect (`wifi_manager.cpp`).
+- Bidirectional: also accepts debug commands via `addDebugStream()`.
+- Very efficient — TCP `write()` on core 1, no JSON encoding, no extra tasks.
+- **When telnet is connected, HTTP POST is suppressed** to avoid redundant traffic and core 0 contention.
+- Good for: real-time debugging, interactive commands, live tailing.
+
+### HTTP POST (RemoteLogger → phone-receiver)
+
+- **Batched.** Logs accumulate in a 4KB ring buffer; flushed every 5s as a JSON POST.
+- **Async on core 0** via `HttpClient::postAsync()` at FreeRTOS priority 0 (below Goertzel at priority 1).
+- Timeout: `HTTP_TIMEOUT_LOG_MS` (2500ms). Dramatic backoff on failure: 30s → 60s → 120s → 240s → cap 5min.
+- **Skipped when telnet is connected** — telnet is already streaming the same data in real-time.
+- Server persists to session log files. Available even when no human is watching.
+- Good for: unattended operation, post-mortem analysis, boot notifications.
+
+### Server Telnet Proxy (port 2323 on server)
+
+- **Bridge.** Desktop connects to `server:2323`; server connects to `phone:23` and relays bidirectionally.
+- Avoids needing the dev machine on the WireGuard mesh — just SSH or LAN to the server.
+- All relayed traffic is also appended to the session log file for persistence.
+- Auto-connects for single-device setups; prompts for device selection with multiple phones.
+- `GET /telnet/:device` returns connection info (phone IP, proxy port).
+
+### Task WDT Configuration
+
+- Normal mode: `TASK_WDT_TIMEOUT_S` seconds (default 6, defined in `config.h`).
+- Safe mode: 15 seconds (generous for network ops).
+- `HttpClient::postAsync` runs at priority 0 on core 0, so Goertzel (priority 1) always preempts it. The WDT monitors the IDLE task; both Goertzel (`vTaskDelay(1)`) and lwIP (internal yields) give IDLE enough runtime.
+
+---
+
+## Proposal: Persistent TCP Log Stream
+
+The HTTP POST approach works but has significant overhead per flush (JSON encoding, TCP connect, HTTP framing, FreeRTOS task spawn on core 0). A persistent outbound TCP connection from the phone to the server would be more efficient.
+
+### Proposed Architecture
+
+```
+                     ┌─────────────────────────────────┐
+                     │        phone-receiver            │
+                     │                                  │
+ESP32 ──TCP:2324───→ │  Phone Intake      ──→ log file  │
+                     │   (persistent)      ──→ tee ───────→ Desktop :2323
+                     │                                  │
+                     │  HTTP :3000         ← boot POST  │
+                     │  Telnet proxy :2323 ← desktop    │
+                     └─────────────────────────────────┘
+```
+
+- **Port 2324 (intake):** Phone opens a persistent TCP socket to `server:2324` after VPN connects. Sends `DEVICE <id> <boot_id>\n` as a handshake, then streams plain-text log lines. Server writes to session log files and tees to any connected desktop viewers.
+- **RemoteLogger becomes a `Print` stream** on core 1. `Logger.addLogger(remoteStream)` — same as telnet. No JSON encoding, no `postAsync`, no core 0 involvement.
+- **Reconnect with backoff** on disconnect (30s → 60s → cap 5min). Buffer during disconnect, ship on reconnect.
+- **Keep HTTP POST** for structured boot notifications only (reset reason, firmware version, heap stats, RSSI). JSON format is valuable for these one-time events.
+- **Keep ESPTelnet on phone:23** for direct interactive debugging.
+- **Desktop viewers** connect to `:2323` and see the phone's live stream teed from the intake connection, plus can send commands back.
+
+### Benefits
+
+- **Zero core 0 contention.** Log delivery runs entirely on core 1 as a `Logger` stream.
+- **~20x less overhead.** Plain-text vs JSON-encoded HTTP POST per batch.
+- **Always-on persistence.** Server logs everything even when no human is watching.
+- **Unified viewer.** Desktop sees the same stream whether they connect to the proxy or directly to the phone.
+
+---
+
+## Proposal: Webhooks
+
+Webhooks would allow the phone-receiver server to push notifications to external systems (Discord, Slack, Home Assistant, IFTTT, custom endpoints) when interesting events occur on the phone.
+
+### Where Webhooks Fit
+
+```
+ESP32 ──(log stream / HTTP POST)──→ phone-receiver ──(webhook)──→ External
+                                         │
+                                         ├─→ Discord channel
+                                         ├─→ Home Assistant
+                                         ├─→ IFTTT / ntfy / custom
+                                         └─→ Any HTTP endpoint
+```
+
+Webhooks fire from the **server**, not the ESP32. The phone's job is to deliver events; the server decides what to forward. This keeps the MCU simple and avoids HTTPS complexity on the ESP32.
+
+### Triggerable Events
+
+| Event | Source | Data |
+|-------|--------|------|
+| `boot` | Boot POST (`boot=true`) | firmware, reset reason, IP |
+| `crash` | Boot POST with `reason=panic\|wdt\|brownout` | crash type, firmware |
+| `offline` | Server detects no heartbeat for N minutes | last seen timestamp |
+| `call_start` | Log line matching dial pattern | dialed digits |
+| `call_end` | Log line matching on-hook after off-hook | duration |
+| `ota_complete` | Log line matching OTA success | old → new firmware |
+| `error_spike` | N errors in M seconds (log pattern matching) | sample errors |
+
+### Server-Side Implementation
+
+Add to `phone-receiver/server.js`:
+
+1. **Config file** (`webhooks.json`): array of `{ url, events[], headers{}, template? }` entries.
+2. **Event matcher** in the log-ingest path: after writing to file, check if any log line or POST field matches a configured event.
+3. **Fire-and-forget POST** to each matching webhook URL with a JSON payload.
+4. **Rate limiting** per webhook per event type (e.g., max 1 `boot` webhook per minute per device).
+5. **HTTP endpoint** `POST /webhooks` to register/unregister webhooks at runtime.
+
+### Example Webhook Payload
+
+```json
+{
+  "event": "boot",
+  "device": "starfire-phone",
+  "timestamp": "2026-03-20T15:30:00Z",
+  "data": {
+    "firmware": "1.2.3",
+    "boot_reason": "panic",
+    "rssi": -62,
+    "ip": "10.253.0.2"
+  }
+}
+```
+
+### Why Server-Side, Not ESP32-Side
+
+- ESP32 can't reach external HTTPS endpoints (WG routing issue — see [Known Issues](#known-issues)).
+- Server has reliable internet, can do HTTPS, can retry failed deliveries.
+- Webhook config changes don't require firmware reflash.
+- Server can correlate events across multiple phones.
+- Log-pattern matching (e.g., "error spike") requires historical context the phone doesn't have.
 
 ---
 
@@ -348,8 +517,8 @@ For SSH-based server administration (add WG peers, edit iptables, manage dnsmasq
 |------|-------|
 | WG server config | `root@192.168.1.216:/mnt/pool/appdata/home/.conf/wg0.conf` |
 | dnsmasq config | `root@192.168.1.216:/mnt/pool/appdata/dnsmasq/dnsmasq.conf` |
-| Docker compose | `root@192.168.1.216:/mnt/pool/appdata/phone/docker-compose.yml` |
-| Device logs | `root@192.168.1.216:/mnt/pool/appdata/phone/logs/<device>/<session>/` |
+| Docker compose | `root@192.168.1.216:/mnt/pool/appdata/phone-receiver/docker-compose.yml` |
+| Device logs | `root@192.168.1.216:/mnt/pool/appdata/phone-receiver/logs/<device>/<session>/` |
 | Log receiver source | `tools/server/phone-receiver/server.js` |
 | Server deploy script | `tools/server/install.sh` |
 | WG bridge tools | `tools/server/wireguard-bridge/` |

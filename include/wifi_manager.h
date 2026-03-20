@@ -57,6 +57,7 @@ void handleRoot();
 void handleSave();
 void handleNetworkLoop();
 void initTelnet();
+bool isTelnetConnected();
 void clearWiFiCredentials();
 String getSavedSSID();
 

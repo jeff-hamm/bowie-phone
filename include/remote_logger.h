@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <Print.h>
+#include <WiFiClient.h>
 
 /**
  * Remote Logger for ESP32
@@ -54,7 +55,19 @@ private:
     bool vpnRequired;  // Only send when VPN is connected
     bool bootSent;     // True after boot notification delivered
     bool _streamingEnabled; // Runtime toggle for log streaming (debug_commands)
-    bool _postPending;      // True while a POST is queued in WebQueue
+    bool _postPending;      // True while an async POST is in flight
+    int _consecutiveFailures;        // POST failure counter (for backoff)
+    unsigned long _backoffUntil;     // millis() timestamp before which we skip POSTs
+
+    // Persistent TCP log stream to server
+    WiFiClient _serverSocket;
+    bool _serverTcpEnabled;          // Feature flag (NVS-stored)
+    bool _serverConnected;           // Outbound TCP to server is live
+    bool _serverIsTelnetClient;      // Server connected inbound to phone:23
+    char _serverHost[64];            // Extracted from serverUrl
+    int _serverTcpPort;
+    int _tcpConsecutiveFailures;
+    unsigned long _tcpBackoffUntil;
 
     static bool isDroppedRemoteLogLine(const String& line);
     void trimLogBuffer();
@@ -63,9 +76,12 @@ private:
     bool buildLogsJson(String& out, const String& logs);
     bool buildBootJson(String& out);
 
-    // WebQueue callbacks (static so they can be used as function pointers)
     static void onLogPostDone(bool success, int statusCode, void* userData);
     static void onBootPostDone(bool success, int statusCode, void* userData);
+
+    void parseServerHost();
+    void maintainServerConnection();
+    bool sendTcpHandshake();
     
 public:
     void flush();
@@ -79,6 +95,12 @@ public:
 
     void setStreamingEnabled(bool enable) { _streamingEnabled = enable; }
     bool isStreamingEnabled() const { return _streamingEnabled; }
+
+    void setServerTcpEnabled(bool enable);
+    bool isServerTcpEnabled() const { return _serverTcpEnabled; }
+    bool isServerConnected() const { return _serverConnected || _serverIsTelnetClient; }
+    void setServerIsTelnetClient(bool v) { _serverIsTelnetClient = v; }
+    const char* getServerHost() const { return _serverHost; }
     
     size_t write(uint8_t byte) override;
     size_t write(const uint8_t* buffer, size_t size) override;

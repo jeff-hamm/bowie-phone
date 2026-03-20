@@ -216,6 +216,10 @@
 #ifndef HTTP_TIMEOUT_SHORT_MS
 #define HTTP_TIMEOUT_SHORT_MS 3000
 #endif
+// Remote logger POST — low priority, expendable.  Keep well under WDT.
+#ifndef HTTP_TIMEOUT_LOG_MS
+#define HTTP_TIMEOUT_LOG_MS 2500
+#endif
 // Catalog / JSON fetches — moderate payload, keep short to avoid blocking the loop
 #ifndef HTTP_TIMEOUT_CATALOG_MS
 #define HTTP_TIMEOUT_CATALOG_MS 5000
@@ -228,6 +232,31 @@
 // Firmware OTA binary download — large payload over potentially slow link
 #ifndef HTTP_TIMEOUT_OTA_MS
 #define HTTP_TIMEOUT_OTA_MS 60000
+#endif
+
+// ============================================================================
+// PERSISTENT TCP LOG STREAM
+// ============================================================================
+// Port on the log server that accepts persistent TCP connections from phones.
+#ifndef REMOTE_LOG_TCP_PORT
+#define REMOTE_LOG_TCP_PORT 2324
+#endif
+// Base interval between TCP reconnection attempts (will back off on failure).
+#ifndef REMOTE_LOG_TCP_RECONNECT_MS
+#define REMOTE_LOG_TCP_RECONNECT_MS 15000
+#endif
+// TCP connect() timeout in milliseconds — keep very short to avoid blocking core 1.
+#ifndef REMOTE_LOG_TCP_CONNECT_TIMEOUT_MS
+#define REMOTE_LOG_TCP_CONNECT_TIMEOUT_MS 2000
+#endif
+
+// ============================================================================
+// WATCHDOG CONFIGURATION
+// ============================================================================
+// ESP32 Task WDT timeout in seconds (ESP-IDF default is 5).
+// Raised to give async HTTP tasks headroom without tripping the IDLE-task monitor.
+#ifndef TASK_WDT_TIMEOUT_S
+#define TASK_WDT_TIMEOUT_S 6
 #endif
 
 // ============================================================================

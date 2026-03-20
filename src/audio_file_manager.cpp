@@ -1246,11 +1246,11 @@ bool processAudioDownloadQueue()
     return webQueue.tick();
 }
 
-// int getDownloadQueueCount()    { return webQueue.pendingCount(); }
+int getDownloadQueueCount()     { return webQueue.pendingCount(); }
 // int getTotalDownloadQueueSize() { return webQueue.totalCount(); }
 // void listDownloadQueue()        { webQueue.listItems(); }
 // void clearDownloadQueue()       { webQueue.reset(); }
-// bool isDownloadQueueEmpty()     { return webQueue.isEmpty(); }
+bool isDownloadQueueEmpty()     { return webQueue.isEmpty(); }
 
 // ============================================================================
 // REGISTRY INTEGRATION

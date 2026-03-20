@@ -20,7 +20,7 @@ applyTo: "src/remote_logger.cpp,include/remote_logger.h,src/wifi_manager.cpp,inc
 
 2. **Core 0 is shared with Goertzel.** Any HTTP task on core 0 must run at priority 0 (below Goertzel at priority 1) and respect `HTTP_TIMEOUT_LOG_MS` (2500ms) to stay under WDT.
 
-3. **Telnet suppresses HTTP POST.** When `isTelnetConnected()` returns true, `RemoteLogger::flush()` skips HTTP POST. The same data is already streaming in real-time over telnet.
+3. **Server telnet recognition uses two mechanisms.** (a) IP match: on telnet connect, compare client IP to `RemoteLogger.getServerHost()`. (b) Handshake: telnet `onInputReceived` watches for `BOWIE-SERVER` string — works through NAT/proxies where IP matching fails. Either mechanism sets `_serverIsTelnetClient`. On disconnect the flag is always cleared (ESPTelnet is single-client).
 
 4. **HTTP POST has dramatic backoff.** Failures back off 30s → 60s → 120s → 240s → cap 5min. Success resets. Dropping logs is always preferable to tripping WDT or starving Goertzel.
 

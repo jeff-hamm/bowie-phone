@@ -1,3 +1,8 @@
+********************************************************************************
+Obsolete PIO Core v6.1.18 is used (previous was 6.1.19)
+Please remove multiple PIO Cores from a system:
+https://docs.platformio.org/en/latest/core/installation/troubleshooting.html
+********************************************************************************
 Processing bowie-phone-custom (platform: espressif32; board: esp32dev; framework: arduino)
 --------------------------------------------------------------------------------
 Verbose mode can be enabled via `-v, --verbose` option
@@ -39,21 +44,621 @@ Dependency Graph
 Building in release mode
 Warning! We have just detected `upload_port` as IP address or host name of ESP device. `upload_protocol` is switched to `espota`.
 Please specify `upload_protocol = espota` in `platformio.ini` project configuration file.
+Compiling .pio\build\bowie-phone-custom\src\audio_file_manager.cpp.o
+Compiling .pio\build\bowie-phone-custom\src\audio_key_registry.cpp.o
+Compiling .pio\build\bowie-phone-custom\src\audio_playlist_registry.cpp.o
+Compiling .pio\build\bowie-phone-custom\src\commands\audio_capture.cpp.o
+Compiling .pio\build\bowie-phone-custom\src\commands\audio_output_test.cpp.o
+Compiling .pio\build\bowie-phone-custom\src\commands\cpu_load_test.cpp.o
+Compiling .pio\build\bowie-phone-custom\src\commands\debug_commands.cpp.o
+Compiling .pio\build\bowie-phone-custom\src\commands\debug_input.cpp.o
+Compiling .pio\build\bowie-phone-custom\src\commands\sd_card_debug.cpp.o
+Compiling .pio\build\bowie-phone-custom\src\commands\special_commands.cpp.o
+Compiling .pio\build\bowie-phone-custom\src\crash_counter.cpp.o
+Compiling .pio\build\bowie-phone-custom\src\dtmf_decoder.cpp.o
+Compiling .pio\build\bowie-phone-custom\src\dtmf_goertzel.cpp.o
+Compiling .pio\build\bowie-phone-custom\src\extended_audio_player.cpp.o
+Compiling .pio\build\bowie-phone-custom\src\file_utils.cpp.o
+Compiling .pio\build\bowie-phone-custom\src\logging.cpp.o
 Compiling .pio\build\bowie-phone-custom\src\main.ino.cpp.o
+Compiling .pio\build\bowie-phone-custom\src\notifications.cpp.o
+Compiling .pio\build\bowie-phone-custom\src\phone_home.cpp.o
+Compiling .pio\build\bowie-phone-custom\src\phone_service.cpp.o
+Compiling .pio\build\bowie-phone-custom\src\phones\bowie-phone.cpp.o
+Compiling .pio\build\bowie-phone-custom\src\phones\dream-phone.cpp.o
+Compiling .pio\build\bowie-phone-custom\src\remote_logger.cpp.o
+Compiling .pio\build\bowie-phone-custom\src\sequence_processor.cpp.o
+Compiling .pio\build\bowie-phone-custom\src\special_command_processor.cpp.o
+Compiling .pio\build\bowie-phone-custom\src\tailscale_manager.cpp.o
+Compiling .pio\build\bowie-phone-custom\src\web_queue.cpp.o
+In file included from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/lwip/lwip/src/include/lwip/ip_addr.h:41,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/tcpip_adapter/include/tcpip_adapter_types.h:18,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/tcpip_adapter/include/tcpip_adapter.h:24,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_netif/include/esp_netif.h:35,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_event/include/esp_event_legacy.h:22,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_event/include/esp_event.h:28,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiGeneric.h:27,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiSTA.h:28,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFi.h:32,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/Communication/HTTP/WiFiInclude.h:14,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/Communication/HTTP/URLStream.h:6,
+                 from include/extended_audio_player.h:18,
+                 from src/audio_file_manager.cpp:14:
+C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/lwip/lwip/src/include/lwip/def.h:119: warning: "htons" redefined
+ #define htons(x) lwip_htons(x)
+ 
+In file included from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/AudioCodecs/CodecNetworkFormat.h:4,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/AudioCodecs/AudioCodecs.h:29,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio/AudioPlayer.h:3,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio.h:18,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools.h:74,
+                 from include/audio_key_registry.h:18,
+                 from include/audio_file_manager.h:20,
+                 from src/audio_file_manager.cpp:12:
+.pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio/AudioBasic/Net.h:7: note: this is the location of the previous definition
+ #  define htons(x) (((uint16_t)(x)&0xff00) >> 8) | (((uint16_t)(x)&0X00FF) << 8)
+ 
+In file included from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/lwip/lwip/src/include/lwip/ip_addr.h:41,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/tcpip_adapter/include/tcpip_adapter_types.h:18,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/tcpip_adapter/include/tcpip_adapter.h:24,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_netif/include/esp_netif.h:35,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_event/include/esp_event_legacy.h:22,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_event/include/esp_event.h:28,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiGeneric.h:27,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiSTA.h:28,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFi.h:32,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/Communication/HTTP/WiFiInclude.h:14,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/Communication/HTTP/URLStream.h:6,
+                 from include/extended_audio_player.h:18,
+                 from src/audio_file_manager.cpp:14:
+C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/lwip/lwip/src/include/lwip/def.h:120: warning: "ntohs" redefined
+ #define ntohs(x) lwip_ntohs(x)
+ 
+In file included from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/AudioCodecs/CodecNetworkFormat.h:4,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/AudioCodecs/AudioCodecs.h:29,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio/AudioPlayer.h:3,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio.h:18,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools.h:74,
+                 from include/audio_key_registry.h:18,
+                 from include/audio_file_manager.h:20,
+                 from src/audio_file_manager.cpp:12:
+.pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio/AudioBasic/Net.h:9: note: this is the location of the previous definition
+ #  define ntohs(x) htons(x)
+ 
+In file included from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/lwip/lwip/src/include/lwip/ip_addr.h:41,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/tcpip_adapter/include/tcpip_adapter_types.h:18,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/tcpip_adapter/include/tcpip_adapter.h:24,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_netif/include/esp_netif.h:35,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_event/include/esp_event_legacy.h:22,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_event/include/esp_event.h:28,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiGeneric.h:27,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiSTA.h:28,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFi.h:32,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/Communication/HTTP/WiFiInclude.h:14,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/Communication/HTTP/URLStream.h:6,
+                 from include/extended_audio_player.h:18,
+                 from src/audio_file_manager.cpp:14:
+C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/lwip/lwip/src/include/lwip/def.h:121: warning: "htonl" redefined
+ #define htonl(x) lwip_htonl(x)
+ 
+In file included from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/AudioCodecs/CodecNetworkFormat.h:4,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/AudioCodecs/AudioCodecs.h:29,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio/AudioPlayer.h:3,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio.h:18,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools.h:74,
+                 from include/audio_key_registry.h:18,
+                 from include/audio_file_manager.h:20,
+                 from src/audio_file_manager.cpp:12:
+.pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio/AudioBasic/Net.h:6: note: this is the location of the previous definition
+ #  define htonl(x) (((x) << 24 & 0xFF000000UL) | ((x) << 8 & 0x00FF0000UL) | ((x) >> 8 & 0x0000FF00UL) | ((x) >> 24 & 0x000000FFUL))
+ 
+In file included from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/lwip/lwip/src/include/lwip/ip_addr.h:41,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/tcpip_adapter/include/tcpip_adapter_types.h:18,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/tcpip_adapter/include/tcpip_adapter.h:24,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_netif/include/esp_netif.h:35,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_event/include/esp_event_legacy.h:22,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_event/include/esp_event.h:28,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiGeneric.h:27,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiSTA.h:28,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFi.h:32,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/Communication/HTTP/WiFiInclude.h:14,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/Communication/HTTP/URLStream.h:6,
+                 from include/extended_audio_player.h:18,
+                 from src/audio_file_manager.cpp:14:
+C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/lwip/lwip/src/include/lwip/def.h:122: warning: "ntohl" redefined
+ #define ntohl(x) lwip_ntohl(x)
+ 
+In file included from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/AudioCodecs/CodecNetworkFormat.h:4,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/AudioCodecs/AudioCodecs.h:29,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio/AudioPlayer.h:3,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio.h:18,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools.h:74,
+                 from include/audio_key_registry.h:18,
+                 from include/audio_file_manager.h:20,
+                 from src/audio_file_manager.cpp:12:
+.pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio/AudioBasic/Net.h:8: note: this is the location of the previous definition
+ #  define ntohl(x) htonl(x)
+ 
+In file included from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/lwip/lwip/src/include/lwip/ip_addr.h:41,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/tcpip_adapter/include/tcpip_adapter_types.h:18,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/tcpip_adapter/include/tcpip_adapter.h:24,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_netif/include/esp_netif.h:35,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_event/include/esp_event_legacy.h:22,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_event/include/esp_event.h:28,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiGeneric.h:27,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiSTA.h:28,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFi.h:32,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/Communication/HTTP/WiFiInclude.h:14,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/Communication/HTTP/URLStream.h:6,
+                 from include/extended_audio_player.h:18,
+                 from src/extended_audio_player.cpp:11:
+C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/lwip/lwip/src/include/lwip/def.h:119: warning: "htons" redefined
+ #define htons(x) lwip_htons(x)
+ 
+In file included from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/AudioCodecs/CodecNetworkFormat.h:4,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/AudioCodecs/AudioCodecs.h:29,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio/AudioPlayer.h:3,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio.h:18,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools.h:74,
+                 from include/extended_audio_player.h:16,
+                 from src/extended_audio_player.cpp:11:
+.pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio/AudioBasic/Net.h:7: note: this is the location of the previous definition
+ #  define htons(x) (((uint16_t)(x)&0xff00) >> 8) | (((uint16_t)(x)&0X00FF) << 8)
+ 
+In file included from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/lwip/lwip/src/include/lwip/ip_addr.h:41,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/tcpip_adapter/include/tcpip_adapter_types.h:18,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/tcpip_adapter/include/tcpip_adapter.h:24,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_netif/include/esp_netif.h:35,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_event/include/esp_event_legacy.h:22,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_event/include/esp_event.h:28,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiGeneric.h:27,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiSTA.h:28,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFi.h:32,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/Communication/HTTP/WiFiInclude.h:14,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/Communication/HTTP/URLStream.h:6,
+                 from include/extended_audio_player.h:18,
+                 from src/extended_audio_player.cpp:11:
+C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/lwip/lwip/src/include/lwip/def.h:120: warning: "ntohs" redefined
+ #define ntohs(x) lwip_ntohs(x)
+ 
+In file included from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/AudioCodecs/CodecNetworkFormat.h:4,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/AudioCodecs/AudioCodecs.h:29,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio/AudioPlayer.h:3,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio.h:18,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools.h:74,
+                 from include/extended_audio_player.h:16,
+                 from src/extended_audio_player.cpp:11:
+.pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio/AudioBasic/Net.h:9: note: this is the location of the previous definition
+ #  define ntohs(x) htons(x)
+ 
+In file included from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/lwip/lwip/src/include/lwip/ip_addr.h:41,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/tcpip_adapter/include/tcpip_adapter_types.h:18,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/tcpip_adapter/include/tcpip_adapter.h:24,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_netif/include/esp_netif.h:35,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_event/include/esp_event_legacy.h:22,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_event/include/esp_event.h:28,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiGeneric.h:27,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiSTA.h:28,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFi.h:32,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/Communication/HTTP/WiFiInclude.h:14,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/Communication/HTTP/URLStream.h:6,
+                 from include/extended_audio_player.h:18,
+                 from src/extended_audio_player.cpp:11:
+C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/lwip/lwip/src/include/lwip/def.h:121: warning: "htonl" redefined
+ #define htonl(x) lwip_htonl(x)
+ 
+In file included from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/AudioCodecs/CodecNetworkFormat.h:4,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/AudioCodecs/AudioCodecs.h:29,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio/AudioPlayer.h:3,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio.h:18,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools.h:74,
+                 from include/extended_audio_player.h:16,
+                 from src/extended_audio_player.cpp:11:
+.pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio/AudioBasic/Net.h:6: note: this is the location of the previous definition
+ #  define htonl(x) (((x) << 24 & 0xFF000000UL) | ((x) << 8 & 0x00FF0000UL) | ((x) >> 8 & 0x0000FF00UL) | ((x) >> 24 & 0x000000FFUL))
+ 
+In file included from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/lwip/lwip/src/include/lwip/ip_addr.h:41,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/tcpip_adapter/include/tcpip_adapter_types.h:18,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/tcpip_adapter/include/tcpip_adapter.h:24,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_netif/include/esp_netif.h:35,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_event/include/esp_event_legacy.h:22,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_event/include/esp_event.h:28,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiGeneric.h:27,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiSTA.h:28,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFi.h:32,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/Communication/HTTP/WiFiInclude.h:14,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/Communication/HTTP/URLStream.h:6,
+                 from include/extended_audio_player.h:18,
+                 from src/extended_audio_player.cpp:11:
+C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/lwip/lwip/src/include/lwip/def.h:122: warning: "ntohl" redefined
+ #define ntohl(x) lwip_ntohl(x)
+ 
+In file included from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/AudioCodecs/CodecNetworkFormat.h:4,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/AudioCodecs/AudioCodecs.h:29,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio/AudioPlayer.h:3,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio.h:18,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools.h:74,
+                 from include/extended_audio_player.h:16,
+                 from src/extended_audio_player.cpp:11:
+.pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio/AudioBasic/Net.h:8: note: this is the location of the previous definition
+ #  define ntohl(x) htonl(x)
+ 
+Compiling .pio\build\bowie-phone-custom\src\wifi_manager.cpp.o
+Building .pio\build\bowie-phone-custom\bootloader.bin
+Generating partitions .pio\build\bowie-phone-custom\partitions.bin
+esptool.py v4.9.0
+Creating esp32 image...
+Merged 1 ELF section
+Successfully created esp32 image.
+Compiling .pio\build\bowie-phone-custom\libe6a\SPI\SPI.cpp.o
+Compiling .pio\build\bowie-phone-custom\libdec\Wire\Wire.cpp.o
+In file included from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/lwip/lwip/src/include/lwip/ip_addr.h:41,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/tcpip_adapter/include/tcpip_adapter_types.h:18,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/tcpip_adapter/include/tcpip_adapter.h:24,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_netif/include/esp_netif.h:35,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_event/include/esp_event_legacy.h:22,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_event/include/esp_event.h:28,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiGeneric.h:27,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiSTA.h:28,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFi.h:32,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/Communication/HTTP/WiFiInclude.h:14,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/Communication/HTTP/URLStream.h:6,
+                 from include/extended_audio_player.h:18,
+                 from src/sequence_processor.cpp:4:
+C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/lwip/lwip/src/include/lwip/def.h:119: warning: "htons" redefined
+ #define htons(x) lwip_htons(x)
+ 
+In file included from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/AudioCodecs/CodecNetworkFormat.h:4,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/AudioCodecs/AudioCodecs.h:29,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio/AudioPlayer.h:3,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio.h:18,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools.h:74,
+                 from include/audio_key_registry.h:18,
+                 from include/audio_file_manager.h:20,
+                 from include/sequence_processor.h:20,
+                 from src/sequence_processor.cpp:1:
+.pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio/AudioBasic/Net.h:7: note: this is the location of the previous definition
+ #  define htons(x) (((uint16_t)(x)&0xff00) >> 8) | (((uint16_t)(x)&0X00FF) << 8)
+ 
+In file included from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/lwip/lwip/src/include/lwip/ip_addr.h:41,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/tcpip_adapter/include/tcpip_adapter_types.h:18,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/tcpip_adapter/include/tcpip_adapter.h:24,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_netif/include/esp_netif.h:35,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_event/include/esp_event_legacy.h:22,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_event/include/esp_event.h:28,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiGeneric.h:27,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiSTA.h:28,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFi.h:32,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/Communication/HTTP/WiFiInclude.h:14,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/Communication/HTTP/URLStream.h:6,
+                 from include/extended_audio_player.h:18,
+                 from src/sequence_processor.cpp:4:
+C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/lwip/lwip/src/include/lwip/def.h:120: warning: "ntohs" redefined
+ #define ntohs(x) lwip_ntohs(x)
+ 
+In file included from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/AudioCodecs/CodecNetworkFormat.h:4,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/AudioCodecs/AudioCodecs.h:29,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio/AudioPlayer.h:3,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio.h:18,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools.h:74,
+                 from include/audio_key_registry.h:18,
+                 from include/audio_file_manager.h:20,
+                 from include/sequence_processor.h:20,
+                 from src/sequence_processor.cpp:1:
+.pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio/AudioBasic/Net.h:9: note: this is the location of the previous definition
+ #  define ntohs(x) htons(x)
+ 
+In file included from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/lwip/lwip/src/include/lwip/ip_addr.h:41,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/tcpip_adapter/include/tcpip_adapter_types.h:18,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/tcpip_adapter/include/tcpip_adapter.h:24,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_netif/include/esp_netif.h:35,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_event/include/esp_event_legacy.h:22,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_event/include/esp_event.h:28,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiGeneric.h:27,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiSTA.h:28,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFi.h:32,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/Communication/HTTP/WiFiInclude.h:14,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/Communication/HTTP/URLStream.h:6,
+                 from include/extended_audio_player.h:18,
+                 from src/sequence_processor.cpp:4:
+C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/lwip/lwip/src/include/lwip/def.h:121: warning: "htonl" redefined
+ #define htonl(x) lwip_htonl(x)
+ 
+In file included from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/AudioCodecs/CodecNetworkFormat.h:4,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/AudioCodecs/AudioCodecs.h:29,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio/AudioPlayer.h:3,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio.h:18,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools.h:74,
+                 from include/audio_key_registry.h:18,
+                 from include/audio_file_manager.h:20,
+                 from include/sequence_processor.h:20,
+                 from src/sequence_processor.cpp:1:
+.pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio/AudioBasic/Net.h:6: note: this is the location of the previous definition
+ #  define htonl(x) (((x) << 24 & 0xFF000000UL) | ((x) << 8 & 0x00FF0000UL) | ((x) >> 8 & 0x0000FF00UL) | ((x) >> 24 & 0x000000FFUL))
+ 
+In file included from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/lwip/lwip/src/include/lwip/ip_addr.h:41,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/tcpip_adapter/include/tcpip_adapter_types.h:18,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/tcpip_adapter/include/tcpip_adapter.h:24,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_netif/include/esp_netif.h:35,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_event/include/esp_event_legacy.h:22,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_event/include/esp_event.h:28,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiGeneric.h:27,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFiSTA.h:28,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src/WiFi.h:32,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/Communication/HTTP/WiFiInclude.h:14,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/Communication/HTTP/URLStream.h:6,
+                 from include/extended_audio_player.h:18,
+                 from src/sequence_processor.cpp:4:
+C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/lwip/lwip/src/include/lwip/def.h:122: warning: "ntohl" redefined
+ #define ntohl(x) lwip_ntohl(x)
+ 
+In file included from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/AudioCodecs/CodecNetworkFormat.h:4,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/AudioCodecs/AudioCodecs.h:29,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio/AudioPlayer.h:3,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio.h:18,
+                 from .pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools.h:74,
+                 from include/audio_key_registry.h:18,
+                 from include/audio_file_manager.h:20,
+                 from include/sequence_processor.h:20,
+                 from src/sequence_processor.cpp:1:
+.pio/libdeps/bowie-phone-custom/audio-tools/src/AudioTools/CoreAudio/AudioBasic/Net.h:8: note: this is the location of the previous definition
+ #  define ntohl(x) htonl(x)
+ 
+Compiling .pio\build\bowie-phone-custom\libaf7\audio-driver\Driver\ac101\ac101.c.o
+Compiling .pio\build\bowie-phone-custom\libaf7\audio-driver\Driver\ad1938\ad1938.cpp.o
+Compiling .pio\build\bowie-phone-custom\libaf7\audio-driver\Driver\cs43l22\cs43l22.c.o
+Compiling .pio\build\bowie-phone-custom\libaf7\audio-driver\Driver\es7210\es7210.c.o
+Compiling .pio\build\bowie-phone-custom\libaf7\audio-driver\Driver\es7243\es7243.c.o
+Compiling .pio\build\bowie-phone-custom\libaf7\audio-driver\Driver\es7243e\es7243e.c.o
+Compiling .pio\build\bowie-phone-custom\libaf7\audio-driver\Driver\es8156\es8156.c.o
+Compiling .pio\build\bowie-phone-custom\libaf7\audio-driver\Driver\es8311\es8311.c.o
+Compiling .pio\build\bowie-phone-custom\libaf7\audio-driver\Driver\es8374\es8374.c.o
+Compiling .pio\build\bowie-phone-custom\libaf7\audio-driver\Driver\es8388\es8388.c.o
+Compiling .pio\build\bowie-phone-custom\libaf7\audio-driver\Driver\nau8325\PCBCUPID_NAU8325.cpp.o
+Compiling .pio\build\bowie-phone-custom\libaf7\audio-driver\Driver\tas5805m\tas5805m.c.o
+Compiling .pio\build\bowie-phone-custom\libaf7\audio-driver\Driver\wm8960\mtb_wm8960.cpp.o
+Archiving .pio\build\bowie-phone-custom\libe6a\libSPI.a
+Compiling .pio\build\bowie-phone-custom\libaf7\audio-driver\Driver\wm8978\WM8978.cpp.o
+Compiling .pio\build\bowie-phone-custom\libaf7\audio-driver\Driver\wm8994\wm8994.c.o
+Archiving .pio\build\bowie-phone-custom\libdec\libWire.a
+Compiling .pio\build\bowie-phone-custom\libaf7\audio-driver\Platforms\API_I2C_Arduino.cpp.o
+Compiling .pio\build\bowie-phone-custom\libaf7\audio-driver\Platforms\API_I2C_EspressifIDF.cpp.o
+Compiling .pio\build\bowie-phone-custom\libaf7\audio-driver\Platforms\API_SPI_Arduino.cpp.o
+Compiling .pio\build\bowie-phone-custom\libaf7\audio-driver\Platforms\API_SPI_Others.cpp.o
+Compiling .pio\build\bowie-phone-custom\libaf7\audio-driver\Platforms\LoggerSTD.cpp.o
+Compiling .pio\build\bowie-phone-custom\libf94\FS\FS.cpp.o
+Compiling .pio\build\bowie-phone-custom\libf94\FS\vfs_api.cpp.o
+Compiling .pio\build\bowie-phone-custom\libb68\SD\SD.cpp.o
+Compiling .pio\build\bowie-phone-custom\libb68\SD\sd_diskio.cpp.o
+Compiling .pio\build\bowie-phone-custom\libb68\SD\sd_diskio_crc.c.o
+Compiling .pio\build\bowie-phone-custom\lib7e9\SD_MMC\SD_MMC.cpp.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-aac\aacdec.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-aac\aactabs.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-aac\bitstream.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-aac\buffers.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-aac\dct4.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-aac\decelmnt.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-aac\dequant.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-aac\fft.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-aac\filefmt.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-aac\huffman.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-aac\hufftabs.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-aac\imdct.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-aac\noiseless.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-aac\pns.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-aac\sbr.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-aac\sbrfft.c.o
+Archiving .pio\build\bowie-phone-custom\libaf7\libaudio-driver.a
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-aac\sbrfreq.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-aac\sbrhfadj.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-aac\sbrhfgen.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-aac\sbrhuff.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-aac\sbrimdct.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-aac\sbrmath.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-aac\sbrqmf.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-aac\sbrside.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-aac\sbrtabs.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-aac\stproc.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-aac\tns.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-aac\trigtabs.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-mp3\bitstream.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-mp3\buffers.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-mp3\dct32.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-mp3\dequant.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-mp3\dqchan.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-mp3\huffman.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-mp3\hufftabs.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-mp3\imdct.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-mp3\mp3dec.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-mp3\mp3tabs.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-mp3\polyphase.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-mp3\scalfact.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-mp3\stproc.c.o
+Archiving .pio\build\bowie-phone-custom\libf94\libFS.a
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-mp3\subband.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\libhelix-mp3\trigtabs.c.o
+Compiling .pio\build\bowie-phone-custom\libc6a\libhelix\utils\helix_memory.cpp.o
+Compiling .pio\build\bowie-phone-custom\lib8b5\WiFi\WiFi.cpp.o
+Archiving .pio\build\bowie-phone-custom\libb68\libSD.a
+Compiling .pio\build\bowie-phone-custom\lib8b5\WiFi\WiFiAP.cpp.o
+Compiling .pio\build\bowie-phone-custom\lib8b5\WiFi\WiFiClient.cpp.o
+Compiling .pio\build\bowie-phone-custom\lib8b5\WiFi\WiFiGeneric.cpp.o
+Compiling .pio\build\bowie-phone-custom\lib8b5\WiFi\WiFiMulti.cpp.o
+Compiling .pio\build\bowie-phone-custom\lib8b5\WiFi\WiFiSTA.cpp.o
+Compiling .pio\build\bowie-phone-custom\lib8b5\WiFi\WiFiScan.cpp.o
+Archiving .pio\build\bowie-phone-custom\lib7e9\libSD_MMC.a
+Compiling .pio\build\bowie-phone-custom\lib8b5\WiFi\WiFiServer.cpp.o
+Compiling .pio\build\bowie-phone-custom\lib8b5\WiFi\WiFiUdp.cpp.o
+Compiling .pio\build\bowie-phone-custom\lib7d3\WiFiClientSecure\WiFiClientSecure.cpp.o
+Compiling .pio\build\bowie-phone-custom\lib7d3\WiFiClientSecure\esp_crt_bundle.c.o
+Compiling .pio\build\bowie-phone-custom\lib7d3\WiFiClientSecure\ssl_client.cpp.o
+Compiling .pio\build\bowie-phone-custom\libb1e\I2S\I2S.cpp.o
+Compiling .pio\build\bowie-phone-custom\libee3\Ticker\Ticker.cpp.o
+Compiling .pio\build\bowie-phone-custom\lib404\audio-tools\AudioTools\CoreAudio\AudioRuntime.cpp.o
+Compiling .pio\build\bowie-phone-custom\lib450\audiokit\audio_driver\ac101\ac101.c.o
+Archiving .pio\build\bowie-phone-custom\libee3\libTicker.a
+Archiving .pio\build\bowie-phone-custom\libc6a\libhelix.a
+Compiling .pio\build\bowie-phone-custom\lib450\audiokit\audio_driver\es7148\es7148.c.o
+Compiling .pio\build\bowie-phone-custom\lib450\audiokit\audio_driver\es7210\es7210.c.o
+Compiling .pio\build\bowie-phone-custom\lib450\audiokit\audio_driver\es7243\es7243.c.o
+Compiling .pio\build\bowie-phone-custom\lib450\audiokit\audio_driver\es7243e\es7243e.c.o
+Compiling .pio\build\bowie-phone-custom\lib450\audiokit\audio_driver\es8156\es8156.c.o
+Compiling .pio\build\bowie-phone-custom\lib450\audiokit\audio_driver\es8311\es8311.c.o
+Compiling .pio\build\bowie-phone-custom\lib450\audiokit\audio_driver\es8374\es8374.c.o
+Compiling .pio\build\bowie-phone-custom\lib450\audiokit\audio_driver\es8388\es8388.c.o
+Compiling .pio\build\bowie-phone-custom\lib450\audiokit\audio_driver\tas5805m\tas5805m.c.o
+Compiling .pio\build\bowie-phone-custom\lib450\audiokit\audio_hal\audio_gpio.c.o
+Compiling .pio\build\bowie-phone-custom\lib450\audiokit\audio_hal\audio_hal.c.o
+Compiling .pio\build\bowie-phone-custom\lib450\audiokit\audio_hal\audio_mem.c.o
+Compiling .pio\build\bowie-phone-custom\lib450\audiokit\audio_hal\audio_mutex.c.o
+Compiling .pio\build\bowie-phone-custom\lib450\audiokit\audio_hal\audio_volume.c.o
+Compiling .pio\build\bowie-phone-custom\lib450\audiokit\audio_hal\audiokit_logger.c.o
+Compiling .pio\build\bowie-phone-custom\lib450\audiokit\audio_hal\driver_pins.cpp.o
+Compiling .pio\build\bowie-phone-custom\lib450\audiokit\audio_hal\i2c_bus.c.o
+Compiling .pio\build\bowie-phone-custom\lib450\audiokit\audio_hal\i2c_wire.cpp.o
+Compiling .pio\build\bowie-phone-custom\libd3c\WireGuard-ESP32\WireGuard.cpp.o
+Archiving .pio\build\bowie-phone-custom\lib8b5\libWiFi.a
+C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/I2S/src/I2S.cpp: In member function 'int I2SClass::_installDriver()':
+C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/I2S/src/I2S.cpp:202:89: warning: 'ADC_ATTEN_DB_11' is deprecated [-Wdeprecated-declarations]
+       esp_i2s::adc1_config_channel_atten((esp_i2s::adc1_channel_t)adc_channel, esp_i2s::ADC_ATTEN_DB_11);
+                                                                                         ^~~~~~~~~~~~~~~
+In file included from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/driver/include/driver/adc.h:14,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/driver/include/driver/i2s.h:21,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/I2S/src/I2S.h:26,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/I2S/src/I2S.cpp:21:
+C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/hal/include/hal/adc_types.h:54:5: note: declared here
+     ADC_ATTEN_DB_11 __attribute__((deprecated)) = ADC_ATTEN_DB_12,  ///<This is deprecated, it behaves the same as `ADC_ATTEN_DB_12`
+     ^~~~~~~~~~~~~~~
+C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/I2S/src/I2S.cpp:204:89: warning: 'ADC_ATTEN_DB_11' is deprecated [-Wdeprecated-declarations]
+       esp_i2s::adc2_config_channel_atten((esp_i2s::adc2_channel_t)adc_channel, esp_i2s::ADC_ATTEN_DB_11);
+                                                                                         ^~~~~~~~~~~~~~~
+In file included from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/driver/include/driver/adc.h:14,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/driver/include/driver/i2s.h:21,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/I2S/src/I2S.h:26,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/libraries/I2S/src/I2S.cpp:21:
+C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/hal/include/hal/adc_types.h:54:5: note: declared here
+     ADC_ATTEN_DB_11 __attribute__((deprecated)) = ADC_ATTEN_DB_12,  ///<This is deprecated, it behaves the same as `ADC_ATTEN_DB_12`
+     ^~~~~~~~~~~~~~~
+Compiling .pio\build\bowie-phone-custom\libd3c\WireGuard-ESP32\crypto.c.o
+Compiling .pio\build\bowie-phone-custom\libd3c\WireGuard-ESP32\crypto\refc\blake2s.c.o
+Compiling .pio\build\bowie-phone-custom\libd3c\WireGuard-ESP32\crypto\refc\chacha20.c.o
+Compiling .pio\build\bowie-phone-custom\libd3c\WireGuard-ESP32\crypto\refc\chacha20poly1305.c.o
+Compiling .pio\build\bowie-phone-custom\libd3c\WireGuard-ESP32\crypto\refc\poly1305-donna.c.o
+Compiling .pio\build\bowie-phone-custom\libd3c\WireGuard-ESP32\crypto\refc\x25519.c.o
+Compiling .pio\build\bowie-phone-custom\libd3c\WireGuard-ESP32\wireguard-platform.c.o
+Compiling .pio\build\bowie-phone-custom\libd3c\WireGuard-ESP32\wireguard.c.o
+Compiling .pio\build\bowie-phone-custom\libd3c\WireGuard-ESP32\wireguardif.c.o
+Compiling .pio\build\bowie-phone-custom\libbae\Ethernet\ETH.cpp.o
+Archiving .pio\build\bowie-phone-custom\libb1e\libI2S.a
+Archiving .pio\build\bowie-phone-custom\lib7d3\libWiFiClientSecure.a
+Compiling .pio\build\bowie-phone-custom\lib982\ESP Telnet\ESPTelnet.cpp.o
+Archiving .pio\build\bowie-phone-custom\lib404\libaudio-tools.a
+Compiling .pio\build\bowie-phone-custom\lib982\ESP Telnet\ESPTelnetBase.cpp.o
+Compiling .pio\build\bowie-phone-custom\lib982\ESP Telnet\ESPTelnetStream.cpp.o
+In file included from .pio/libdeps/bowie-phone-custom/WireGuard-ESP32/src/wireguardif.c:51:
+C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/tcpip_adapter/include/tcpip_adapter.h:15:2: warning: #warning "This header is deprecated, please use new network related API in esp_netif.h" [-Wcpp]
+ #warning "This header is deprecated, please use new network related API in esp_netif.h"
+  ^~~~~~~
+Compiling .pio\build\bowie-phone-custom\lib982\ESP Telnet\EscapeCodes.cpp.o
+.pio/libdeps/bowie-phone-custom/WireGuard-ESP32/src/wireguardif.c: In function 'wireguardif_tmr':
+.pio/libdeps/bowie-phone-custom/WireGuard-ESP32/src/wireguardif.c:868:5: warning: implicit declaration of function 'handshake_destroy'; did you mean 'keypair_destroy'? [-Wimplicit-function-declaration]
+     handshake_destroy(&peer->handshake);
+     ^~~~~~~~~~~~~~~~~
+     keypair_destroy
+.pio/libdeps/bowie-phone-custom/WireGuard-ESP32/src/wireguardif.c: In function 'wireguardif_init':
+.pio/libdeps/bowie-phone-custom/WireGuard-ESP32/src/wireguardif.c:924:48: warning: passing argument 2 of 'tcpip_adapter_get_netif' from incompatible pointer type [-Wincompatible-pointer-types]
+  tcpip_adapter_get_netif(TCPIP_ADAPTER_IF_STA, &underlying_netif);
+                                                ^~~~~~~~~~~~~~~~~
+In file included from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/esp_netif/include/esp_netif.h:35,
+                 from C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/tcpip_adapter/include/tcpip_adapter.h:16,
+                 from .pio/libdeps/bowie-phone-custom/WireGuard-ESP32/src/wireguardif.c:51:
+C:/Users/Jumper/.platformio/packages/framework-arduinoespressif32/tools/sdk/esp32/include/tcpip_adapter/include/tcpip_adapter.h:95:72: note: expected 'void **' but argument is of type 'struct netif **'
+ esp_err_t tcpip_adapter_get_netif(tcpip_adapter_if_t tcpip_if, void ** netif);
+                                                                ~~~~~~~~^~~~~
+Compiling .pio\build\bowie-phone-custom\lib083\Update\HttpsOTAUpdate.cpp.o
+Compiling .pio\build\bowie-phone-custom\lib083\Update\Updater.cpp.o
+Archiving .pio\build\bowie-phone-custom\libd3c\libWireGuard-ESP32.a
+Compiling .pio\build\bowie-phone-custom\libcd3\ESPmDNS\ESPmDNS.cpp.o
+Archiving .pio\build\bowie-phone-custom\lib450\libaudiokit.a
+Compiling .pio\build\bowie-phone-custom\lib825\ArduinoOTA\ArduinoOTA.cpp.o
+Compiling .pio\build\bowie-phone-custom\lib41f\Preferences\Preferences.cpp.o
+Compiling .pio\build\bowie-phone-custom\libbc3\WebServer\Parsing.cpp.o
+Archiving .pio\build\bowie-phone-custom\libbae\libEthernet.a
+Compiling .pio\build\bowie-phone-custom\libbc3\WebServer\WebServer.cpp.o
+Compiling .pio\build\bowie-phone-custom\libbc3\WebServer\detail\mimetable.cpp.o
+Compiling .pio\build\bowie-phone-custom\libc58\HTTPClient\HTTPClient.cpp.o
+Archiving .pio\build\bowie-phone-custom\lib982\libESP Telnet.a
+Archiving .pio\build\bowie-phone-custom\lib083\libUpdate.a
+Compiling .pio\build\bowie-phone-custom\lib6bd\EEPROM\EEPROM.cpp.o
+Compiling .pio\build\bowie-phone-custom\lib386\DNSServer\DNSServer.cpp.o
+Archiving .pio\build\bowie-phone-custom\libcd3\libESPmDNS.a
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\Esp.cpp.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\FirmwareMSC.cpp.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\FunctionalInterrupt.cpp.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\HWCDC.cpp.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\HardwareSerial.cpp.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\IPAddress.cpp.o
+Archiving .pio\build\bowie-phone-custom\lib41f\libPreferences.a
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\IPv6Address.cpp.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\MD5Builder.cpp.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\Print.cpp.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\Stream.cpp.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\StreamString.cpp.o
+Archiving .pio\build\bowie-phone-custom\lib825\libArduinoOTA.a
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\Tone.cpp.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\USB.cpp.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\USBCDC.cpp.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\USBMSC.cpp.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\WMath.cpp.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\WString.cpp.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\base64.cpp.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\cbuf.cpp.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\esp32-hal-adc.c.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\esp32-hal-bt.c.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\esp32-hal-cpu.c.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\esp32-hal-dac.c.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\esp32-hal-gpio.c.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\esp32-hal-i2c-slave.c.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\esp32-hal-i2c.c.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\esp32-hal-ledc.c.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\esp32-hal-matrix.c.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\esp32-hal-misc.c.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\esp32-hal-psram.c.o
+Archiving .pio\build\bowie-phone-custom\lib6bd\libEEPROM.a
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\esp32-hal-rgb-led.c.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\esp32-hal-rmt.c.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\esp32-hal-sigmadelta.c.o
+Archiving .pio\build\bowie-phone-custom\libbc3\libWebServer.a
+Archiving .pio\build\bowie-phone-custom\lib386\libDNSServer.a
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\esp32-hal-spi.c.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\esp32-hal-time.c.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\esp32-hal-timer.c.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\esp32-hal-tinyusb.c.o
+Archiving .pio\build\bowie-phone-custom\libc58\libHTTPClient.a
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\esp32-hal-touch.c.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\esp32-hal-uart.c.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\firmware_msc_fat.c.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\libb64\cdecode.c.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\libb64\cencode.c.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\main.cpp.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\stdlib_noniso.c.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\wiring_pulse.c.o
+Compiling .pio\build\bowie-phone-custom\FrameworkArduino\wiring_shift.c.o
+Archiving .pio\build\bowie-phone-custom\libFrameworkArduino.a
 Linking .pio\build\bowie-phone-custom\firmware.elf
 Retrieving maximum program size .pio\build\bowie-phone-custom\firmware.elf
 Checking size .pio\build\bowie-phone-custom\firmware.elf
 Advanced Memory Usage is available via "PlatformIO Home > Project Inspect"
-RAM:   [===       ]  28.5% (used 93392 bytes from 327680 bytes)
-Flash: [==========]  97.3% (used 1912821 bytes from 1966080 bytes)
+RAM:   [===       ]  29.6% (used 96864 bytes from 327680 bytes)
+Flash: [==========]  97.5% (used 1916905 bytes from 1966080 bytes)
 Building .pio\build\bowie-phone-custom\firmware.bin
 esptool.py v4.9.0
 Creating esp32 image...
 Merged 27 ELF sections
 Successfully created esp32 image.
-========================= [SUCCESS] Took 15.14 seconds =========================
+========================= [SUCCESS] Took 27.16 seconds =========================
 
 Environment         Status    Duration
 ------------------  --------  ------------
-bowie-phone-custom  SUCCESS   00:00:15.140
-========================= 1 succeeded in 00:00:15.140 =========================
+bowie-phone-custom  SUCCESS   00:00:27.159
+========================= 1 succeeded in 00:00:27.159 =========================

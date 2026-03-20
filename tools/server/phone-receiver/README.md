@@ -22,6 +22,8 @@ Environment variables in `docker-compose.yml`:
 | `LOG_DIR` | /app/logs | Directory to store logs |
 | `LOG_RETENTION_DAYS` | 30 | Days to keep logs |
 | `MAX_LOG_SIZE_MB` | 100 | Max log size per device |
+| `TELNET_PROXY_PORT` | 2323 | Telnet proxy port (bridges to phone:23) |
+| `PHONE_TELNET_PORT` | 23 | Phone telnet port to connect to |
 
 ## Phone Configuration
 
@@ -67,6 +69,25 @@ Download raw log file.
 
 ### `GET /health`
 Health check endpoint.
+
+## Telnet Proxy
+
+The server includes a TCP telnet proxy on port 2323 (configurable). Connect from your desktop and it bridges directly to the phone's ESPTelnet on port 23, with all traffic also logged to the session log file.
+
+```bash
+# Single device — auto-connects
+telnet 192.168.1.216 2323
+
+# Multiple devices — prompts for selection
+telnet 192.168.1.216 2323
+# > Available devices:
+# >   1. kitchen-phone
+# >   2. living-room
+# > Type device name or number: 1
+```
+
+### `GET /telnet/:device`
+Returns connection info for a device's telnet proxy.
 
 ## Log Storage
 

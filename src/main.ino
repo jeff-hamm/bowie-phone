@@ -244,7 +244,7 @@ void setup()
     // Enable task watchdog for the main loop (10 s timeout, panic on expiry).
     // This catches hard hangs — e.g. a decoder stuck in an infinite loop
     // or a bad pointer deref that doesn't trigger a normal panic.
-    esp_task_wdt_init(10, true);
+    esp_task_wdt_init(TASK_WDT_TIMEOUT_S, true);
     esp_task_wdt_add(NULL);  // Add current (loopTask) to WDT
     
     // Check if phone is already off hook at boot - play dial tone

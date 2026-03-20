@@ -7,6 +7,8 @@ services:
     restart: unless-stopped
     ports:
       - "3000:3000"
+      - "2323:2323"
+      - "2324:2324"
     volumes:
       - ${APP_DATA}/phone-receiver/logs:/app/logs
     environment:
@@ -14,6 +16,8 @@ services:
       - PORT=3000
       - LOG_RETENTION_DAYS=30
       - MAX_LOG_SIZE_MB=50
+      - TELNET_PROXY_PORT=2323
+      - PHONE_INTAKE_PORT=2324
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
       interval: 30s

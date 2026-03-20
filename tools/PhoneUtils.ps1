@@ -62,7 +62,7 @@ $Script:Config = @{
     FirmwareOffset = "0x10000"
     
     # Remote log file storage (written by log server on unraid)
-    RemoteLogBasePath = "/mnt/pool/appdata/phone/logs"
+    RemoteLogBasePath = "/mnt/pool/appdata/phone-receiver/logs"
 
     # Config portal settings
     ApName = "Bowie-Phone-Setup"

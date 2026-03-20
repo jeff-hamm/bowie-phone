@@ -2,6 +2,7 @@ const express = require('express');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const net = require('net');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -367,7 +368,369 @@ function rotateLogsIfNeeded(deviceDir) {
     }
 }
 
-// Start server
+// ── Phone log intake ─────────────────────────────────────────────────────────
+// Persistent TCP server that accepts outbound connections FROM phones.
+// The phone sends a handshake: "BOWIE-LOG device=<id> boot=<bootId> firmware=<ver>\n"
+// Server replies "BOWIE-ACK\n".  All subsequent data is raw log text, appended to
+// the session log file.
+
+const PHONE_INTAKE_PORT = parseInt(process.env.PHONE_INTAKE_PORT) || 2324;
+
+// Track active phone intake connections: deviceId -> { socket, sessionDir, logStream }
+const activePhoneConnections = new Map();
+
+const phoneIntake = net.createServer((socket) => {
+    const remoteAddr = socket.remoteAddress;
+    console.log(`📡 Phone intake: connection from ${remoteAddr}`);
+
+    let handshakeDone = false;
+    let buf = '';
+    let deviceId = null;
+    let logFilePath = null;
+
+    // Close if no handshake within 10 seconds
+    const handshakeTimeout = setTimeout(() => {
+        if (!handshakeDone) {
+            console.log(`📡 Phone intake: handshake timeout from ${remoteAddr}`);
+            socket.destroy();
+        }
+    }, 10000);
+
+    socket.on('data', (data) => {
+        if (!handshakeDone) {
+            buf += data.toString();
+            const nl = buf.indexOf('\n');
+            if (nl < 0) return;
+
+            clearTimeout(handshakeTimeout);
+            const line = buf.substring(0, nl).trim();
+            const remainder = buf.substring(nl + 1);
+
+            // Parse: BOWIE-LOG device=<id> boot=<bootId> firmware=<ver>
+            const match = line.match(/^BOWIE-LOG\s+device=(\S+)\s+boot=(\S+)(?:\s+firmware=(\S+))?$/);
+            if (!match) {
+                console.log(`📡 Phone intake: bad handshake from ${remoteAddr}: ${line}`);
+                socket.write('ERROR bad handshake\n');
+                socket.destroy();
+                return;
+            }
+
+            deviceId = sanitizeDeviceId(match[1]);
+            const bootId = match[2];
+            const firmware = match[3] || 'unknown';
+
+            // Create or reuse session
+            const { sessionId, sessionDir } = resolveSession(deviceId, bootId, {
+                clientIp: remoteAddr,
+                firmware: firmware,
+            });
+
+            const dateStr = new Date().toISOString().split('T')[0];
+            logFilePath = path.join(sessionDir, `${sessionId}_${dateStr}.log`);
+
+            socket.write('BOWIE-ACK\n');
+            handshakeDone = true;
+
+            console.log(`📡 Phone intake: ${deviceId} (boot=${bootId}) connected, logging to ${logFilePath}`);
+
+            // Store active connection
+            activePhoneConnections.set(deviceId, { socket, sessionDir, logFilePath });
+
+            // Write any remainder after the handshake line
+            if (remainder.length > 0) {
+                appendLogData(logFilePath, remainder);
+            }
+            return;
+        }
+
+        // Post-handshake: raw log data, append to file
+        appendLogData(logFilePath, data.toString());
+    });
+
+    socket.on('error', (err) => {
+        console.log(`📡 Phone intake: error from ${deviceId || remoteAddr}: ${err.message}`);
+    });
+
+    socket.on('close', () => {
+        console.log(`📡 Phone intake: ${deviceId || remoteAddr} disconnected`);
+        if (deviceId) {
+            activePhoneConnections.delete(deviceId);
+        }
+        clearTimeout(handshakeTimeout);
+    });
+});
+
+function appendLogData(filePath, data) {
+    try {
+        fs.appendFileSync(filePath, data);
+    } catch (err) {
+        console.error(`📡 Phone intake: write error: ${err.message}`);
+    }
+}
+
+phoneIntake.listen(PHONE_INTAKE_PORT, '0.0.0.0', () => {
+    console.log(`📡 Phone log intake listening on port ${PHONE_INTAKE_PORT}`);
+});
+
+// Expose active connections via HTTP for diagnostics
+app.get('/intake/status', (req, res) => {
+    const connections = [];
+    for (const [device, info] of activePhoneConnections) {
+        connections.push({
+            device,
+            remoteAddress: info.socket.remoteAddress,
+            logFile: path.basename(info.logFilePath),
+        });
+    }
+    res.json({ active_connections: connections });
+});
+
+// ── Server-initiated telnet monitor ──────────────────────────────────────────
+// The server connects to the phone's telnet port and sends a "BOWIE-SERVER"
+// handshake so the phone knows to suppress HTTP POSTs.  Works through NAT/proxies
+// where IP-matching alone would fail.
+
+// Track active server monitor connections: deviceId -> socket
+const activeMonitorConnections = new Map();
+
+app.post('/monitor/:device', (req, res) => {
+    const deviceId = sanitizeDeviceId(req.params.device);
+    if (activeMonitorConnections.has(deviceId)) {
+        return res.json({ status: 'already_monitoring', device: deviceId });
+    }
+    const ip = resolveDeviceIp(deviceId);
+    if (!ip) return res.status(404).json({ error: 'Device not found or no known IP' });
+
+    const phone = net.createConnection({ host: ip, port: PHONE_TELNET_PORT, timeout: 5000 }, () => {
+        // Send handshake so phone identifies us as the log server
+        phone.write('BOWIE-SERVER\n');
+        console.log(`📡 Monitor: connected to ${deviceId} @ ${ip}, sent BOWIE-SERVER handshake`);
+        activeMonitorConnections.set(deviceId, phone);
+        res.json({ status: 'monitoring', device: deviceId, phone_ip: ip });
+    });
+
+    const logFile = openProxyLog(deviceId);
+
+    phone.on('data', (data) => {
+        if (logFile) {
+            try { fs.appendFileSync(logFile, data); } catch (_) {}
+        }
+    });
+
+    phone.on('error', (err) => {
+        console.log(`📡 Monitor: ${deviceId} error: ${err.message}`);
+        activeMonitorConnections.delete(deviceId);
+        if (!res.headersSent) {
+            res.status(502).json({ error: `Connection failed: ${err.message}` });
+        }
+    });
+    phone.on('timeout', () => {
+        console.log(`📡 Monitor: ${deviceId} connection timeout`);
+        phone.destroy();
+        activeMonitorConnections.delete(deviceId);
+        if (!res.headersSent) {
+            res.status(504).json({ error: 'Connection timeout' });
+        }
+    });
+    phone.on('close', () => {
+        console.log(`📡 Monitor: ${deviceId} disconnected`);
+        activeMonitorConnections.delete(deviceId);
+    });
+});
+
+app.delete('/monitor/:device', (req, res) => {
+    const deviceId = sanitizeDeviceId(req.params.device);
+    const socket = activeMonitorConnections.get(deviceId);
+    if (!socket) return res.status(404).json({ error: 'Not monitoring this device' });
+    socket.destroy();
+    activeMonitorConnections.delete(deviceId);
+    res.json({ status: 'stopped', device: deviceId });
+});
+
+app.get('/monitor/status', (req, res) => {
+    const monitors = [];
+    for (const [device, socket] of activeMonitorConnections) {
+        monitors.push({ device, remoteAddress: socket.remoteAddress });
+    }
+    res.json({ active_monitors: monitors });
+});
+
+// ── Telnet proxy ─────────────────────────────────────────────────────────────
+// TCP server that bridges a desktop client to a phone's ESPTelnet (port 23).
+// On connect the proxy looks up the most-recently-seen IP for the device from
+// session metadata.  If only one device exists it auto-connects; otherwise the
+// client sends "CONNECT <device-id>\r\n" as the first line.
+// Everything relayed is also appended to the session log for persistence.
+
+const TELNET_PROXY_PORT = parseInt(process.env.TELNET_PROXY_PORT) || 2323;
+const PHONE_TELNET_PORT = parseInt(process.env.PHONE_TELNET_PORT) || 23;
+
+// Look up the most recent Tailscale IP for a device from session metadata
+function resolveDeviceIp(deviceId) {
+    const deviceDir = path.join(LOG_DIR, deviceId);
+    if (!fs.existsSync(deviceDir)) return null;
+
+    const sessions = fs.readdirSync(deviceDir)
+        .filter(f => fs.statSync(path.join(deviceDir, f)).isDirectory())
+        .sort((a, b) => {
+            const sa = fs.statSync(path.join(deviceDir, a)).mtimeMs;
+            const sb = fs.statSync(path.join(deviceDir, b)).mtimeMs;
+            return sb - sa;
+        });
+
+    for (const s of sessions) {
+        const metaFile = path.join(deviceDir, s, `${s}__metadata.env`);
+        if (!fs.existsSync(metaFile)) continue;
+        const content = fs.readFileSync(metaFile, 'utf8');
+        const match = content.match(/^TAILSCALE_IP=(.+)$/m);
+        if (match && match[1].trim()) return match[1].trim();
+        // Fall back to CLIENT_IP
+        const cliMatch = content.match(/^CLIENT_IP=(.+)$/m);
+        if (cliMatch && cliMatch[1].trim()) return cliMatch[1].trim();
+    }
+    return null;
+}
+
+// List all known device ids
+function listDeviceIds() {
+    if (!fs.existsSync(LOG_DIR)) return [];
+    return fs.readdirSync(LOG_DIR)
+        .filter(f => fs.statSync(path.join(LOG_DIR, f)).isDirectory());
+}
+
+// Open a log-appending stream for the proxy session
+function openProxyLog(deviceId) {
+    const deviceDir = path.join(LOG_DIR, deviceId);
+    if (!fs.existsSync(deviceDir)) return null;
+    const sessions = fs.readdirSync(deviceDir)
+        .filter(f => fs.statSync(path.join(deviceDir, f)).isDirectory())
+        .sort((a, b) => fs.statSync(path.join(deviceDir, b)).mtimeMs - fs.statSync(path.join(deviceDir, a)).mtimeMs);
+    if (sessions.length === 0) return null;
+    const s = sessions[0];
+    const dateStr = new Date().toISOString().split('T')[0];
+    return path.join(deviceDir, s, `${s}_${dateStr}.log`);
+}
+
+function bridgeToPhone(client, deviceId) {
+    const ip = resolveDeviceIp(deviceId);
+    if (!ip) {
+        client.write(`ERROR: No known IP for device "${deviceId}"\r\n`);
+        client.end();
+        return;
+    }
+
+    client.write(`Connecting to ${deviceId} (${ip}:${PHONE_TELNET_PORT})...\r\n`);
+
+    const phone = net.createConnection({ host: ip, port: PHONE_TELNET_PORT, timeout: 5000 }, () => {
+        client.write(`Connected.\r\n`);
+        console.log(`📡 Telnet proxy: bridged to ${deviceId} @ ${ip}`);
+    });
+
+    const logFile = openProxyLog(deviceId);
+
+    // Phone → Client (also log)
+    phone.on('data', (data) => {
+        client.write(data);
+        if (logFile) {
+            const now = new Date().toISOString();
+            const lines = data.toString('utf8').split('\n')
+                .filter(l => l.trim())
+                .map(l => `[${now}] | telnet-proxy > ${l}`)
+                .join('\n');
+            if (lines) {
+                try { fs.appendFileSync(logFile, lines + '\n'); } catch (_) {}
+            }
+        }
+    });
+
+    // Client → Phone
+    client.on('data', (data) => {
+        phone.write(data);
+    });
+
+    phone.on('error', (err) => {
+        client.write(`\r\nERROR: ${err.message}\r\n`);
+        client.end();
+    });
+    phone.on('timeout', () => {
+        client.write(`\r\nERROR: Connection to phone timed out\r\n`);
+        phone.destroy();
+        client.end();
+    });
+    phone.on('end', () => { client.end(); });
+    client.on('end', () => { phone.destroy(); });
+    client.on('error', () => { phone.destroy(); });
+}
+
+const telnetProxy = net.createServer((client) => {
+    const devices = listDeviceIds();
+
+    if (devices.length === 0) {
+        client.write('No devices have connected yet.\r\n');
+        client.end();
+        return;
+    }
+
+    // Auto-connect if only one device
+    if (devices.length === 1) {
+        bridgeToPhone(client, devices[0]);
+        return;
+    }
+
+    // Multiple devices — prompt for selection
+    client.write('Available devices:\r\n');
+    devices.forEach((d, i) => client.write(`  ${i + 1}. ${d}\r\n`));
+    client.write('Type device name or number: ');
+
+    let buf = '';
+    const onData = (data) => {
+        buf += data.toString();
+        const nl = buf.indexOf('\n');
+        if (nl < 0) return;
+
+        client.removeListener('data', onData);
+        const choice = buf.substring(0, nl).replace(/\r/g, '').trim();
+
+        // Accept number or name
+        const num = parseInt(choice);
+        let deviceId;
+        if (!isNaN(num) && num >= 1 && num <= devices.length) {
+            deviceId = devices[num - 1];
+        } else {
+            deviceId = sanitizeDeviceId(choice);
+        }
+
+        if (!devices.includes(deviceId)) {
+            client.write(`Unknown device: "${choice}"\r\n`);
+            client.end();
+            return;
+        }
+
+        bridgeToPhone(client, deviceId);
+    };
+    client.on('data', onData);
+});
+
+telnetProxy.listen(TELNET_PROXY_PORT, '0.0.0.0', () => {
+    console.log(`📡 Telnet proxy listening on port ${TELNET_PROXY_PORT}`);
+});
+
+// HTTP endpoint for telnet connection info
+app.get('/telnet/:device', (req, res) => {
+    const deviceId = sanitizeDeviceId(req.params.device);
+    const ip = resolveDeviceIp(deviceId);
+    if (!ip) return res.status(404).json({ error: 'Device not found or no known IP' });
+    res.json({
+        device: deviceId,
+        phone_ip: ip,
+        phone_telnet_port: PHONE_TELNET_PORT,
+        proxy_port: TELNET_PROXY_PORT,
+        connect_via_proxy: `telnet <this-server> ${TELNET_PROXY_PORT}`,
+        connect_direct: `telnet ${ip} ${PHONE_TELNET_PORT}`,
+    });
+});
+
+// Start HTTP server
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`📡 Phone Log Receiver running on port ${PORT}`);
     console.log(`   Log directory: ${LOG_DIR}`);

@@ -17,8 +17,10 @@ COPY server.js ./
 # Create logs directory
 RUN mkdir -p /app/logs
 
-# Expose port
+# Expose ports
 EXPOSE 3000
+EXPOSE 2323
+EXPOSE 2324
 
 # Run as non-root user (99:100 for Unraid compatibility)
 RUN addgroup -g 100 -S appuser || true && \

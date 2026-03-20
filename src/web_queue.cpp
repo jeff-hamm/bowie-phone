@@ -198,13 +198,17 @@ WebQueue::EnqueueResult WebQueue::enqueuePost(
 
 void WebQueue::clear() {
     for (int i = 0; i < _count; i++) {
-        if (_items[i].state == ItemState::PENDING)
+        if (_items[i].state == ItemState::PENDING) {
+            _items[i].postBody = String();  // free heap before marking empty
             _items[i].state = ItemState::EMPTY;
+        }
     }
 }
 
 void WebQueue::reset() {
     _cleanupActive();
+    for (int i = 0; i < _count; i++)
+        _items[i].postBody = String();  // free heap before zeroing
     memset(_items, 0, sizeof(_items));
     _count     = 0;
     _consecutiveFailures = 0;
@@ -226,9 +230,11 @@ void WebQueue::_compact() {
         }
     }
     if (dst < _count) {
-        // Zero out freed slots
-        for (int i = dst; i < _count; i++)
+        // Properly destruct String members before zeroing to avoid heap leaks
+        for (int i = dst; i < _count; i++) {
+            _items[i].postBody = String();
             memset(&_items[i], 0, sizeof(Item));
+        }
         _count = dst;
     }
 }
@@ -573,6 +579,7 @@ void WebQueue::_failCurrent() {
             DQ_SD_REMOVE(_tmpPath);
     }
 
+    item.postBody = String();  // free any POST body heap memory
     item.state = ItemState::FAILED;
     _consecutiveFailures++;
     unsigned long backoff = min(300000UL, 10000UL << min(_consecutiveFailures - 1, 5));

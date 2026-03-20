@@ -324,6 +324,7 @@ public:
 
     using AsyncFileCallback   = void(*)(int bytesWritten, void* userData);
     using AsyncStringCallback = void(*)(bool success, const String& body, void* userData);
+    using AsyncPostCallback   = void(*)(bool success, int statusCode, void* userData);
 
     // Async file download: saves response body to sdPath, calls cb when done.
     static TaskHandle_t getFileAsync(
@@ -382,6 +383,157 @@ public:
             vTaskDelete(nullptr);
         }, "HttpGet", 16384, s, priority, &handle, core);
         return handle;
+    }
+
+    // Async POST: sends body to url, calls cb with (success, statusCode).
+    // Spawns a self-deleting FreeRTOS task on the specified core.
+    // The body String is moved into the task state to avoid dangling refs.
+    // For HTTP targets only — HTTPS would need useOwnSecure() + more stack.
+    static TaskHandle_t postAsync(
+            const char* url, String body,
+            AsyncPostCallback cb = nullptr, void* userData = nullptr,
+            const char* contentType = "application/json",
+            const char* extraHeaderName = nullptr,
+            const char* extraHeaderValue = nullptr,
+            int timeoutMs = HTTP_TIMEOUT_SHORT_MS,
+            UBaseType_t priority = 0, BaseType_t core = 0)
+    {
+        struct State {
+            char url[256]; char contentType[48];
+            char extraName[32]; char extraValue[64];
+            String body;
+            int timeoutMs;
+            AsyncPostCallback cb; void* userData;
+        };
+        auto* s = new State();
+        strncpy(s->url, url, sizeof(s->url) - 1); s->url[sizeof(s->url)-1] = '\0';
+        strncpy(s->contentType, contentType ? contentType : "application/json",
+                sizeof(s->contentType) - 1); s->contentType[sizeof(s->contentType)-1] = '\0';
+        s->extraName[0] = '\0'; s->extraValue[0] = '\0';
+        if (extraHeaderName) {
+            strncpy(s->extraName, extraHeaderName, sizeof(s->extraName) - 1);
+            s->extraName[sizeof(s->extraName)-1] = '\0';
+        }
+        if (extraHeaderValue) {
+            strncpy(s->extraValue, extraHeaderValue, sizeof(s->extraValue) - 1);
+            s->extraValue[sizeof(s->extraValue)-1] = '\0';
+        }
+        s->body = std::move(body);
+        s->timeoutMs = timeoutMs; s->cb = cb; s->userData = userData;
+
+        TaskHandle_t handle = nullptr;
+        xTaskCreatePinnedToCore([](void* p) {
+            auto* s = static_cast<State*>(p);
+            HttpClient http(s->timeoutMs);
+            if (s->extraName[0])
+                http.setPersistentHeader(s->extraName, s->extraValue);
+            bool ok = http.post(s->url, s->body, s->contentType);
+            int code = http.statusCode();
+            s->body = String();  // free before callback
+            if (s->cb) s->cb(ok, code, s->userData);
+            delete s;
+            vTaskDelete(nullptr);
+        }, "HttpPost", 8192, s, priority, &handle, core);
+        return handle;
+    }
+
+    // =========================================================================
+    // Cooperative (tickable) requests — run on core 1, caller calls tick()
+    // =========================================================================
+    //
+    // Usage:
+    //   auto* req = HttpClient::chunkedGet(url, onDone, userData);
+    //   // in loop():
+    //   if (req) { req->tick(); if (req->done()) { delete req; req = nullptr; } }
+    //
+    // For POST the request body is sent synchronously in the constructor (small
+    // payloads like JSON logs), then the response is read cooperatively.
+
+    // Completion callback: success, accumulated body (GET/POST response), userData
+    using ChunkedCallback = void(*)(bool success, const String& body, void* userData);
+
+    struct ChunkedRequest {
+        HttpClient*      http = nullptr;
+        String           accum;
+        ChunkedCallback  cb = nullptr;
+        void*            userData = nullptr;
+        bool             _done = false;
+        bool             _ok   = false;
+
+        ~ChunkedRequest() { if (http) { http->end(); delete http; } }
+        bool done() const { return _done; }
+        bool ok()   const { return _ok; }
+
+        // Call once per loop() iteration.  Reads one chunk (~1 KB) and returns.
+        // When the response is fully received, fires the callback and sets done().
+        void tick() {
+            if (_done || !http) return;
+
+            uint8_t buf[1024];
+            int n = http->readChunk(buf, sizeof(buf));
+
+            if (n > 0) {
+                accum.concat((const char*)buf, n);
+                return;
+            }
+
+            if (n < 0 || http->bodyDone()) {
+                _ok = (n >= 0 || http->bodyDone()) && accum.length() > 0;
+                _done = true;
+                if (cb) cb(_ok, accum, userData);
+                http->end();
+                delete http;
+                http = nullptr;
+                accum = String();  // free memory
+            }
+            // n == 0: nothing available yet, try next tick
+        }
+    };
+
+    // Start a cooperative GET.  Returns nullptr on connection failure.
+    static ChunkedRequest* chunkedGet(
+            const char* url,
+            ChunkedCallback cb = nullptr, void* userData = nullptr,
+            int timeoutMs = HTTP_TIMEOUT_CATALOG_MS)
+    {
+        auto* h = new HttpClient(timeoutMs);
+        if (!h->get(url)) {
+            delete h;
+            if (cb) cb(false, String(), userData);
+            return nullptr;
+        }
+        h->beginChunkedRead();
+
+        auto* req = new ChunkedRequest();
+        req->http = h;
+        req->cb = cb;
+        req->userData = userData;
+        req->accum.reserve(h->getSize() > 0 ? h->getSize() : 1024);
+        return req;
+    }
+
+    // Start a cooperative POST.  The request body is sent synchronously (small
+    // payloads), then the response is read cooperatively via tick().
+    // Returns nullptr on connection failure.
+    static ChunkedRequest* chunkedPost(
+            const char* url, const String& body,
+            ChunkedCallback cb = nullptr, void* userData = nullptr,
+            const char* contentType = "application/json",
+            int timeoutMs = HTTP_TIMEOUT_SHORT_MS)
+    {
+        auto* h = new HttpClient(timeoutMs);
+        if (!h->post(url, body, contentType)) {
+            delete h;
+            if (cb) cb(false, String(), userData);
+            return nullptr;
+        }
+        h->beginChunkedRead();
+
+        auto* req = new ChunkedRequest();
+        req->http = h;
+        req->cb = cb;
+        req->userData = userData;
+        return req;
     }
 
     // Process-wide shared WiFiClientSecure — allocated once, never freed.

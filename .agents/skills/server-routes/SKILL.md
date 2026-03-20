@@ -22,7 +22,7 @@ compatibility: Requires SSH access to root@192.168.1.216 (Unraid server). WireGu
 | `/boot/config/wireguard/wg0.conf` | WireGuard flash copy (survives reboot) |
 | `/mnt/pool/appdata/home/.conf/ts-wg-bridges.conf` | Tailscale↔WG bridge subnet list |
 | `/mnt/pool/appdata/dnsmasq/dnsmasq.conf` | DNS forwarder config |
-| `/mnt/pool/appdata/phone/docker-compose.yml` | Docker services (log-receiver, dnsmasq, log-viewer) |
+| `/mnt/pool/appdata/phone-receiver/docker-compose.yml` | Docker services (log-receiver, dnsmasq, log-viewer) |
 | `/mnt/pool/appdata/home/.local/bin/ts-wg-bridge` | Bridge management script |
 | `/mnt/pool/appdata/home/event.d/boot/55-ts-wg-bridge-restore.sh` | Boot-time bridge restore |
 

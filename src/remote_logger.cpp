@@ -1,8 +1,8 @@
 #include "remote_logger.h"
 #include "logging.h"
 #include "tailscale_manager.h"
+#include "wifi_manager.h"
 #include <WiFi.h>
-#include "web_queue.h"
 #include "http_utils.h"
 #include <Preferences.h>
 #include <WebServer.h>
@@ -25,10 +25,15 @@ static const char* REMOTE_LOG_DROPPED_LINE =
 
 RemoteLoggerClass::RemoteLoggerClass() 
     : lineCount(0), lastFlushTime(0), enabled(false), vpnRequired(true),
-      bootSent(false), _streamingEnabled(true), _postPending(false) {
+      bootSent(false), _streamingEnabled(true), _postPending(false),
+      _consecutiveFailures(0), _backoffUntil(0),
+      _serverTcpEnabled(false), _serverConnected(false),
+      _serverIsTelnetClient(false), _serverTcpPort(REMOTE_LOG_TCP_PORT),
+      _tcpConsecutiveFailures(0), _tcpBackoffUntil(0) {
     serverUrl[0] = '\0';
     deviceId[0] = '\0';
     bootId[0] = '\0';
+    _serverHost[0] = '\0';
     // NOTE: Do NOT call esp_random() or String::reserve() here.
     // Global constructors run before FreeRTOS starts — heap allocs and
     // hardware API calls at this stage can prevent the idle-task stack
@@ -120,6 +125,9 @@ void RemoteLoggerClass::begin(const char* server, const char* devId, bool requir
     // Only enable if server is configured
     enabled = (strlen(serverUrl) > 0);
     
+    // Extract host from server URL for TCP connections
+    parseServerHost();
+    
     if (enabled) {
         Serial.printf("📡 Remote Logger: %s -> %s (boot %s)\n", deviceId, serverUrl, bootId);
         // Move any pre-connect logs into the main buffer so they ship on first flush
@@ -184,19 +192,44 @@ size_t RemoteLoggerClass::write(const uint8_t* buffer, size_t size) {
 }
 
 void RemoteLoggerClass::flush() {
-    static int consecutiveFailures = 0;
-    static unsigned long backoffUntil = 0;
-
     if (!enabled || !_streamingEnabled || logBuffer.length() == 0 ||
         millis() - lastFlushTime < REMOTE_LOG_FLUSH_INTERVAL_MS)
         return;
 
-    // Don't double-queue
+    // Try to establish / maintain TCP connection to server (runs on core 1, short timeout)
+    maintainServerConnection();
+
+    // ── Priority 1: Persistent TCP stream to server ──────────────────────────
+    // Plain text, no JSON, no core 0 task — lowest overhead.
+    if (_serverConnected && _serverSocket.connected()) {
+        size_t written = _serverSocket.print(logBuffer);
+        if (written > 0) {
+            logBuffer = "";
+            lineCount = 0;
+            lastFlushTime = millis();
+            return;
+        }
+        // Write failed — connection probably dead, will be caught by maintainServerConnection next time
+        _serverConnected = false;
+    }
+
+    // ── Priority 2: Server connected inbound to phone's telnet ───────────────
+    // Logs are already flowing through Logger → telnet → server.
+    if (_serverIsTelnetClient) {
+        // Still consume the buffer so it doesn't grow forever
+        logBuffer = "";
+        lineCount = 0;
+        lastFlushTime = millis();
+        return;
+    }
+
+    // ── Priority 3: HTTP POST with backoff (fallback) ────────────────────────
+    // Don't double-post
     if (_postPending)
         return;
 
-    // Exponential backoff: 10s, 20s, 40s, 80s … capped at 5 min
-    if (consecutiveFailures > 0 && millis() < backoffUntil) {
+    // Exponential backoff: 30s, 60s, 120s, 240s … capped at 5 min
+    if (_consecutiveFailures > 0 && millis() < _backoffUntil) {
         return;
     }
 
@@ -218,42 +251,31 @@ void RemoteLoggerClass::flush() {
 
     if (strlen(serverUrl) == 0) return;
 
-    // Send boot notification on first flush (includes firmware/reset info)
+    // Send boot notification on first flush (fire-and-forget async)
     if (!bootSent) {
         String bootJson;
         if (buildBootJson(bootJson)) {
-            auto result = webQueue.enqueuePost(serverUrl, bootJson,
-                                               onBootPostDone, this,
-                                               "application/json",
-                                               "X-Device-ID", deviceId);
-            if (result == WebQueue::EnqueueResult::OK) {
-                // bootSent will be set in callback
-            }
-            // Don't block log sending on boot notification
+            HttpClient::postAsync(serverUrl, std::move(bootJson),
+                                  onBootPostDone, this,
+                                  "application/json",
+                                  "X-Device-ID", deviceId);
         }
     }
 
-    // Snapshot the buffer and send
+    // Snapshot the buffer and send via async POST on core 0
     String json;
     if (!buildLogsJson(json, logBuffer)) return;
 
-    auto result = webQueue.enqueuePost(serverUrl, json,
-                                       onLogPostDone, this,
-                                       "application/json",
-                                       "X-Device-ID", deviceId);
-    if (result == WebQueue::EnqueueResult::OK) {
-        _postPending = true;
-        logBuffer = "";
-        lineCount = 0;
-        consecutiveFailures = 0;
-    } else if (result == WebQueue::EnqueueResult::QUEUE_FULL) {
-        // Keep the buffer, try again later
-        consecutiveFailures++;
-        unsigned long delay = min(300000UL, 10000UL << min(consecutiveFailures - 1, 5));
-        backoffUntil = millis() + delay;
-    }
-
+    _postPending = true;
+    logBuffer = "";
+    lineCount = 0;
     lastFlushTime = millis();
+
+    HttpClient::postAsync(serverUrl, std::move(json),
+                          onLogPostDone, this,
+                          "application/json",
+                          "X-Device-ID", deviceId,
+                          HTTP_TIMEOUT_LOG_MS);
 }
 
 bool RemoteLoggerClass::buildLogsJson(String& out, const String& logs) {
@@ -323,9 +345,16 @@ bool RemoteLoggerClass::buildBootJson(String& out) {
 void RemoteLoggerClass::onLogPostDone(bool success, int statusCode, void* userData) {
     auto* self = static_cast<RemoteLoggerClass*>(userData);
     self->_postPending = false;
-    if (!success) {
-        Logger.printf("⚠️ [LOG] POST failed (HTTP %d)\n", statusCode);
+    if (success) {
+        self->_consecutiveFailures = 0;
+    } else {
+        self->_consecutiveFailures++;
+        // Dramatic backoff: 30s, 60s, 120s, 240s … capped at 5 min
+        unsigned long delay = 30000UL * (1UL << min(self->_consecutiveFailures - 1, 3));
+        if (delay > 300000UL) delay = 300000UL;
+        self->_backoffUntil = millis() + delay;
     }
+    // No logging here — callback runs on core 0, Logger writes are core-1 only
 }
 
 void RemoteLoggerClass::onBootPostDone(bool success, int statusCode, void* userData) {
@@ -336,6 +365,112 @@ void RemoteLoggerClass::onBootPostDone(bool success, int statusCode, void* userD
 }
 
 // ============================================================================
+// Persistent TCP Log Stream
+// ============================================================================
+
+void RemoteLoggerClass::parseServerHost() {
+    _serverHost[0] = '\0';
+    if (strlen(serverUrl) == 0) return;
+
+    // serverUrl is like "http://10.253.0.1:3000/logs"
+    const char* p = serverUrl;
+    // Skip scheme
+    const char* schemeEnd = strstr(p, "://");
+    if (schemeEnd) p = schemeEnd + 3;
+    // Copy host (stop at : / or end)
+    size_t i = 0;
+    while (*p && *p != ':' && *p != '/' && i < sizeof(_serverHost) - 1) {
+        _serverHost[i++] = *p++;
+    }
+    _serverHost[i] = '\0';
+}
+
+void RemoteLoggerClass::setServerTcpEnabled(bool enable) {
+    _serverTcpEnabled = enable;
+    if (!enable && _serverConnected) {
+        _serverSocket.stop();
+        _serverConnected = false;
+    }
+    // Persist to NVS
+    if (remoteLogPrefs.begin(REMOTE_LOG_NVS_NAMESPACE, false)) {
+        remoteLogPrefs.putBool("tcpEnabled", enable);
+        remoteLogPrefs.end();
+    }
+}
+
+bool RemoteLoggerClass::sendTcpHandshake() {
+    // Send: BOWIE-LOG device=<id> boot=<bootId> firmware=<ver>\n
+    char handshake[160];
+    snprintf(handshake, sizeof(handshake),
+             "BOWIE-LOG device=%s boot=%s firmware=%s\n",
+             deviceId, bootId, FIRMWARE_VERSION);
+
+    size_t written = _serverSocket.print(handshake);
+    if (written == 0) return false;
+
+    // Wait for BOWIE-ACK\n (up to 2 seconds)
+    unsigned long start = millis();
+    String response;
+    while (millis() - start < 2000) {
+        if (_serverSocket.available()) {
+            char c = _serverSocket.read();
+            response += c;
+            if (c == '\n') break;
+        }
+        delay(10);
+    }
+
+    return response.startsWith("BOWIE-ACK");
+}
+
+void RemoteLoggerClass::maintainServerConnection() {
+    if (!_serverTcpEnabled || !enabled) return;
+    if (!WiFi.isConnected()) return;
+    if (vpnRequired && !isTailscaleConnected()) return;
+    if (_serverHost[0] == '\0') return;
+
+    // Check existing connection health
+    if (_serverConnected) {
+        if (!_serverSocket.connected()) {
+            _serverConnected = false;
+            _tcpConsecutiveFailures++;
+            unsigned long backoff = REMOTE_LOG_TCP_RECONNECT_MS * (1UL << min(_tcpConsecutiveFailures - 1, 4));
+            if (backoff > 300000UL) backoff = 300000UL;  // cap 5 min
+            _tcpBackoffUntil = millis() + backoff;
+            Serial.println("📡 TCP log stream disconnected, will reconnect");
+        }
+        return;
+    }
+
+    // Apply backoff
+    if (_tcpConsecutiveFailures > 0 && millis() < _tcpBackoffUntil) return;
+
+    // Attempt connection
+    _serverSocket.setTimeout(REMOTE_LOG_TCP_CONNECT_TIMEOUT_MS);
+    if (!_serverSocket.connect(_serverHost, _serverTcpPort)) {
+        _tcpConsecutiveFailures++;
+        unsigned long backoff = REMOTE_LOG_TCP_RECONNECT_MS * (1UL << min(_tcpConsecutiveFailures - 1, 4));
+        if (backoff > 300000UL) backoff = 300000UL;
+        _tcpBackoffUntil = millis() + backoff;
+        return;
+    }
+
+    // Connected — perform handshake
+    if (!sendTcpHandshake()) {
+        _serverSocket.stop();
+        _tcpConsecutiveFailures++;
+        unsigned long backoff = REMOTE_LOG_TCP_RECONNECT_MS * (1UL << min(_tcpConsecutiveFailures - 1, 4));
+        if (backoff > 300000UL) backoff = 300000UL;
+        _tcpBackoffUntil = millis() + backoff;
+        return;
+    }
+
+    _serverConnected = true;
+    _tcpConsecutiveFailures = 0;
+    Serial.printf("📡 TCP log stream connected to %s:%d\n", _serverHost, _serverTcpPort);
+}
+
+// ============================================================================
 // Configuration Storage
 // ============================================================================
 
@@ -343,6 +478,7 @@ struct RemoteLogConfig {
     char server[128];
     char deviceId[32];
     bool enabled;
+    bool tcpEnabled;
 };
 
 static bool loadRemoteLogConfig(RemoteLogConfig* config) {
@@ -355,6 +491,7 @@ static bool loadRemoteLogConfig(RemoteLogConfig* config) {
     }
     
     config->enabled = remoteLogPrefs.getBool("enabled", false);
+    config->tcpEnabled = remoteLogPrefs.getBool("tcpEnabled", false);
     String server = remoteLogPrefs.getString("server", "");
     String devId = remoteLogPrefs.getString("deviceId", "");
     
@@ -375,6 +512,7 @@ static bool saveRemoteLogConfig(const RemoteLogConfig* config) {
     remoteLogPrefs.putString("server", config->server);
     remoteLogPrefs.putString("deviceId", config->deviceId);
     remoteLogPrefs.putBool("enabled", config->enabled);
+    remoteLogPrefs.putBool("tcpEnabled", config->tcpEnabled);
     
     remoteLogPrefs.end();
     return true;
@@ -391,6 +529,7 @@ void initRemoteLogger() {
         RemoteLogger.begin(config.server, 
                           strlen(config.deviceId) > 0 ? config.deviceId : nullptr,
                           true);
+        if (config.tcpEnabled) RemoteLogger.setServerTcpEnabled(true);
     } else if (strlen(REMOTE_LOG_SERVER) > 0) {
         // Fall back to compile-time config
         RemoteLogger.begin(REMOTE_LOG_SERVER, 
@@ -441,6 +580,11 @@ button:hover{background:#ff6b6b}
 <label for="enabled" style="margin:0">Enable Remote Logging</label>
 </div>
 
+<div class="toggle">
+<input type="checkbox" name="tcpEnabled" id="tcpEnabled" %TCP_ENABLED_CHECKED%>
+<label for="tcpEnabled" style="margin:0">Enable Persistent TCP Stream (port %TCP_PORT%)</label>
+</div>
+
 <label>Log Server URL</label>
 <input type="text" name="server" value="%SERVER%" placeholder="http://10.253.0.1:3000/logs">
 <div class="help">HTTP endpoint to receive logs (via VPN tunnel)</div>
@@ -469,7 +613,11 @@ static void handleRemoteLogPage() {
     // Status
     if (RemoteLogger.isEnabled()) {
         html.replace("%STATUS_CLASS%", "enabled");
-        html.replace("%STATUS%", String("✅ Enabled: ") + RemoteLogger.getDeviceId() + " → " + RemoteLogger.getServerUrl());
+        String statusMsg = String("✅ Enabled: ") + RemoteLogger.getDeviceId() + " → " + RemoteLogger.getServerUrl();
+        if (RemoteLogger.isServerTcpEnabled()) {
+            statusMsg += RemoteLogger.isServerConnected() ? "<br>🔌 TCP stream: connected" : "<br>🔌 TCP stream: waiting";
+        }
+        html.replace("%STATUS%", statusMsg);
     } else {
         html.replace("%STATUS_CLASS%", "disabled");
         html.replace("%STATUS%", "❌ Disabled");
@@ -477,6 +625,8 @@ static void handleRemoteLogPage() {
     
     // Form values
     html.replace("%ENABLED_CHECKED%", RemoteLogger.isEnabled() ? "checked" : "");
+    html.replace("%TCP_ENABLED_CHECKED%", RemoteLogger.isServerTcpEnabled() ? "checked" : "");
+    html.replace("%TCP_PORT%", String(REMOTE_LOG_TCP_PORT));
     html.replace("%SERVER%", RemoteLogger.getServerUrl());
     html.replace("%DEVICE_ID%", RemoteLogger.getDeviceId());
     
@@ -488,6 +638,7 @@ static void handleRemoteLogSave() {
     
     RemoteLogConfig config;
     config.enabled = remoteLogWebServer->hasArg("enabled");
+    config.tcpEnabled = remoteLogWebServer->hasArg("tcpEnabled");
     strncpy(config.server, remoteLogWebServer->arg("server").c_str(), sizeof(config.server) - 1);
     strncpy(config.deviceId, remoteLogWebServer->arg("deviceId").c_str(), sizeof(config.deviceId) - 1);
     
@@ -499,11 +650,13 @@ static void handleRemoteLogSave() {
                 RemoteLogger.setDeviceId(config.deviceId);
             }
             RemoteLogger.setEnabled(true);
+            RemoteLogger.setServerTcpEnabled(config.tcpEnabled);
             
             // Add to logger if not already added
             Logger.addLogger(RemoteLogger);
         } else {
             RemoteLogger.setEnabled(false);
+            RemoteLogger.setServerTcpEnabled(false);
             Logger.removeLogger(RemoteLogger);
         }
         

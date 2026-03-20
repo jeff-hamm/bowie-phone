@@ -145,11 +145,11 @@ void audioMaintenanceLoop();
  */
 bool processAudioDownloadQueue();
 
-// /**
-//  * @brief Get number of items remaining in download queue
-//  * @return Number of items not yet processed
-//  */
-// int getDownloadQueueCount();
+/**
+ * @brief Get number of items remaining in download queue
+ * @return Number of items not yet processed
+ */
+int getDownloadQueueCount();
 
 // /**
 //  * @brief Get total number of items ever added to download queue
