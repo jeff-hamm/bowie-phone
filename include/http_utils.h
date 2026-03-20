@@ -200,6 +200,38 @@ public:
         return totalBytes;
     }
 
+    // -- non-blocking chunk reader for cooperative downloads -----------------
+
+    // Initialise chunked reading state after a successful get().
+    // Call readChunk() repeatedly until bodyDone() returns true, then end().
+    void beginChunkedRead() { _bodyRemaining = _http.getSize(); }
+
+    // Read up to `maxBytes` of response body into `buf`.
+    // Returns bytes read (0 if nothing available yet, negative on error).
+    // Non-blocking: returns immediately when no data is buffered.
+    int readChunk(uint8_t* buf, size_t maxBytes) {
+        WiFiClient* s = _http.getStreamPtr();
+        if (!s) return -1;
+        size_t avail = s->available();
+        if (avail == 0) {
+            // Connection closed with nothing left → we're done
+            if (!_http.connected()) return -1;
+            return 0; // nothing available yet, try later
+        }
+        size_t toRead = min(avail, maxBytes);
+        int n = s->readBytes(buf, toRead);
+        if (n > 0 && _bodyRemaining > 0) _bodyRemaining -= n;
+        return n;
+    }
+
+    // True when the full body has been received (known length) or the
+    // server has closed the connection (chunked / unknown length).
+    bool bodyDone() {
+        if (_bodyRemaining == 0) return true;                // known length, all read
+        if (_bodyRemaining < 0 && !_http.connected()) return true; // chunked, conn closed
+        return false;
+    }
+
     // -- convenience: download a URL and flash via Update --------------------
     // GETs `url`, streams the response into Update.write(), and calls
     // Update.end().  Returns bytes written, or -1 on any error.
@@ -377,6 +409,7 @@ private:
     HTTPClient _http;
     int _statusCode;
     int _timeoutMs;
+    int _bodyRemaining = -1;  // for chunked reads: bytes left (-1 = unknown/chunked)
     String _statusMsg;
 
     WiFiClientSecure* _ownSecure = nullptr;  // non-null when running off the main task

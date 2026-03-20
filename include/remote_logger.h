@@ -53,62 +53,38 @@ private:
     bool enabled;
     bool vpnRequired;  // Only send when VPN is connected
     bool bootSent;     // True after boot notification delivered
+    bool _streamingEnabled; // Runtime toggle for log streaming (debug_commands)
+    bool _postPending;      // True while a POST is queued in WebQueue
 
     static bool isDroppedRemoteLogLine(const String& line);
     void trimLogBuffer();
     void appendFilteredTo(String& targetBuffer, const uint8_t* buffer, size_t size, bool countLines);
     
-    bool sendLogs(const String& logs);
-    bool sendBootNotification();
+    bool buildLogsJson(String& out, const String& logs);
+    bool buildBootJson(String& out);
+
+    // WebQueue callbacks (static so they can be used as function pointers)
+    static void onLogPostDone(bool success, int statusCode, void* userData);
+    static void onBootPostDone(bool success, int statusCode, void* userData);
     
 public:
     void flush();
     RemoteLoggerClass();
     
-    /**
-     * Initialize remote logging
-     * @param server URL of the log server (e.g., "http://10.253.0.1:3000/logs")
-     * @param deviceId Unique identifier for this phone (uses MAC if empty)
-     * @param requireVpn Only send logs when VPN is connected
-     */
     void begin(const char* server = nullptr, const char* deviceId = nullptr, bool requireVpn = true);
-    
-    /**
-     * Set/change the log server URL
-     */
     void setServer(const char* server);
-    
-    /**
-     * Set/change the device ID
-     */
     void setDeviceId(const char* id);
-    
-    /**
-     * Enable or disable remote logging
-     */
     void setEnabled(bool enable) { enabled = enable; }
     bool isEnabled() const { return enabled; }
+
+    void setStreamingEnabled(bool enable) { _streamingEnabled = enable; }
+    bool isStreamingEnabled() const { return _streamingEnabled; }
     
-    /**
-     * Print interface implementation
-     */
     size_t write(uint8_t byte) override;
     size_t write(const uint8_t* buffer, size_t size) override;
     
-    
-    /**
-     * Get current device ID
-     */
     const char* getDeviceId() const { return deviceId; }
-    
-    /**
-     * Get current server URL
-     */
     const char* getServerUrl() const { return serverUrl; }
-
-    /**
-     * Get the boot-unique session id (random hex)
-     */
     const char* getBootId() const { return bootId; }
 };
 

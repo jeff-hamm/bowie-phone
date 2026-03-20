@@ -21,9 +21,7 @@
 // ============================================================================
 
 /**
- * @brief A single item in a playlist
- * 
- * Stores an audioKey name and duration. The actual KeyEntry is resolved
+ * @brief A single  * Stores an audioKey name and duration. The actual KeyEntry is resolved
  * by the playlist's registry when needed.
  */
 struct PlaylistNode {
@@ -308,13 +306,13 @@ public:
     virtual bool appendToPlaylist(const char* playlistName, const char* audioKey, unsigned long durationMs = 0);
     
     /**
-     * @brief Append a KeyEntry to a playlist
+     * @brief Append an AudioEntry to a playlist
      * @param playlistName The playlist to modify
      * @param entry The entry to append
      * @param durationMs Duration in ms (0 = play to completion)
      * @return true if appended successfully
      */
-    virtual bool appendToPlaylist(const char* playlistName, const KeyEntry* entry, unsigned long durationMs = 0);
+    virtual bool appendToPlaylist(const char* playlistName, const AudioEntry* entry, unsigned long durationMs = 0);
     
     /**
      * @brief Clear a playlist's contents
@@ -391,12 +389,8 @@ protected:
 
 // ============================================================================
 // GLOBAL ACCESS
-// ============================================================================
+// =====
 
-/**
- * @brief Get the global AudioKeyRegistry instance
- */
-AudioKeyRegistry& getAudioKeyRegistry();
 
 /**
  * @brief Get the global AudioPlaylistRegistry instance

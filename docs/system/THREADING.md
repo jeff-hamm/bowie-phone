@@ -170,31 +170,38 @@ size_t RemoteLoggerClass::write(uint8_t byte) {
 This eliminates all HTTP-from-core-0 paths and confines `s_logClient` usage
 to core 1 exclusively.
 
-## Download Queue — Core 1 Polled Mode
+## Web Queue — Cooperative Chunked HTTP on Core 1
 
-The `DownloadQueue` used to run as a FreeRTOS task on core 0 (via `start()`),
-but this caused three critical issues:
+The `WebQueue` is a cooperative state machine that runs entirely on
+core 1 via `tick()`. There is no FreeRTOS task — all HTTP I/O and SD writes
+happen in the caller's context.
 
-1. **SD card contention** — SD library is not thread-safe; concurrent access
-   from both cores risks filesystem corruption.
-2. **Registry race conditions** — `audioKeyRegistry` was modified by the
-   download task while the main loop iterated it → undefined behavior.
-3. **Goertzel starvation** — blocking HTTP calls (30s timeout) on core 0
-   delayed DTMF sample processing.
+Each `tick()` reads at most one 4 KB chunk (~2-4 ms), keeping the main loop
+responsive for audio playback. At 44.1 kHz stereo 16-bit, the I2S DMA buffer
+(4 KB) drains in ~23 ms — so a 2-4 ms tick is well within budget.
 
-**Current design**: All downloads run via `downloadQueue.tick()` called from
-`audioMaintenanceLoop()` on core 1. The `start()` method is never called.
+Three item types are supported:
+- **FILE_DL** — download URL → SD card file (audio files)
+- **CATALOG_DL** — download URL → String → callback (catalog JSON)
+- **POST** — POST body to URL → callback with status (log uploads)
+
+Catalog and POST items have priority over file items.
 
 ```
 Core 0:  GoertzelTask only
 Core 1:  loop() → audioMaintenanceLoop()
-           ├─ isCacheStale()? → downloadAudio() → HTTP catalog fetch + parse
-           └─ downloadQueue.tick() → HTTP file download → SD write → registerKey()
+           ├─ webQueue.tick()               ← always called, ~0-4 ms
+           │   ├─ if active: _streamChunk() ← one 4KB chunk
+           │   └─ if idle:   _startNext()   ← open HTTP + file / send POST
+           │
+           ├─ isCacheStale()? → enqueueCatalog(url, callback)
+           └─ queue empty?    → enqueueMissingAudioFilesFromRegistry()
+
+         → RemoteLogger.flush()
+           └─ webQueue.enqueuePost(url, json, callback)  ← non-blocking
 ```
 
-`tick()` is rate-limited to `DOWNLOAD_QUEUE_CHECK_INTERVAL_MS` (1s) and
-processes one file per invocation. Downloads only occur at boot or after
-catalog refresh, so the brief main-loop pause (~1-5s per file) doesn't
-affect active call handling.
-
-See [DOWNLOAD_QUEUE.md](DOWNLOAD_QUEUE.md) for the full safety audit.
+Historical context: The queue previously had a FreeRTOS task mode on core 0
+which caused SD contention, registry races, and Goertzel starvation. That
+mode has been removed entirely. See [DOWNLOAD_QUEUE.md](DOWNLOAD_QUEUE.md)
+for the full architecture and state machine diagram.

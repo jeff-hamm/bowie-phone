@@ -154,6 +154,16 @@
 #define UPDATE_CHECK_INTERVAL_MS 3600000
 #endif
 
+// Timeout for the update check HTTP request (default: 3 seconds)
+#ifndef UPDATE_CHECK_TIMEOUT_MS
+#define UPDATE_CHECK_TIMEOUT_MS 3000
+#endif
+
+// Set to 1 to enable automatic remote update checks via releases.json
+#ifndef ENABLE_REMOTE_UPDATES
+#define ENABLE_REMOTE_UPDATES 0
+#endif
+
 // Primary DNS server (default: Google DNS)
 #ifndef DNS_PRIMARY_1
 #define DNS_PRIMARY_1 8
@@ -200,19 +210,20 @@
 
 // Standard API / update-check calls (default for initHTTPClient)
 #ifndef HTTP_TIMEOUT_MS
-#define HTTP_TIMEOUT_MS 15000
+#define HTTP_TIMEOUT_MS 5000
 #endif
 // Quick existence / lightweight checks and remote logging (fire-and-forget style)
 #ifndef HTTP_TIMEOUT_SHORT_MS
-#define HTTP_TIMEOUT_SHORT_MS 5000
+#define HTTP_TIMEOUT_SHORT_MS 3000
 #endif
 // Catalog / JSON fetches — moderate payload, keep short to avoid blocking the loop
 #ifndef HTTP_TIMEOUT_CATALOG_MS
-#define HTTP_TIMEOUT_CATALOG_MS 10000
+#define HTTP_TIMEOUT_CATALOG_MS 5000
 #endif
 // General file / asset downloads (audio files, CSVs, etc.)
+// Only covers TCP connect + initial response; body is read in non-blocking chunks.
 #ifndef HTTP_TIMEOUT_DOWNLOAD_MS
-#define HTTP_TIMEOUT_DOWNLOAD_MS 30000
+#define HTTP_TIMEOUT_DOWNLOAD_MS 8000
 #endif
 // Firmware OTA binary download — large payload over potentially slow link
 #ifndef HTTP_TIMEOUT_OTA_MS

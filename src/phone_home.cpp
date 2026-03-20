@@ -115,7 +115,7 @@ bool checkForRemoteUpdates(const char* serverUrl) {
     Logger.printf("📞 Checking for updates: %s\n", url);
     strcpy(phoneHomeStatus, "Checking...");
     
-    HttpClient http;
+    HttpClient http(UPDATE_CHECK_TIMEOUT_MS);
     
     if (!http.get(url)) {
         snprintf(phoneHomeStatus, sizeof(phoneHomeStatus), "HTTP error: %d", http.statusCode());

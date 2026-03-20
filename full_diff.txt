@@ -1,0 +1,3512 @@
+diff --git a/build_output.txt b/build_output.txt
+index 631a4ea..e0727e3 100644
+--- a/build_output.txt
++++ b/build_output.txt
+@@ -1,9 +1,4 @@
+-********************************************************************************
+-Obsolete PIO Core v6.1.18 is used (previous was 6.1.19)
+-Please remove multiple PIO Cores from a system:
+-https://docs.platformio.org/en/latest/core/installation/troubleshooting.html
+-********************************************************************************
+-Processing bowie-phone-1 (platform: espressif32; board: esp32dev; framework: arduino)
++Processing bowie-phone-custom (platform: espressif32; board: esp32dev; framework: arduino)
+ --------------------------------------------------------------------------------
+ Verbose mode can be enabled via `-v, --verbose` option
+ CONFIGURATION: https://docs.platformio.org/page/boards/espressif32/esp32dev.html
+@@ -13,6 +8,7 @@ DEBUG: Current (cmsis-dap) External (cmsis-dap, esp-bridge, esp-prog, iot-bus-jt
+ PACKAGES: 
+  - framework-arduinoespressif32 @ 3.20017.241212+sha.dcc1105b 
+  - tool-esptoolpy @ 2.40900.250804 (4.9.0) 
++ - tool-openocd-esp32 @ 2.1100.20220706 (11.0) 
+  - toolchain-xtensa-esp32 @ 8.4.0+2021r2-patch5
+ Converting main.ino
+ LDF: Library Dependency Finder -> https://bit.ly/configure-pio-ldf
+@@ -20,38 +16,44 @@ LDF Modes: Finder ~ chain, Compatibility ~ soft
+ Found 40 compatible libraries
+ Scanning dependencies...
+ Dependency Graph
+-|-- audio-driver @ 0.2.0+sha.84c7de2
+-|-- audio-tools @ 1.2.1+sha.334f79f
++|-- audio-driver @ 0.2.1+sha.b5824ed
++|-- audio-tools @ 1.2.2+sha.c4ccfe0
+ |-- audiokit @ 0.7.0+sha.f8c4139
+-|-- libhelix @ 0.9.2+sha.0d70b7f
++|-- libhelix @ 0.9.2+sha.63af214
+ |-- WireGuard-ESP32 @ 0.1.5+sha.3048281
+-|-- ESP Telnet @ 2.2.3+sha.545891d
++|-- ESP Telnet @ 2.2.3+sha.1d622ec
+ |-- ArduinoOTA @ 2.0.0
+-|-- ArduinoJson @ 7.4.2
++|-- ArduinoJson @ 7.4.3
+ |-- FS @ 2.0.0
+-|-- HTTPClient @ 2.0.0
+ |-- SD @ 2.0.0
+ |-- SD_MMC @ 2.0.0
+ |-- SPI @ 2.0.0
+ |-- WiFi @ 2.0.0
+-|-- WiFiClientSecure @ 2.0.0
+ |-- Preferences @ 2.0.0
+ |-- WebServer @ 2.0.0
+ |-- Update @ 2.0.0
++|-- HTTPClient @ 2.0.0
++|-- WiFiClientSecure @ 2.0.0
+ |-- EEPROM @ 2.0.0
+ |-- DNSServer @ 2.0.0
+ Building in release mode
+-Compiling .pio\build\bowie-phone-1\src\main.ino.cpp.o
+-Linking .pio\build\bowie-phone-1\firmware.elf
+-c:/users/jumper/.platformio/packages/toolchain-xtensa-esp32@8.4.0+2021r2-patch5/bin/../lib/gcc/xtensa-esp32-elf/8.4.0/../../../../xtensa-esp32-elf/bin/ld.exe: .pio/build/bowie-phone-1/src/test/test_esp32_integration/test_dtmf_frequency_integration.cpp.o: in function `setup()':
+-C:\Users\Jumper\Projects\bowie-phone/src/test/test_esp32_integration/test_dtmf_frequency_integration.cpp:387: multiple definition of `setup()'; .pio/build/bowie-phone-1/src/main.ino.cpp.o:C:/Users/Jumper/Projects/bowie-phone/src/main.ino:63: first defined here
+-c:/users/jumper/.platformio/packages/toolchain-xtensa-esp32@8.4.0+2021r2-patch5/bin/../lib/gcc/xtensa-esp32-elf/8.4.0/../../../../xtensa-esp32-elf/bin/ld.exe: .pio/build/bowie-phone-1/src/test/test_esp32_integration/test_dtmf_frequency_integration.cpp.o: in function `loop()':
+-test_dtmf_frequency_integration.cpp:(.text._Z4loopv+0x0): multiple definition of `loop()'; .pio/build/bowie-phone-1/src/main.ino.cpp.o:C:/Users/Jumper/Projects/bowie-phone/src/main.ino:266: first defined here
+-collect2.exe: error: ld returned 1 exit status
+-*** [.pio\build\bowie-phone-1\firmware.elf] Error 1
+-========================= [FAILED] Took 15.58 seconds =========================
++Warning! We have just detected `upload_port` as IP address or host name of ESP device. `upload_protocol` is switched to `espota`.
++Please specify `upload_protocol = espota` in `platformio.ini` project configuration file.
++Compiling .pio\build\bowie-phone-custom\src\main.ino.cpp.o
++Linking .pio\build\bowie-phone-custom\firmware.elf
++Retrieving maximum program size .pio\build\bowie-phone-custom\firmware.elf
++Checking size .pio\build\bowie-phone-custom\firmware.elf
++Advanced Memory Usage is available via "PlatformIO Home > Project Inspect"
++RAM:   [===       ]  28.5% (used 93392 bytes from 327680 bytes)
++Flash: [==========]  97.3% (used 1912821 bytes from 1966080 bytes)
++Building .pio\build\bowie-phone-custom\firmware.bin
++esptool.py v4.9.0
++Creating esp32 image...
++Merged 27 ELF sections
++Successfully created esp32 image.
++========================= [SUCCESS] Took 15.14 seconds =========================
+ 
+-Environment    Status    Duration
+--------------  --------  ------------
+-bowie-phone-1  FAILED    00:00:15.584
+-==================== 1 failed, 0 succeeded in 00:00:15.584 ====================
++Environment         Status    Duration
++------------------  --------  ------------
++bowie-phone-custom  SUCCESS   00:00:15.140
++========================= 1 succeeded in 00:00:15.140 =========================
+diff --git a/docs/system/DOWNLOAD_QUEUE.md b/docs/system/DOWNLOAD_QUEUE.md
+index f09378e..57816e6 100644
+--- a/docs/system/DOWNLOAD_QUEUE.md
++++ b/docs/system/DOWNLOAD_QUEUE.md
+@@ -1,127 +1,173 @@
+-# Download Queue — Safety Audit & Architecture
++# Download Queue — Architecture
+ 
+ ## Overview
+ 
+ `DownloadQueue` (`download_queue.h/.cpp`) manages downloading remote audio
+-files to SD card. It supports two modes:
++files and catalog JSON to SD card using a **cooperative chunked state machine**.
++All work runs on core 1 via `tick()` — there is no FreeRTOS task.
+ 
+-| Mode | Where it runs | How it's driven |
+-|------|---------------|-----------------|
+-| **Polled (tick)** | Core 1 (main loop) | `audioMaintenanceLoop()` calls `tick()` |
+-| ~~Async task~~ | ~~Core 0~~ | ~~FreeRTOS task with `start()`~~ |
++Each `tick()` call does at most one 4 KB chunk of I/O (~2-4 ms), so the main
++loop can service audio playback (`audioPlayer.copy()`), hook-switch polling,
++and DTMF dispatch between chunks.
+ 
+-> **Current policy (2025-03):** Only polled mode is used. The async task is
+-> disabled because it shares core 0 with Goertzel DTMF detection and causes
+-> SD card contention, registry race conditions, and Goertzel timing issues.
+-> See "Known Issues" below.
++## Item Types
++
++| Type | Purpose | Output |
++|------|---------|--------|
++| `FILE_DL` | Download a URL to an SD card path | SD file + registry update |
++| `CATALOG_DL` | Download a URL and accumulate into a `String` | Callback with body |
++
++Catalog items have **priority** over file items — `_findNextPending()` scans
++for `CATALOG_DL` items first.
+ 
+ ## Data Flow
+ 
+ ```
+-audioMaintenanceLoop()  [core 1, every ~100ms]
+-  ├─ isCacheStale()? → downloadAudio() → HTTP GET catalog JSON
+-  │   → parseAndRegisterAudioFiles() → audioKeyRegistry
+-  │   → enqueueMissingAudioFilesFromRegistry() → downloadQueue.enqueue()
++audioMaintenanceLoop()  [core 1, every loop() iteration]
++  ├─ downloadQueue.tick()           ← always called, ~0-4 ms
++  │   ├─ if active: _streamChunk() ← read one 4KB chunk from HTTP
++  │   └─ if idle:   _startNext()   ← open HTTP conn + SD file (rate-limited 1s)
++  │
++  ├─ isCacheStale()? → downloadAudio()
++  │   └─ downloadQueue.enqueueCatalog(url, onCatalogDownloaded)  ← non-blocking
+   │
+-  └─ downloadQueue.tick()  [rate-limited to DOWNLOAD_QUEUE_CHECK_INTERVAL_MS]
+-      → _processNext()
+-        → HTTP GET audio file → write to SD card
+-        → registerKey() with registryMutex
+-        → completion callback
++  └─ queue empty && !catalogPending? → enqueueMissingAudioFilesFromRegistry()
++```
++
++### Catalog Download Flow
++
+ ```
++downloadAudio()
++  └─ enqueueCatalog(url, onCatalogDownloaded)   ← returns immediately
++
++tick() ... tick() ... tick()   ← chunks accumulate in _bodyAccum
+ 
+-## Threading Model (Polled Mode)
++onCatalogDownloaded(success, body, userData)     ← invoked from tick() on core 1
++  ├─ parseAndRegisterAudioFiles(body)
++  ├─ pruneOrphanedFiles()
++  ├─ save JSON + timestamp to SD
++  └─ enqueueMissingAudioFilesFromRegistry()
++```
+ 
+-Everything runs on core 1 (main loop):
++### File Download Flow
++
++```
++tick() → _startNext()
++  ├─ allocate HttpClient on heap
++  ├─ http.get(url)                ← blocking ~100-500 ms (TCP connect)
++  ├─ http.beginChunkedRead()
++  └─ SD_OPEN(localPath, FILE_WRITE)
++
++tick() → _streamChunk()           ← called many times, one 4KB chunk each
++  ├─ http.readChunk(buf, 4096)    ← returns 0 if nothing available yet
++  ├─ write to SD file
++  └─ capture first 12 bytes in _headerBuf for magic detection
++
++tick() → _finishCurrent(true)     ← when bodyDone()
++  ├─ close SD file
++  ├─ magic-byte verify → rename if extension mismatch
++  ├─ registerKey() with _regMutex
++  └─ invoke FileCallback
++```
++
++## State Machine
++
++```
++                ┌──────────┐
++                │   IDLE   │ tick() rate-limited to 1s
++                └─────┬────┘
++                      │ _findNextPending()
++                      ▼
++                ┌──────────┐
++                │ STARTING │ _startNext(): allocate HTTP, connect, open file
++                └─────┬────┘
++                      │ success
++                      ▼
++            ┌───────────────────┐
++      ┌────▶│    STREAMING      │ _streamChunk(): read one 4KB chunk
++      │     └──────┬────────┬───┘
++      │            │        │
++      │     not done yet    │ bodyDone() or error
++      └────────────┘        │
++                            ▼
++              ┌─────────────────────┐
++              │ FINISH / FAIL       │
++              │ _finishCurrent()    │
++              │ _failCurrent()      │
++              └─────────────────────┘
++```
++
++## Threading Model
++
++Everything runs on core 1 (main loop) — no mutexes needed for queue state:
+ 
+ ```
+ Core 0:  Goertzel only (no contention)
+-Core 1:  loop() → audioMaintenanceLoop() → tick() → _processNext()
++Core 1:  loop() → audioMaintenanceLoop() → downloadQueue.tick()
+ ```
+ 
+-Benefits of polled mode:
++Benefits:
+ - **No SD card contention** — all SD I/O on one core, sequential
+ - **No registry races** — registry reads and writes are single-threaded
+ - **No Goertzel starvation** — core 0 is exclusively for DTMF detection
+-- **Simpler reasoning** — no mutexes needed for correctness
++- **No audio stutter** — each tick() ≤ 4 ms; DMA buffer has ~23 ms at 44.1 kHz
+ 
+-Trade-off: Each `tick()` call blocks the main loop for one download (up to
+-`HTTP_TIMEOUT_DOWNLOAD_MS` = 30s on timeout, typically 1-5s per file). Audio
+-playback is unaffected (I2S runs on interrupt/DMA), but hook-switch polling
+-and DTMF digit dispatch pause during the download. This is acceptable because
+-downloads only happen at boot or after catalog refresh, not during active calls.
++The `_regMutex` is still acquired for registry writes out of caution, but is
++always uncontended since everything is single-threaded on core 1.
+ 
+ ## Internal State
+ 
+ ```
+-Item _items[MAX_DOWNLOAD_QUEUE]   // fixed-size circular array
+-int  _count                        // valid slots (head of array)
+-int  _nextIndex                    // first PENDING slot to process
++Item _items[MAX_DOWNLOAD_QUEUE]   // fixed-size array
++int  _count                        // valid slots
++int  _nextIndex                    // next slot to scan
++
++// Active download (persists across tick() calls):
++HttpClient*  _http                 // heap-allocated, owned
++File         _sdFile               // open SD file (FILE_DL only)
++String       _bodyAccum            // accumulated body (CATALOG_DL only)
++int          _activeIdx            // slot index, or -1 if idle
++int          _totalBytes           // content-length (-1 if chunked)
++uint8_t      _headerBuf[12]       // first 12 bytes for magic detection
+ ```
+ 
+ Item lifecycle: `EMPTY → PENDING → IN_PROGRESS → DONE | FAILED`
+ 
+-## Mutex Usage
+-
+-| Mutex | Protects | Held by |
+-|-------|----------|---------|
+-| `_mutex` | `_items[]`, `_count`, `_nextIndex` | `enqueue()`, `clear()`, `reset()`, `tick()`, status queries |
+-| `_regMutex` | `audioKeyRegistry` writes | `_processNext()` after download completes |
+-
+-In polled mode, `_regMutex` is still acquired for registry writes out of
+-caution, but since everything is single-threaded on core 1, the lock is
+-uncontended.
+-
+ ## Error Handling
+ 
+-- **HTTP failure**: Exponential backoff (10s → 20s → 40s → ... → 5min max)
+-- **SD write failure**: Item marked FAILED, callback invoked with bytes=-1
+-- **Content-Type mismatch**: File re-saved with correct extension
++- **HTTP failure / connect timeout**: `_failCurrent()` with exponential
++  backoff (10s → 20s → 40s → ... → 5 min max)
++- **SD write failure**: Item marked FAILED, callback invoked with bytes ≤ 0
++- **Partial file on failure**: Deleted from SD (`SD_REMOVE`) — no orphans
+ - **Magic-byte mismatch**: File renamed after download based on header bytes
+ - **Queue full**: `EnqueueResult::QUEUE_FULL` returned; caller retries on
+   next maintenance loop iteration
++- **Backoff reset**: Resets to 0 after any successful download
+ 
+-## Known Issues (Async Task Mode — Currently Disabled)
+-
+-These issues exist in the `start()` / FreeRTOS task code path but are dormant
+-since only `tick()` is used:
+-
+-### CRITICAL: No SD Card Mutex
+-
+-The ESP32 SD/SD_MMC library is not thread-safe. When the download task ran on
+-core 0, it performed `SD_OPEN`, `SD_REMOVE`, `SD_RENAME`, `f.write()` while
+-the main loop on core 1 did `SD_EXISTS`, `SD_OPEN`, `SD_MKDIR`. No mutex
+-protects these concurrent accesses → potential SD filesystem corruption.
+-
+-### CRITICAL: Registry Iterator Invalidation
++## HttpClient Chunked Read API
+ 
+-`enqueueMissingAudioFilesFromRegistry()` iterates `audioKeyRegistry` (a
+-`std::map`) on core 1, while the download task on core 0 calls
+-`registerKey()` which mutates the map. Iterator invalidation during
+-`std::map` insertion is undefined behavior → crash.
++The `HttpClient` wrapper (`http_utils.h`) provides non-blocking body reads:
+ 
+-Additionally, `enqueueMissingAudioFilesFromRegistry()` itself calls
+-`registerKey()` at line ~339 during its own iteration of the registry —
+-this is UB even in single-threaded mode. (TODO: fix by collecting
+-re-registrations into a separate list and applying after iteration.)
++| Method | Purpose |
++|--------|---------|
++| `beginChunkedRead()` | Sets `_bodyRemaining` from Content-Length after `get()` |
++| `readChunk(buf, max)` | Reads up to `max` bytes; returns 0 if nothing available, -1 on error/EOF |
++| `bodyDone()` | Returns true when all bytes received or connection closed |
+ 
+-### CRITICAL: registryMutex Only Protects One Side
++The original `streamBody()` template is preserved for use by OTA and other
++blocking callers.
+ 
+-The `registryMutex` is taken by the download task when calling `registerKey()`
+-but **never taken** by the main loop when iterating or reading the registry.
+-The mutex only serializes download-task writes against each other, not against
+-main-loop reads.
+-
+-### HIGH: Goertzel CPU Starvation
+-
+-Both Goertzel and the download task were pinned to core 0 at priority 1.
+-HTTP blocking calls (`http.get()` with 30s timeout) and SD writes (no yield)
+-could delay Goertzel sample processing, causing missed DTMF detections.
++## Key Constants
+ 
+-### HIGH: Incomplete File Not Cleaned Up
++| Constant | Default | Notes |
++|----------|---------|-------|
++| `MAX_DOWNLOAD_QUEUE` | 4 | Slots in the array |
++| `DOWNLOAD_QUEUE_IDLE_INTERVAL_MS` | 1000 | Rate limit for idle tick() |
++| `DOWNLOAD_CHUNK_SIZE` | 4096 | Max bytes per readChunk() call |
++| `HTTP_TIMEOUT_DOWNLOAD_MS` | 30000 | TCP timeout per download |
++| `HTTP_TIMEOUT_CATALOG_MS` | 15000 | TCP timeout for catalog JSON |
+ 
+-When `totalBytes <= 0` after `streamBody()`, the item is marked FAILED but
+-the partially-written file is not deleted from SD card.
++## Known Issues
+ 
+ ### MEDIUM: enqueueMissingAudioFilesFromRegistry() self-modification
+ 
+@@ -130,25 +176,15 @@ registry with a range-based for loop. This is undefined behavior (iterator
+ invalidation) regardless of threading. Should collect updates and apply
+ after the loop.
+ 
+-## Key Constants
+-
+-| Constant | Default | Notes |
+-|----------|---------|-------|
+-| `MAX_DOWNLOAD_QUEUE` | 4 | Slots in the circular page |
+-| `DOWNLOAD_QUEUE_CHECK_INTERVAL_MS` | 1000 | Rate limit for `tick()` |
+-| `HTTP_TIMEOUT_DOWNLOAD_MS` | 30000 | TCP timeout per download |
+-| `HTTP_TIMEOUT_CATALOG_MS` | 15000 | TCP timeout for catalog JSON |
+-
+-## Future Work
++## Historical Context
+ 
+-- **Async catalog fetch**: The `downloadAudioInternal()` HTTP GET + JSON
+-  parse currently blocks the main loop. Could be split: HTTP fetch on a
+-  one-shot task, then post the payload String to core 1 via a FreeRTOS
+-  queue for parsing and registration. This keeps the blocking HTTP off the
+-  main loop while keeping registry mutation on core 1.
++Prior to the cooperative chunked design, `DownloadQueue` had a FreeRTOS task
++mode (`start()`) that ran on core 0. This caused three critical issues that
++motivated the current architecture:
+ 
+-- **SD card mutex**: If async file downloads are re-enabled, a shared
+-  `SemaphoreHandle_t` must wrap all SD operations across both cores.
++1. **SD card contention** — SD library is not thread-safe across cores
++2. **Registry iterator invalidation** — concurrent map mutation from two cores
++3. **Goertzel starvation** — blocking HTTP calls delayed DTMF detection
+ 
+-- **Fix self-modification bug**: `enqueueMissingAudioFilesFromRegistry()`
+-  should not call `registerKey()` during its own iteration.
++The task mode was removed entirely. All downloads now run cooperatively on
++core 1 via `tick()`, eliminating all three issues by design.
+diff --git a/include/audio_file_manager.h b/include/audio_file_manager.h
+index ae69f1a..1e20b06 100644
+--- a/include/audio_file_manager.h
++++ b/include/audio_file_manager.h
+@@ -17,6 +17,7 @@
+ // ============================================================================
+ #include <Arduino.h>
+ #include "config.h"
++#include "audio_key_registry.h"
+ 
+ // Forward declarations
+ namespace audio_tools {
+@@ -59,25 +60,6 @@ using namespace audio_tools;
+ #define MAX_FILENAME_LENGTH 64      ///< Maximum length for generated filenames
+ #endif
+ 
+-// ============================================================================
+-// STRUCTURES
+-// ============================================================================
+-
+-/**
+- * @brief Structure representing an audio file entry
+- */
+-struct AudioFile
+-{
+-    const char *audioKey;    ///< Audio key (e.g., "dialtone", "busy", or DTMF sequence like "123")
+-    const char *description; ///< Human-readable description
+-    const char *type;        ///< Entry type (e.g., "audio", "service", "shortcut", "url")
+-    const char *data;        ///< File path or URL
+-    const char *ext;         ///< File extension (e.g., "wav", "mp3") - from server metadata
+-    unsigned long ringDuration; ///< Ring duration in ms (how long ringback plays before audio)
+-    unsigned long gap;          ///< Gap duration in ms between audio files in a playlist
+-    unsigned long duration;          ///< Gap duration in ms between audio files in a playlist
+-};
+-
+ // ============================================================================
+ // FUNCTION DECLARATIONS
+ // ============================================================================
+@@ -155,41 +137,42 @@ void invalidateAudioCache();
+ void audioMaintenanceLoop();
+ 
+ /**
+- * @brief Process next item in audio download queue
+- * @return true if item was processed, false if queue empty or error
+- * 
+- * Call this function periodically in main loop to download audio files
+- * in the background. Non-blocking operation with rate limiting.
+- * 
++ * @brief Process next item in audio download queue (polled / fallback mode)
++ * @return true if a download tick was processed, false if queue empty or error
++ *
++ * Under normal operation the download queue runs on its own FreeRTOS task
++ * (started automatically by initializeAudioFileManager).  Call this from
++ * audioMaintenanceLoop() only when task mode is unavailable.
++ *
+  * @note Prefer audioMaintenanceLoop() which also handles catalog refresh.
+  */
+ bool processAudioDownloadQueue();
+ 
+-/**
+- * @brief Get number of items remaining in download queue
+- * @return Number of items not yet processed
+- */
+-int getDownloadQueueCount();
+-
+-/**
+- * @brief Get total number of items ever added to download queue
+- * @return Total queue size (including processed items)
+- */
+-int getTotalDownloadQueueSize();
+-
+-/**
+- * @brief List all items in download queue to serial output
+- * 
+- * Shows pending, in-progress, and completed downloads.
+- */
+-void listDownloadQueue();
+-
+-/**
+- * @brief Clear all items from download queue
+- * 
+- * Resets queue to empty state. Does not delete downloaded files.
+- */
+-void clearDownloadQueue();
++// /**
++//  * @brief Get number of items remaining in download queue
++//  * @return Number of items not yet processed
++//  */
++// int getDownloadQueueCount();
++
++// /**
++//  * @brief Get total number of items ever added to download queue
++//  * @return Total queue size (including processed items)
++//  */
++// int getTotalDownloadQueueSize();
++
++// /**
++//  * @brief List all items in download queue to serial output
++//  * 
++//  * Shows pending, in-progress, and completed downloads.
++//  */
++// void listDownloadQueue();
++
++// /**
++//  * @brief Clear all items from download queue
++//  * 
++//  * Resets queue to empty state. Does not delete downloaded files.
++//  */
++// void clearDownloadQueue();
+ 
+ /**
+  * @brief Check if download queue is empty
+@@ -207,15 +190,15 @@ bool isDownloadQueueEmpty();
+ void preCacheDNS();
+ 
+ /**
+- * @brief Register a single audio file with the AudioKeyRegistry and create its playlist
++ * @brief Register a single audio entry with the AudioKeyRegistry and create its playlist
+  * 
+- * This function is idempotent - calling it multiple times with the same AudioFile
++ * This function is idempotent - calling it multiple times with the same AudioEntry
+  * will produce the same result. If the key is already registered, it will be
+  * updated with the new values.
+  * 
+- * @param file Pointer to the AudioFile to register
++ * @param entry Pointer to the AudioEntry to register
+  * @return true if registration successful, false if skipped or failed
+  */
+-bool registerAudioFile(const AudioFile* file);
++bool registerAudioFile(const AudioEntry* entry);
+ 
+ #endif // AUDIO_FILE_MANAGER_H
+diff --git a/include/audio_key_registry.h b/include/audio_key_registry.h
+index 115ace8..ae144ce 100644
+--- a/include/audio_key_registry.h
++++ b/include/audio_key_registry.h
+@@ -7,7 +7,7 @@
+  * - URLs
+  * - Tone generators
+  * 
+- * Uses a unified KeyEntry structure that can hold either a path or a generator.
++ * Uses a unified AudioEntry structure that can hold either a path or a generator.
+  * 
+  * @date 2025
+  */
+@@ -18,7 +18,9 @@
+ #include "AudioTools.h"
+ #include "AudioTools/CoreAudio/AudioEffects/SoundGenerator.h"
+ #include <map>
++#include <memory>
+ #include <string>
++#include <vector>
+ 
+ using namespace audio_tools;
+ 
+@@ -37,97 +39,136 @@ enum class AudioStreamType {
+ };
+ 
+ // ============================================================================
+-// KEY ENTRY STRUCTURE
++// AUDIO ENTRY — discriminated union for all audio resource types
+ // ============================================================================
+ 
++
+ /**
+- * @brief Unified entry for audio keys - contains either a path or a generator
+- * 
+- * Each KeyEntry holds:
+- * - The audioKey name
+- * - The stream type
+- * - Either a path (for files/URLs) or a generator pointer (for tones)
+- * - Optional metadata (description, extension)
++ * @brief Reusable playback timing metadata
++ */
++struct AudioTiming {
++    unsigned long durationMs = 0;   ///< Playback duration in ms (0 = play to end)
++    unsigned long gapBefore  = 0;   ///< Silence before playback in ms
++    unsigned long gapAfter   = 0;   ///< Silence after playback in ms
++    unsigned long loop       = 0;   ///< Repeat count (0 = no loop, >0 = repeat N times)
++};
++
++struct AudioLink {
++    std::string audioKey;            ///< Audio key name (owned copy)
++    AudioTiming timing;              ///< Playback timing metadata
++
++    AudioLink() = default;
++    AudioLink(const char* key, AudioTiming t = {})
++        : audioKey(key ? key : ""), timing(t) {}
++};
++
++/**
++ * @brief Type-specific data for file/URL-based audio entries
+  */
+-struct KeyEntry {
++struct FileData {
++    std::string path;            ///< Local file path (for FILE_STREAM)
++    std::string alternatePath;   ///< Original URL for streaming fallback
++    std::string ext;             ///< File extension (e.g., "wav", "mp3")
++};
++
++/**
++ * @brief Unified entry for audio keys — holds file, URL, or generator data
++ *
++ * Discriminated by `type`:
++ * - FILE_STREAM / URL_STREAM → `file` sub-struct is valid
++ * - GENERATOR → `generator` pointer is valid
++ */
++struct AudioEntry {
+     std::string audioKey;           ///< The key name
+-    AudioStreamType type;           ///< Type of audio stream
+-    
+-    // Union-like storage: either path or generator (only one is valid based on type)
+-    std::string path;               ///< Local file path (for FILE_STREAM)
+-    std::string alternatePath;       ///< Original URL for streaming fallback
+-    SoundGenerator<int16_t>* generator = nullptr;  ///< Generator pointer (for GENERATOR type)
+-    
+-    // Metadata
+-    std::string description;        ///< Human-readable description
+-    std::string ext;                ///< File extension (e.g., "wav", "mp3")
+-    
+-    KeyEntry() : type(AudioStreamType::NONE) {}
+-    
++    AudioStreamType type;           ///< Discriminant
++    AudioTiming timing;              ///< Playback timing metadata
++    uint32_t contentHash = 0;        ///< Hash of source JSON for change detection
++    AudioLink* previous = nullptr;   ///< Audio to play before this entry (owned, nullable)
++    AudioLink* next     = nullptr;   ///< Audio to play after this entry (owned, nullable)
++
++    union {
++        FileData* file;                     ///< Owned. Valid when type is FILE_STREAM or URL_STREAM
++        SoundGenerator<int16_t>* generator; ///< Not owned. Valid when type is GENERATOR
++    };
++
++    AudioEntry() : type(AudioStreamType::NONE), file(nullptr) {}
++
+     /**
+      * @brief Construct a path-based entry (file or URL)
+-     * @param key The audio key name
+-     * @param pathStr Local file path
+-     * @param streamType The stream type
+-     * @param urlStr Optional streaming URL for fallback
+      */
+-    KeyEntry(const char* key, const char* pathStr, AudioStreamType streamType, const char* urlStr = nullptr)
++    AudioEntry(const char* key, const char* pathStr, AudioStreamType streamType, const char* urlStr = nullptr)
+         : audioKey(key ? key : "")
+         , type(streamType)
+-        , path(pathStr ? pathStr : "")
+-        , alternatePath(urlStr ? urlStr : "")
+-        , generator(nullptr) {}
+-    
++        , file(new FileData{pathStr ? pathStr : "", urlStr ? urlStr : "", ""}) {}
++
+     /**
+-     * @brief Construct a generator-based entry
++     * @brief Construct a generator-based entry from a pre-built generator
+      */
+-    KeyEntry(const char* key, SoundGenerator<int16_t>* gen)
++    AudioEntry(const char* key, SoundGenerator<int16_t>* gen)
+         : audioKey(key ? key : "")
+         , type(AudioStreamType::GENERATOR)
+-        , path("")
+         , generator(gen) {}
+-    
+-    /**
+-     * @brief Check if this entry represents a generator
+-     */
++
++    ~AudioEntry() {
++        delete previous; delete next;
++        if (type != AudioStreamType::GENERATOR) delete file;
++    }
++
++    // Copy
++    AudioEntry(const AudioEntry& o)
++        : audioKey(o.audioKey), type(o.type), timing(o.timing), contentHash(o.contentHash)
++        , previous(o.previous ? new AudioLink(*o.previous) : nullptr)
++        , next(o.next ? new AudioLink(*o.next) : nullptr) {
++        if (type == AudioStreamType::GENERATOR) generator = o.generator;
++        else file = o.file ? new FileData(*o.file) : nullptr;
++    }
++    AudioEntry& operator=(const AudioEntry& o) {
++        if (this == &o) return *this;
++        delete previous; delete next;
++        if (type != AudioStreamType::GENERATOR) delete file;
++        audioKey = o.audioKey; type = o.type; timing = o.timing; contentHash = o.contentHash;
++        previous = o.previous ? new AudioLink(*o.previous) : nullptr;
++        next = o.next ? new AudioLink(*o.next) : nullptr;
++        if (type == AudioStreamType::GENERATOR) generator = o.generator;
++        else file = o.file ? new FileData(*o.file) : nullptr;
++        return *this;
++    }
++
++    // Move
++    AudioEntry(AudioEntry&& o) noexcept
++        : audioKey(std::move(o.audioKey)), type(o.type), timing(o.timing), contentHash(o.contentHash)
++        , previous(o.previous), next(o.next) {
++        o.previous = nullptr; o.next = nullptr;
++        if (type == AudioStreamType::GENERATOR) { generator = o.generator; o.generator = nullptr; }
++        else { file = o.file; o.file = nullptr; }
++        o.type = AudioStreamType::NONE;
++    }
++    AudioEntry& operator=(AudioEntry&& o) noexcept {
++        if (this == &o) return *this;
++        delete previous; delete next;
++        if (type != AudioStreamType::GENERATOR) delete file;
++        audioKey = std::move(o.audioKey); type = o.type; timing = o.timing; contentHash = o.contentHash;
++        previous = o.previous; next = o.next;
++        o.previous = nullptr; o.next = nullptr;
++        if (type == AudioStreamType::GENERATOR) { generator = o.generator; o.generator = nullptr; }
++        else { file = o.file; o.file = nullptr; }
++        o.type = AudioStreamType::NONE;
++        return *this;
++    }
++
++    // — Convenience accessors (gate on type) ——————————————————
++
+     bool isGenerator() const { return type == AudioStreamType::GENERATOR && generator != nullptr; }
+-    
+-    /**
+-     * @brief Check if this entry represents a path (file or URL)
+-     */
+-    bool isPath() const { return type != AudioStreamType::GENERATOR && !path.empty(); }
+-    
+-    /**
+-     * @brief Check if this entry has a streaming URL
+-     */
+-    bool hasUrl() const { return !alternatePath.empty(); }
++    bool isFile()      const { return type != AudioStreamType::GENERATOR && file && !file->path.empty(); }
++    bool hasUrl()      const { return type != AudioStreamType::GENERATOR && file && !file->alternatePath.empty(); }
+ 
+-    /**
+-     * @brief Get the path or nullptr if this is a generator
+-     */
+-    const char* getPath() const { return isPath() ? path.c_str() : nullptr; }
+-    
+-    /**
+-     * @brief Get the streaming URL or nullptr if not set
+-     */
+-    const char* getUrl() const { return hasUrl() ? alternatePath.c_str() : nullptr; }
+-    
+-    /**
+-     * @brief Get the generator or nullptr if this is a path
+-     */
++    FileData* getFile()          const { return type != AudioStreamType::GENERATOR ? file : nullptr; }
+     SoundGenerator<int16_t>* getGenerator() const { return isGenerator() ? generator : nullptr; }
+-    
+-    /**
+-     * @brief Get the description
+-     */
+-    const char* getDescription() const { return description.empty() ? nullptr : description.c_str(); }
+-    
+-    /**
+-     * @brief Get the file extension
+-     */
+-    const char* getExt() const { return ext.empty() ? nullptr : ext.c_str(); }
+ };
+ 
++// Backward-compatible alias — remove once all call-sites are migrated
++using KeyEntry = AudioEntry;
++
+ // ============================================================================
+ // CALLBACK TYPES
+ // ============================================================================
+@@ -168,7 +209,8 @@ public:
+     // ========================================================================
+     // KEY REGISTRATION
+     // ========================================================================
+-    
++    static AudioKeyRegistry instance;
++
+     /**
+      * @brief Register a path-based audioKey (file or URL)
+      * @param audioKey The key name
+@@ -195,13 +237,28 @@ public:
+      *                  localPath becomes primary and primaryPath becomes streaming fallback
+      */
+     virtual void registerKey(const char* audioKey, const char* primaryPath, const char* ext = nullptr);
+-    
++
+     /**
+-     * @brief Register a generator-based audioKey
++     * @brief Register a generator-based audioKey (registry takes ownership)
+      * @param audioKey The key name (e.g., "dialtone", "ringback")
+-     * @param generator Pointer to the SoundGenerator (caller retains ownership)
++     * @param generator Heap-allocated SoundGenerator — registry owns and deletes it
+      */
+-    virtual void registerGenerator(const char* audioKey, SoundGenerator<int16_t>* generator);
++    virtual void registerGenerator(const char *audioKey, SoundGenerator<int16_t> *generator,unsigned long repeatMs=0);
++    /**
++     * @brief Register a generator-based audioKey (registry takes ownership)
++     * @param audioKey The key name (e.g., "dialtone", "ringback")
++     * @param generator Heap-allocated SoundGenerator — registry owns and deletes it
++     */
++    virtual void registerGenerator(const char *audioKey, SoundGenerator<int16_t> *generator,unsigned long toneMs, unsigned long silenceMs);
++
++    /**
++     * @brief Register a fully-built AudioEntry, taking ownership via move
++     * 
++     * For file/URL entries, handles URL detection and local-path conversion.
++     * For generators, adds the pointer to ownedGenerators.
++     * Skips registration if an identical entry already exists for the key.
++     */
++    virtual void registerEntry(AudioEntry&& entry);
+     
+     /**
+      * @brief Unregister an audioKey (path or generator)
+@@ -230,10 +287,18 @@ public:
+     virtual bool hasKeyWithPrefix(const char* prefix) const;
+     
+     /**
+-     * @brief Get a KeyEntry by audioKey
++     * @brief Get an AudioEntry by audioKey (const)
++     * @return Pointer to the entry, or nullptr if not found
++     */
++    virtual const AudioEntry* getEntry(const char* audioKey) const;
++    
++    /**
++     * @brief Get a mutable AudioEntry by audioKey
++     * 
++     * Use to set timing/links after registration.
+      * @return Pointer to the entry, or nullptr if not found
+      */
+-    virtual const KeyEntry* getEntry(const char* audioKey) const;
++    AudioEntry* getEntryMutable(const char* audioKey);
+     
+     /**
+      * @brief Check if the key is a registered generator
+@@ -283,12 +348,12 @@ public:
+     /**
+      * @brief Get iterator to beginning of registry
+      */
+-    std::map<std::string, KeyEntry>::const_iterator begin() const { return registry.begin(); }
++    std::map<std::string, AudioEntry>::const_iterator begin() const { return registry.begin(); }
+     
+     /**
+      * @brief Get iterator to end of registry
+      */
+-    std::map<std::string, KeyEntry>::const_iterator end() const { return registry.end(); }
++    std::map<std::string, AudioEntry>::const_iterator end() const { return registry.end(); }
+     
+     /**
+      * @brief List all registered keys to serial output
+@@ -299,9 +364,15 @@ public:
+     
+ protected:
+     // Unified registry - single map for all entry types
+-    std::map<std::string, KeyEntry> registry;
++    std::map<std::string, AudioEntry> registry;
++    
++    // Owns dynamically-created generators (from JSON config).
++    // Static generators (dialtone, ringback) are NOT in this list.
++    std::vector<std::unique_ptr<SoundGenerator<int16_t>>> ownedGenerators;
+     
+     // Dynamic resolution callbacks (fallback when key not in registry)
+     AudioKeyResolverCallback keyResolver = nullptr;
+     AudioKeyExistsCallback keyExistsCallback = nullptr;
+ };
++
++AudioKeyRegistry &getAudioKeyRegistry();
+diff --git a/include/audio_playlist_registry.h b/include/audio_playlist_registry.h
+index 28fd783..8e5c653 100644
+--- a/include/audio_playlist_registry.h
++++ b/include/audio_playlist_registry.h
+@@ -21,9 +21,7 @@
+ // ============================================================================
+ 
+ /**
+- * @brief A single item in a playlist
+- * 
+- * Stores an audioKey name and duration. The actual KeyEntry is resolved
++ * @brief A single  * Stores an audioKey name and duration. The actual KeyEntry is resolved
+  * by the playlist's registry when needed.
+  */
+ struct PlaylistNode {
+@@ -308,13 +306,13 @@ public:
+     virtual bool appendToPlaylist(const char* playlistName, const char* audioKey, unsigned long durationMs = 0);
+     
+     /**
+-     * @brief Append a KeyEntry to a playlist
++     * @brief Append an AudioEntry to a playlist
+      * @param playlistName The playlist to modify
+      * @param entry The entry to append
+      * @param durationMs Duration in ms (0 = play to completion)
+      * @return true if appended successfully
+      */
+-    virtual bool appendToPlaylist(const char* playlistName, const KeyEntry* entry, unsigned long durationMs = 0);
++    virtual bool appendToPlaylist(const char* playlistName, const AudioEntry* entry, unsigned long durationMs = 0);
+     
+     /**
+      * @brief Clear a playlist's contents
+@@ -391,12 +389,8 @@ protected:
+ 
+ // ============================================================================
+ // GLOBAL ACCESS
+-// ============================================================================
++// =====
+ 
+-/**
+- * @brief Get the global AudioKeyRegistry instance
+- */
+-AudioKeyRegistry& getAudioKeyRegistry();
+ 
+ /**
+  * @brief Get the global AudioPlaylistRegistry instance
+diff --git a/include/download_queue.h b/include/download_queue.h
+index 5c3bb57..c5dbccf 100644
+--- a/include/download_queue.h
++++ b/include/download_queue.h
+@@ -1,68 +1,56 @@
+ #pragma once
+ /**
+  * @file download_queue.h
+- * @brief Non-blocking audio file download queue
++ * @brief Cooperative chunked download queue — runs entirely on core 1
+  *
+- * DownloadQueue manages downloading remote audio files to SD card one at a
+- * time.  It is designed to run on a dedicated FreeRTOS task (core 0) so that
+- * neither the main audio loop nor the Goertzel DTMF task is affected.
++ * DownloadQueue downloads remote files to SD card one at a time using a
++ * cooperative state machine.  Each call to tick() does at most one chunk
++ * of I/O (~4 KB, ~2-4 ms) so the main loop can service audio playback,
++ * hook-switch polling, and DTMF dispatch between chunks.
+  *
+- * Ownership model
+- * ---------------
+- * - The queue owns a fixed-size circular page of AudioDownloadItem slots.
+- * - When the page is exhausted the owner calls refill() (typically from
+- *   audio_file_manager after scanning the key registry).
+- * - Each item transitions: PENDING → IN_PROGRESS → DONE (or FAILED).
++ * There is NO FreeRTOS task — all work happens in the caller's context
++ * (core 1), which eliminates SD card contention, registry races, and
++ * Goertzel starvation.
+  *
+- * Threading
+- * ---------
+- * - All public methods are safe to call from any task; internal state is
+- *   protected by a FreeRTOS mutex.
+- * - Registry writes (keyRegistry.registerKey) after a successful download
+- *   must be serialised by the caller via registryMutex().
++ * Two item types:
++ *   FILE_DL    — download a URL to an SD card path (audio files)
++ *   CATALOG_DL — download a URL and accumulate the body into a String,
++ *                then invoke a callback with the full payload
+  *
+- * Async task usage
+- * ----------------
++ * Usage:
+  *   DownloadQueue q;
+- *   q.start();                          // launches FreeRTOS task on core 0
+- *   q.enqueue(url, localPath, key, ext);
+- *   // ...
+- *   q.stop();
+- *
+- * Polled usage (no task, from main loop)
+- * ---------------------------------------
+- *   DownloadQueue q;
+- *   q.enqueue(...);
+- *   q.tick();   // call from audioMaintenanceLoop()
++ *   q.enqueueFile(key, url, localPath, ext);
++ *   q.enqueueCatalog(url, onCatalogDone, userData);
++ *   // in loop():
++ *   q.tick();   // ~0-4 ms per call
+  */
+ 
+ #include <Arduino.h>
++#include <SD.h>
+ #include <freertos/FreeRTOS.h>
+ #include <freertos/semphr.h>
+-#include <freertos/task.h>
+ #include "config.h"
+ #include "logging.h"
+ 
++// Forward declaration
++class HttpClient;
++
+ #ifndef MAX_DOWNLOAD_QUEUE
+ #define MAX_DOWNLOAD_QUEUE 4
+ #endif
+-#ifndef DOWNLOAD_QUEUE_CHECK_INTERVAL_MS
+-#define DOWNLOAD_QUEUE_CHECK_INTERVAL_MS 1000
++#ifndef DOWNLOAD_QUEUE_IDLE_INTERVAL_MS
++#define DOWNLOAD_QUEUE_IDLE_INTERVAL_MS 1000
++#endif
++#ifndef DOWNLOAD_CHUNK_SIZE
++#define DOWNLOAD_CHUNK_SIZE 4096
+ #endif
+-
+-// ============================================================================
+-// DownloadQueue
+-// ============================================================================
+ 
+ class DownloadQueue {
+ public:
+-    // ------------------------------------------------------------------
+-    // Callback invoked on the download task after each completed/failed
+-    // item.  bytes > 0 means success; bytes <= 0 means failure.
+-    // detectedExt may differ from the enqueued ext when Content-Type
+-    // revealed the real format.
+-    // ------------------------------------------------------------------
+-    using CompletionCallback = void(*)(
++    // Completion callback for FILE_DL items.
++    // bytesWritten > 0 on success, <= 0 on failure.
++    // detectedExt may differ from the enqueued ext (Content-Type correction).
++    using FileCallback = void(*)(
+         const char* audioKey,
+         const char* localPath,
+         const char* detectedExt,
+@@ -70,103 +58,99 @@ public:
+         void*       userData
+     );
+ 
+-    // Enqueue result codes
+-    enum class EnqueueResult { OK, ALREADY_QUEUED, QUEUE_FULL, BAD_PATH };
++    // Completion callback for CATALOG_DL items.
++    // Called with the full accumulated response body on success.
++    using CatalogCallback = void(*)(bool success, const String& body, void* userData);
++
++    enum class EnqueueResult { OK, ALREADY_QUEUED, QUEUE_FULL, BAD_INPUT };
+ 
+     DownloadQueue();
+     ~DownloadQueue();
+ 
+-    // ------------------------------------------------------------------
+-    // Configuration — call before start() / first tick()
+-    // ------------------------------------------------------------------
++    // -- configuration (call before first tick) ------------------------------
++    void setFileCallback(FileCallback cb, void* userData = nullptr);
++    void setRegistryMutex(SemaphoreHandle_t mutex);
+ 
+-    // Register a callback invoked after every item completes or fails.
+-    void setCompletionCallback(CompletionCallback cb, void* userData = nullptr);
++    // -- queue operations ----------------------------------------------------
+ 
+-    // Optional registry mutex: if set, registerKey() calls are wrapped
+-    // in take/give around this semaphore.
+-    void setRegistryMutex(SemaphoreHandle_t mutex);
++    // Enqueue a file download (audio file → SD card).
++    EnqueueResult enqueueFile(const char* audioKey,
++                              const char* url,
++                              const char* localPath,
++                              const char* ext = nullptr);
+ 
+-    // ------------------------------------------------------------------
+-    // Queue operations (thread-safe)
+-    // ------------------------------------------------------------------
++    // Enqueue a catalog download (URL → String → callback).
++    // Catalog items are processed before file items.
++    EnqueueResult enqueueCatalog(const char* url,
++                                 CatalogCallback cb,
++                                 void* userData = nullptr);
+ 
+-    // Add a URL to download.
+-    // audioKey  : registry key (used for logging and callback)
+-    // url       : remote URL (http/https)
+-    // localPath : destination on SD card (e.g. "/audio/foo.wav")
+-    // ext       : hint for file extension; may be corrected by Content-Type
++    // Backwards-compatible alias for enqueueFile.
+     EnqueueResult enqueue(const char* audioKey,
+                           const char* url,
+                           const char* localPath,
+-                          const char* ext = nullptr);
+-
+-    // Remove all pending (not yet started) items.
+-    void clear();
+-
+-    // Reset the whole queue (including in-progress counter) — use after
+-    // a catalog refresh when local paths may have changed.
+-    void reset();
+-
+-    // ------------------------------------------------------------------
+-    // Status (thread-safe)
+-    // ------------------------------------------------------------------
+-    int  pendingCount()  const;   // items not yet started
+-    int  totalCount()    const;   // total items currently in the page
+-    bool isEmpty()       const;   // true when no pending items remain
+-    void listItems()     const;   // log all items to Logger
+-
+-    // ------------------------------------------------------------------
+-    // Polled mode — call from audioMaintenanceLoop() when not using task
+-    // ------------------------------------------------------------------
+-    // Returns true if a download was started/completed this call.
+-    // Rate-limited to DOWNLOAD_QUEUE_CHECK_INTERVAL_MS internally.
++                          const char* ext = nullptr) {
++        return enqueueFile(audioKey, url, localPath, ext);
++    }
++
++    void clear();   // cancel all PENDING items
++    void reset();   // cancel everything including active download
++
++    // -- status --------------------------------------------------------------
++    int  pendingCount()  const;
++    int  totalCount()    const;
++    bool isEmpty()       const;
++    bool isActive()      const { return _activeIdx >= 0; }
++    void listItems()     const;
++
++    // -- cooperative tick — call every loop() iteration ----------------------
++    // When idle: rate-limited to DOWNLOAD_QUEUE_IDLE_INTERVAL_MS.
++    // When streaming: reads one chunk (~4 KB) and returns immediately.
+     bool tick();
+ 
+-    // ------------------------------------------------------------------
+-    // Async task mode
+-    // ------------------------------------------------------------------
+-    // Launches a FreeRTOS task on the given core.
+-    // priority should be LOWER than the Goertzel task (typically 1).
+-    void start(UBaseType_t priority = 1, BaseType_t core = 0);
+-    void stop();                       // signals task to exit and waits
+-    bool isRunning() const;
+-
+ private:
+-    // ------------------------------------------------------------------
+-    // Internal item state
+-    // ------------------------------------------------------------------
++    enum class ItemType  : uint8_t { FILE_DL, CATALOG_DL };
+     enum class ItemState : uint8_t { EMPTY, PENDING, IN_PROGRESS, DONE, FAILED };
+ 
+     struct Item {
+-        char      audioKey[64];
+-        char      url[256];
+-        char      localPath[128];
+-        char      ext[8];
+-        ItemState state;
++        char            audioKey[64];
++        char            url[256];
++        char            localPath[128];
++        char            ext[8];
++        ItemType        type;
++        ItemState       state;
++        CatalogCallback catalogCb;
++        void*           catalogUserData;
+     };
+ 
+-    // ------------------------------------------------------------------
+-    // State
+-    // ------------------------------------------------------------------
++    // -- queue ---------------------------------------------------------------
+     Item              _items[MAX_DOWNLOAD_QUEUE];
+-    int               _count      = 0;   // number of valid slots (head of array)
+-    int               _nextIndex  = 0;   // first PENDING slot to process
+-    SemaphoreHandle_t _mutex      = nullptr;
+-    SemaphoreHandle_t _regMutex   = nullptr;
+-
+-    CompletionCallback _cb         = nullptr;
+-    void*              _cbUserData = nullptr;
+-
+-    TaskHandle_t       _taskHandle     = nullptr;
+-    volatile bool      _taskShouldRun  = false;
+-
+-    // ------------------------------------------------------------------
+-    // Internal helpers
+-    // ------------------------------------------------------------------
+-    bool        _processNext();           // download one item; returns true on success
+-    static void _taskEntry(void* param); // FreeRTOS task entry point
+-
+-    inline bool _lock()   const { return xSemaphoreTake(_mutex, pdMS_TO_TICKS(100)) == pdTRUE; }
+-    inline void _unlock() const { xSemaphoreGive(_mutex); }
++    int               _count     = 0;
++    int               _nextIndex = 0;
++    SemaphoreHandle_t _regMutex  = nullptr;
++
++    FileCallback      _fileCb         = nullptr;
++    void*             _fileCbUserData = nullptr;
++
++    // -- active download state (persists across tick() calls) ----------------
++    HttpClient*       _http       = nullptr;   // heap-allocated, owned
++    File              _sdFile;                  // open SD file handle (FILE_DL only)
++    int               _activeIdx  = -1;        // slot in _items[], or -1
++    int               _totalBytes = 0;
++    uint8_t           _headerBuf[12];          // first 12 bytes for magic detection
++    int               _headerLen  = 0;
++    String            _bodyAccum;              // accumulated body (CATALOG_DL only)
++
++    // -- backoff -------------------------------------------------------------
++    int               _consecutiveFailures = 0;
++    unsigned long     _backoffUntil        = 0;
++    unsigned long     _lastIdleTick        = 0;
++
++    // -- internal helpers ----------------------------------------------------
++    bool  _startNext();
++    bool  _streamChunk();
++    void  _finishCurrent(bool ok);
++    void  _failCurrent();
++    void  _cleanupActive();
++    Item* _findNextPending();
+ };
+diff --git a/include/http_utils.h b/include/http_utils.h
+index 2a7c09d..be25907 100644
+--- a/include/http_utils.h
++++ b/include/http_utils.h
+@@ -200,6 +200,38 @@ public:
+         return totalBytes;
+     }
+ 
++    // -- non-blocking chunk reader for cooperative downloads -----------------
++
++    // Initialise chunked reading state after a successful get().
++    // Call readChunk() repeatedly until bodyDone() returns true, then end().
++    void beginChunkedRead() { _bodyRemaining = _http.getSize(); }
++
++    // Read up to `maxBytes` of response body into `buf`.
++    // Returns bytes read (0 if nothing available yet, negative on error).
++    // Non-blocking: returns immediately when no data is buffered.
++    int readChunk(uint8_t* buf, size_t maxBytes) {
++        WiFiClient* s = _http.getStreamPtr();
++        if (!s) return -1;
++        size_t avail = s->available();
++        if (avail == 0) {
++            // Connection closed with nothing left → we're done
++            if (!_http.connected()) return -1;
++            return 0; // nothing available yet, try later
++        }
++        size_t toRead = min(avail, maxBytes);
++        int n = s->readBytes(buf, toRead);
++        if (n > 0 && _bodyRemaining > 0) _bodyRemaining -= n;
++        return n;
++    }
++
++    // True when the full body has been received (known length) or the
++    // server has closed the connection (chunked / unknown length).
++    bool bodyDone() {
++        if (_bodyRemaining == 0) return true;                // known length, all read
++        if (_bodyRemaining < 0 && !_http.connected()) return true; // chunked, conn closed
++        return false;
++    }
++
+     // -- convenience: download a URL and flash via Update --------------------
+     // GETs `url`, streams the response into Update.write(), and calls
+     // Update.end().  Returns bytes written, or -1 on any error.
+@@ -377,6 +409,7 @@ private:
+     HTTPClient _http;
+     int _statusCode;
+     int _timeoutMs;
++    int _bodyRemaining = -1;  // for chunked reads: bytes left (-1 = unknown/chunked)
+     String _statusMsg;
+ 
+     WiFiClientSecure* _ownSecure = nullptr;  // non-null when running off the main task
+diff --git a/src/audio_file_manager.cpp b/src/audio_file_manager.cpp
+index 7539f97..cde47f7 100644
+--- a/src/audio_file_manager.cpp
++++ b/src/audio_file_manager.cpp
+@@ -10,9 +10,13 @@
+  */
+ 
+ #include "audio_file_manager.h"
++#include "download_queue.h"
+ #include "extended_audio_player.h"
+ #include "audio_key_registry.h"
++#if ENABLE_PLAYLIST_FEATURES
+ #include "audio_playlist_registry.h"
++#endif
++#include "tone_generators.h"
+ #include "file_utils.h"
+ #include "logging.h"
+ #include <WiFi.h>
+@@ -49,28 +53,17 @@
+ // STRUCTURES
+ // ============================================================================
+ 
+-/**
+- * @brief Structure for audio download queue items
+- */
+-struct AudioDownloadItem
+-{
+-    char url[256];          ///< Original URL to download
+-    char localPath[128];    ///< Local SD card path for the file
+-    char description[64];   ///< Description for logging
+-    char ext[8];            ///< File extension (e.g., "wav", "mp3")
+-    bool inProgress;        ///< Whether download is currently in progress
+-};
++
+ 
+ // ============================================================================
+ // GLOBAL VARIABLES
+ // ============================================================================
+ 
+-//static AudioFile audioFiles[MAX_AUDIO_FILES];
++//static AudioEntry audioEntries[MAX_AUDIO_FILES];
+ //static int audioFileCount = 0;
+ static unsigned long lastCacheTime = 0;
+ static unsigned long lastCacheCheck = 0;  // Last lightweight cache check time
+ static char cachedEtag[64] = {0};         // Cached ETag/lastModified for quick validation
+-static bool pendingBootCacheValidation = false; // Run one non-blocking cache check in first maintenance loop
+ static bool sdCardAvailable = false;  // True if SD card is mounted and accessible
+ static bool sdCardInitFailed = false; // True if SD init was attempted and failed (don't retry)
+ static bool spiInitialized = false;   // True after SPI.begin() has been called
+@@ -79,14 +72,20 @@ static bool spiInitialized = false;   // True after SPI.begin() has been called
+ static IPAddress cachedGitHubIP;
+ static bool dnsPreCached = false;
+ 
+-// Download queue management
+-static AudioDownloadItem downloadQueue[MAX_DOWNLOAD_QUEUE];
+-static int downloadQueueCount = 0;
+-static int downloadQueueIndex = 0; // Current processing index
++// Registry mutex — kept for download queue re-registration serialisation
++static SemaphoreHandle_t registryMutex = nullptr;
++
++// Download queue — cooperative chunked downloads on core 1
++static DownloadQueue downloadQueue;
++
++// True while a catalog download is in flight (prevents duplicate enqueue)
++static bool catalogDownloadPending = false;
+ 
+-// Registry references (initialized on first use)
+-static AudioKeyRegistry& keyRegistry = getAudioKeyRegistry();
+-static AudioPlaylistRegistry& playlistRegistry = getAudioPlaylistRegistry();
++static AudioKeyRegistry &audioKeyRegistry = AudioKeyRegistry::instance;
++#if ENABLE_PLAYLIST_FEATURES
++    // Registry references (initialized on first use)
++static AudioPlaylistRegistry &playlistRegistry = getAudioPlaylistRegistry();
++#endif
+ 
+ // ============================================================================
+ // HELPER FUNCTIONS
+@@ -263,58 +262,20 @@ static bool ensureAudioDirExists()
+ /**
+  * @brief Add audio file to download queue
+  * @param url URL to download
+- * @param description Description for logging
+- * @param ext File extension (e.g., "wav", "mp3") - can be NULL
++ * @param audioKey Registry key for this file (used for logging and re-registration)
++ * @param ext File extension hint (e.g., "wav", "mp3") — may be corrected by Content-Type
+  * @return true if added successfully, false otherwise
+  */
+-static bool addToDownloadQueue(const char *url, const char *description, const char *ext = nullptr)
++static bool addToDownloadQueue(const char* url, const char* audioKey, const char* ext = nullptr)
+ {
+-    if (downloadQueueCount >= MAX_DOWNLOAD_QUEUE)
+-    {
+-        Logger.println("⚠️ Download queue is full, cannot add more items");
+-        return false;
+-    }
+-
+-    // Check if URL is already in queue
+-    for (int i = 0; i < downloadQueueCount; i++)
+-    {
+-        if (strcmp(downloadQueue[i].url, url) == 0)
+-        {
+-            Logger.printf("ℹ️ URL already in download queue: %s\n", url);
+-            return true; // Already queued, consider it success
+-        }
+-    }
+-
+-    // Add new item to queue
+-    AudioDownloadItem *item = &downloadQueue[downloadQueueCount];
+-    strncpy(item->url, url, sizeof(item->url) - 1);
+-    item->url[sizeof(item->url) - 1] = '\0';
+-
+-    // Store extension in the queue item
+-    if (ext && strlen(ext) > 0)
+-    {
+-        strncpy(item->ext, ext, sizeof(item->ext) - 1);
+-        item->ext[sizeof(item->ext) - 1] = '\0';
+-    }
+-    else
+-    {
+-        item->ext[0] = '\0';
+-    }
+-
+-    if (!getLocalPathForUrl(url, item->localPath, ext))
+-    {
++    char localPath[128];
++    if (!getLocalPathForUrl(url, localPath, ext)) {
+         Logger.printf("❌ Failed to generate local path for: %s\n", url);
+         return false;
+     }
+-
+-    strncpy(item->description, description ? description : "Unknown", sizeof(item->description) - 1);
+-    item->description[sizeof(item->description) - 1] = '\0';
+-
+-    item->inProgress = false;
+-    downloadQueueCount++;
+-
+-    Logger.printf("📥 Added to download queue: %s -> %s\n", item->description, item->localPath);
+-    return true;
++    auto result = downloadQueue.enqueue(audioKey, url, localPath, ext);
++    return result == DownloadQueue::EnqueueResult::OK ||
++           result == DownloadQueue::EnqueueResult::ALREADY_QUEUED;
+ }
+ 
+ /**
+@@ -322,7 +283,7 @@ static bool addToDownloadQueue(const char *url, const char *description, const c
+  */
+ static void enqueueMissingAudioFilesFromRegistry()
+ {
+-    if (keyRegistry.size() == 0)
++    if (audioKeyRegistry.size() == 0)
+     {
+         return;
+     }
+@@ -336,18 +297,19 @@ static void enqueueMissingAudioFilesFromRegistry()
+ 
+     int queued = 0;
+ 
+-    for (const auto& pair : keyRegistry)
++    for (const auto& pair : audioKeyRegistry)
+     {
+-        const KeyEntry& entry = pair.second;
++        const AudioEntry& entry = pair.second;
+         
+         // Only queue entries that have a streaming URL (means original was a URL)
+-        if (!entry.getUrl())
++        FileData* f = entry.getFile();
++        if (!f || f->alternatePath.empty())
+         {
+             continue;
+         }
+         
+-        const char* downloadPath = entry.getUrl();
+-        const char* ext = entry.getExt();
++        const char* downloadPath = f->alternatePath.c_str();
++        const char* ext = f->ext.c_str();
+         
+         // Check using ext from registry (set after Content-Type detection)
+         if (audioFileExists(downloadPath, ext))
+@@ -358,7 +320,7 @@ static void enqueueMissingAudioFilesFromRegistry()
+         // Also check if the primary local path already exists on disk
+         // (covers the case where Content-Type changed the extension and
+         //  the registry path was updated but ext field wasn't set yet)
+-        if (!entry.path.empty() && SD_EXISTS(entry.path.c_str()))
++        if (!entry.file->path.empty() && SD_EXISTS(entry.file->path.c_str()))
+         {
+             continue; // Already cached under the corrected path
+         }
+@@ -378,7 +340,7 @@ static void enqueueMissingAudioFilesFromRegistry()
+                 {
+                     Logger.printf("🔄 Found cached file for '%s' with ext '%s' (registry had '%s'), re-registering\n",
+                                   entry.audioKey.c_str(), knownExts[i], ext ? ext : "(none)");
+-                    keyRegistry.registerKey(entry.audioKey.c_str(), downloadPath, knownExts[i]);
++                    audioKeyRegistry.registerKey(entry.audioKey.c_str(), downloadPath, knownExts[i]);
+                     found = true;
+                     break;
+                 }
+@@ -386,8 +348,7 @@ static void enqueueMissingAudioFilesFromRegistry()
+             if (found) continue;
+         }
+ 
+-        if (addToDownloadQueue(downloadPath, entry.audioKey.c_str(), ext))
+-        {
++        if (addToDownloadQueue(downloadPath, entry.audioKey.c_str(), ext)) {
+             queued++;
+         }
+     }
+@@ -398,6 +359,24 @@ static void enqueueMissingAudioFilesFromRegistry()
+     }
+ }
+ 
++// Bidirectional MIME ↔ extension table.
++// First entry per extension is the canonical MIME type returned by extensionToMimeType().
++struct MimeExtMapping { const char* mime; const char* ext; };
++extern const MimeExtMapping kMimeExtTable[] = {
++    {"audio/mpeg",      "mp3"},
++    {"audio/mp3",       "mp3"},
++    {"audio/wav",       "wav"},
++    {"audio/wave",      "wav"},
++    {"audio/x-wav",     "wav"},
++    {"audio/vnd.wave",  "wav"},
++    {"audio/m4a",       "m4a"},
++    {"audio/mp4",       "m4a"},
++    {"audio/aac",       "aac"},
++    {"audio/ogg",       "ogg"},
++    {"audio/flac",      "flac"},
++};
++extern const int kMimeExtTableSize = (int)(sizeof(kMimeExtTable) / sizeof(kMimeExtTable[0]));
++
+ /**
+  * @brief Map a MIME type string to a file extension (without leading dot)
+  * @param contentType Content-Type header value (may include parameters e.g. "audio/mpeg; charset=UTF-8")
+@@ -406,194 +385,26 @@ static void enqueueMissingAudioFilesFromRegistry()
+ static const char* mimeTypeToExtension(const char* contentType)
+ {
+     if (!contentType || contentType[0] == '\0') return nullptr;
+-    if (strncmp(contentType, "audio/mpeg", 10) == 0) return "mp3";
+-    if (strncmp(contentType, "audio/mp3",  9) == 0) return "mp3";
+-    if (strncmp(contentType, "audio/wav",  9) == 0) return "wav";
+-    if (strncmp(contentType, "audio/wave", 10) == 0) return "wav";
+-    if (strncmp(contentType, "audio/x-wav", 11) == 0) return "wav";
+-    if (strncmp(contentType, "audio/vnd.wave", 14) == 0) return "wav";
+-    if (strncmp(contentType, "audio/m4a",  9) == 0) return "m4a";
+-    if (strncmp(contentType, "audio/mp4",  9) == 0) return "m4a";
+-    if (strncmp(contentType, "audio/aac",  9) == 0) return "aac";
+-    if (strncmp(contentType, "audio/ogg",  9) == 0) return "ogg";
+-    if (strncmp(contentType, "audio/flac", 10) == 0) return "flac";
++    for (int i = 0; i < kMimeExtTableSize; i++) {
++        if (strncmp(contentType, kMimeExtTable[i].mime, strlen(kMimeExtTable[i].mime)) == 0)
++            return kMimeExtTable[i].ext;
++    }
+     return nullptr;
+ }
+ 
+ /**
+- * @brief Download next item in queue (non-blocking)
+- * @return true if download started or completed, false if error or queue empty
++ * @brief Map a file extension to its canonical MIME type
++ * @param ext Extension without leading dot (e.g. "mp3")
++ * @return MIME type string (e.g. "audio/mpeg"), or nullptr if unrecognised
+  */
+-static bool processDownloadQueueInternal()
++static const char* extensionToMimeType(const char* ext)
+ {
+-    static int consecutiveFailures = 0;
+-    static unsigned long backoffUntil = 0;
+-
+-    // Exponential backoff after failures: 10s, 20s, 40s … capped at 5 min
+-    if (consecutiveFailures > 0 && millis() < backoffUntil) {
+-        return false;
+-    }
+-
+-    if (downloadQueueIndex >= downloadQueueCount)
+-    {
+-        // Current page exhausted — reset and refill from registry.
+-        // enqueueMissingAudioFilesFromRegistry() skips already-downloaded files,
+-        // so this naturally pages through the full catalog.
+-        downloadQueueCount = 0;
+-        downloadQueueIndex = 0;
+-        enqueueMissingAudioFilesFromRegistry();
+-        if (downloadQueueCount == 0) {
+-            return false; // Nothing left to download
+-        }
+-    }
+-    
+-    if (WiFi.status() != WL_CONNECTED)
+-    {
+-        Logger.println("⚠️ WiFi not connected, skipping download queue processing");
+-        return false;
+-    }
+-    
+-    if (!initializeSDCard())
+-    {
+-        Logger.println("⚠️ SD card not available, skipping download queue processing");
+-        return false;
+-    }
+-    
+-    AudioDownloadItem* item = &downloadQueue[downloadQueueIndex];
+-    
+-    if (item->inProgress)
+-    {
+-        return false; // Already processing this item
+-    }
+-    
+-    Logger.printf("📥 Downloading audio file: %s\n", item->description);
+-    Logger.printf("    URL: %s\n", item->url);
+-    Logger.printf("    Local: %s\n", item->localPath);
+-    
+-    item->inProgress = true;
+-    
+-    // Ensure audio directory exists (handles nested paths like /sdcard/audio)
+-    if (!ensureAudioDirExists())
+-    {
+-        Logger.println("❌ Failed to ensure audio directory exists");
+-        item->inProgress = false;
+-        downloadQueueIndex++; // Skip this item
+-        return false;
+-    }
+-    
+-    HttpClient http(HTTP_TIMEOUT_DOWNLOAD_MS);
+-    // Collect Content-Type so we can correct the file extension after the response
+-    const char* wantedHeaders[] = {"Content-Type"};
+-    http.collectHeaders(wantedHeaders, 1);
+-    
+-    if (!http.get(item->url))
+-    {
+-        Logger.printf("❌ HTTP download failed: %d for %s\n", http.statusCode(), item->url);
+-        item->inProgress = false;
+-        downloadQueueIndex++;
+-        consecutiveFailures++;
+-        unsigned long delay = min(300000UL, 10000UL << min(consecutiveFailures - 1, 5));
+-        backoffUntil = millis() + delay;
+-        Logger.printf("⏳ Download backoff: %lus after %d failure(s)\n", delay / 1000, consecutiveFailures);
+-        return false;
+-    }
+-    
+-    // Detect actual audio format from Content-Type header and fix path/registry if needed
+-    String contentType = http.header("Content-Type");
+-    const char* detectedExt = mimeTypeToExtension(contentType.c_str());
+-    if (detectedExt && (item->ext[0] == '\0' || strcmp(item->ext, detectedExt) != 0))
+-    {
+-        Logger.printf("🔍 Content-Type '%s' → format '%s' (was '%s')\n",
+-                      contentType.c_str(), detectedExt,
+-                      item->ext[0] ? item->ext : "(default)");
+-        char newLocalPath[128];
+-        if (getLocalPathForUrl(item->url, newLocalPath, detectedExt))
+-        {
+-            strncpy(item->localPath, newLocalPath, sizeof(item->localPath) - 1);
+-            item->localPath[sizeof(item->localPath) - 1] = '\0';
+-            strncpy(item->ext, detectedExt, sizeof(item->ext) - 1);
+-            item->ext[sizeof(item->ext) - 1] = '\0';
+-            // Re-register with the correct extension so the player finds the right file
+-            keyRegistry.registerKey(item->description, item->url, detectedExt);
+-        }
+-    }
+-
+-    // Clean up any old files with different extensions for the same URL
+-    char filenameBase[64];
+-    urlToBaseFilename(item->url, filenameBase, nullptr);
+-    char* dot = strrchr(filenameBase, '.');
+-    if (dot) *dot = '\0';
+-    
+-    const char* extensions[] = {".mp3", ".wav", ".ogg", ".flac", ".aac", ".m4a"};
+-    for (int i = 0; i < 6; i++)
+-    {
+-        char oldPath[128];
+-        snprintf(oldPath, sizeof(oldPath), "%s/%s%s", AUDIO_FILES_DIR, filenameBase, extensions[i]);
+-        if (strcmp(oldPath, item->localPath) != 0 && SD_EXISTS(oldPath))
+-        {
+-            Logger.printf("🗑️ Removing old file with wrong extension: %s\n", oldPath);
+-            SD_REMOVE(oldPath);
+-        }
++    if (!ext || ext[0] == '\0') return nullptr;
++    for (int i = 0; i < kMimeExtTableSize; i++) {
++        if (strcmp(ext, kMimeExtTable[i].ext) == 0)
++            return kMimeExtTable[i].mime;
+     }
+-    
+-    // Stream response body to file
+-    File audioFile = SD_OPEN(item->localPath, FILE_WRITE);
+-    if (!audioFile)
+-    {
+-        Logger.printf("❌ Failed to create file: %s\n", item->localPath);
+-        http.end();
+-        item->inProgress = false;
+-        downloadQueueIndex++;
+-        return false;
+-    }
+-    
+-    int totalBytes = http.streamBody([&](const uint8_t* buf, size_t len) {
+-        audioFile.write(buf, len);
+-        return true;
+-    });
+-    
+-    audioFile.close();
+-    if (totalBytes > 0)
+-    {
+-        Logger.printf("✅ Downloaded %d bytes to: %s\n", totalBytes, item->localPath);
+-        consecutiveFailures = 0;
+-        
+-        // Validate actual file content against the saved extension.
+-        // Google Drive may serve MP4/M4A content for files labelled as .wav.
+-        File savedFile = SD_OPEN(item->localPath, FILE_READ);
+-        if (savedFile && savedFile.size() >= 12) {
+-            uint8_t hdr[12];
+-            savedFile.read(hdr, 12);
+-            savedFile.close();
+-            const char* actualExt = nullptr;
+-            if (memcmp(hdr + 4, "ftyp", 4) == 0) actualExt = "m4a";
+-            else if (memcmp(hdr, "RIFF", 4) == 0 && memcmp(hdr + 8, "WAVE", 4) == 0) actualExt = "wav";
+-            else if (memcmp(hdr, "ID3", 3) == 0 || (hdr[0] == 0xFF && (hdr[1] & 0xE0) == 0xE0)) actualExt = "mp3";
+-            else if (memcmp(hdr, "OggS", 4) == 0) actualExt = "ogg";
+-            else if (memcmp(hdr, "fLaC", 4) == 0) actualExt = "flac";
+-            
+-            if (actualExt && item->ext[0] && strcmp(actualExt, item->ext) != 0) {
+-                Logger.printf("⚠️ Downloaded '%s' but content is actually %s (not %s) — renaming\n",
+-                              item->description, actualExt, item->ext);
+-                char newPath[128];
+-                if (getLocalPathForUrl(item->url, newPath, actualExt)) {
+-                    SD_CARD.rename(item->localPath, newPath);
+-                    strncpy(item->localPath, newPath, sizeof(item->localPath) - 1);
+-                    item->localPath[sizeof(item->localPath) - 1] = '\0';
+-                    strncpy(item->ext, actualExt, sizeof(item->ext) - 1);
+-                    item->ext[sizeof(item->ext) - 1] = '\0';
+-                    keyRegistry.registerKey(item->description, item->url, actualExt);
+-                }
+-            }
+-        } else if (savedFile) {
+-            savedFile.close();
+-        }
+-    }
+-    
+-    item->inProgress = false;
+-    downloadQueueIndex++;
+-    
+-    return true;
++    return nullptr;
+ }
+ 
+ /**
+@@ -725,22 +536,164 @@ static bool checkRemoteCacheValid()
+     return false; // Cache is still valid
+ }
+ 
++// ============================================================================
++// JSON PARSING HELPERS
++// ============================================================================
++
++/**
++ * @brief Build a tone generator from JSON parameters
++ * 
++ * Supports 1–4 simultaneous frequencies. Optionally wraps the generator
++ * in a RepeatingToneGenerator for cadence (toneMs/silenceMs).
++ * 
++ * JSON format:
++ *   "frequencies": [440]               → ToneGenerator<1>
++ *   "frequencies": [350, 440]          → ToneGenerator<2>
++ *   "frequencies": [350, 440, 480]     → ToneGenerator<3>
++ *   "frequencies": [350, 440, 480, 620] → ToneGenerator<4>
++ *   "amplitude": 16000                  (optional, default 16000)
++ *   "toneMs": 2000                      (optional — if set, wraps in RepeatingToneGenerator)
++ *   "silenceMs": 3000                   (optional — required if toneMs is set)
++ * 
++ * @param entryData JSON object containing generator parameters
++ * @return Heap-allocated SoundGenerator (caller must manage ownership), or nullptr on error
++ */
++static SoundGenerator<int16_t>* buildGeneratorFromJson(JsonObject& entryData) {
++    JsonArray freqArray = entryData["frequencies"].as<JsonArray>();
++    if (!freqArray || freqArray.size() == 0) {
++        // Fallback: single frequency field
++        float freq = entryData["frequency"] | 440.0f;
++        freqArray = JsonArray();  // won't be used
++        auto* gen = new ToneGenerator<1>(std::array<float, 1>{freq},
++                                         entryData["amplitude"] | 16000.0f);
++        unsigned long toneMs = entryData["toneMs"] | 0;
++        if (toneMs > 0) {
++            unsigned long silenceMs = entryData["silenceMs"] | 0;
++            auto* repeating = new RepeatingToneGenerator<int16_t>(
++                std::unique_ptr<SoundGenerator<int16_t>>(gen), toneMs, silenceMs);
++            return repeating;
++        }
++        return gen;
++    }
++
++    int n = freqArray.size();
++    if (n > 4) n = 4;
++
++    float amplitude = entryData["amplitude"] | 16000.0f;
++    SoundGenerator<int16_t>* baseGen = nullptr;
++
++    switch (n) {
++        case 1: {
++            std::array<float, 1> f = { freqArray[0].as<float>() };
++            baseGen = new ToneGenerator<1>(f, amplitude);
++            break;
++        }
++        case 2: {
++            std::array<float, 2> f = { freqArray[0].as<float>(), freqArray[1].as<float>() };
++            baseGen = new ToneGenerator<2>(f, amplitude);
++            break;
++        }
++        case 3: {
++            std::array<float, 3> f = { freqArray[0].as<float>(), freqArray[1].as<float>(), freqArray[2].as<float>() };
++            baseGen = new ToneGenerator<3>(f, amplitude);
++            break;
++        }
++        case 4: {
++            std::array<float, 4> f = { freqArray[0].as<float>(), freqArray[1].as<float>(), freqArray[2].as<float>(), freqArray[3].as<float>() };
++            baseGen = new ToneGenerator<4>(f, amplitude);
++            break;
++        }
++        default: 
++            return nullptr;
++    }
++
++    unsigned long toneMs = entryData["toneMs"] | 0;
++    if (toneMs > 0) {
++        unsigned long silenceMs = entryData["silenceMs"] | 0;
++        // Owning constructor — RepeatingToneGenerator takes ownership of baseGen
++        auto* repeating = new RepeatingToneGenerator<int16_t>(
++            std::unique_ptr<SoundGenerator<int16_t>>(baseGen), toneMs, silenceMs);
++        return repeating;
++    }
++
++    return baseGen;
++}
++
+ /**
+- * @brief Callback type for processing audio files during JSON parsing
+- * @param file The audio file to process
++ * @brief Parse AudioTiming fields from a JSON object
++ */
++static AudioTiming parseAudioTiming(JsonObject obj) {
++    AudioTiming t;
++    t.durationMs = obj["duration"]  | 0;
++    t.gapBefore  = obj["gap"]       | obj["gapBefore"] | 0;
++    t.gapAfter   = obj["gapAfter"]  | 0;
++    t.loop       = obj["loop"]      | 0;
++    return t;
++}
++
++/**
++ * @brief Parse a single AudioLink from a JSON value
++ * 
++ * Supports two formats:
++ *   - Simple string: "audioKey"
++ *   - Object with timing: { "key": "audioKey", "duration": 1000, "gap": 500 }
++ * 
++ * @param value JSON value (string or object)
++ * @return Heap-allocated AudioLink, or nullptr if invalid
++ */
++static AudioLink* parseAudioLink(JsonVariant value) {
++    if (value.is<const char*>()) {
++        const char* key = value.as<const char*>();
++        if (key && strlen(key) > 0) {
++            return new AudioLink(key);
++        }
++    } else if (value.is<JsonObject>()) {
++        JsonObject obj = value.as<JsonObject>();
++        const char* key = obj["key"] | "";
++        if (strlen(key) > 0) {
++            return new AudioLink(key, parseAudioTiming(obj));
++        }
++    }
++    return nullptr;
++}
++
++/**
++ * @brief Case-insensitive comparison of a JSON string value
++ */
++static bool jsonTypeEquals(const char* value, const char* target) {
++    if (!value || !target) return false;
++    return strcasecmp(value, target) == 0;
++}
++
++/**
++ * @brief FNV-1a hash of a serialized JSON object for change detection
++ */
++static uint32_t hashJsonObject(JsonObject obj) {
++    uint32_t h = 2166136261u;
++    String s;
++    serializeJson(obj, s);
++    for (size_t i = 0; i < s.length(); i++) {
++        h ^= (uint8_t)s[i];
++        h *= 16777619u;
++    }
++    return h;
++}
++
++/**
++ * @brief Callback type for processing audio entries during JSON parsing
++ * @param entry The audio entry to process
+  * @param userData Optional user data pointer for context
+- * @return true if processing was successful
+  */
+-typedef void (*AudioFileProcessCallback)(const AudioFile* file, void* userData);
++typedef void (*AudioEntryProcessCallback)(const AudioEntry* entry, void* userData);
+ 
+ /**
+- * @brief Parse JSON string and process audio files with a callback
++ * @brief Parse JSON string and process audio entries with a callback
+  * @param jsonString JSON string containing audio file entries
+- * @param callback Function to call for each audio file entry
++ * @param callback Function to call for each audio entry
+  * @param userData Optional user data to pass to callback
+- * @return Number of files successfully processed, -1 on parse error
++ * @return Number of entries successfully processed, -1 on parse error
+  */
+-static int parseAndRegisterAudioFiles(const String& jsonString, AudioFileProcessCallback callback=nullptr, void* userData = nullptr)
++static int parseAndRegisterAudioFiles(const String& jsonString, AudioEntryProcessCallback callback=nullptr, void* userData = nullptr)
+ {
+     // Parse JSON response
+     JsonDocument doc;
+@@ -786,80 +739,68 @@ static int parseAndRegisterAudioFiles(const String& jsonString, AudioFileProcess
+         JsonObject entryData = kv.value().as<JsonObject>();
+         const char* key = kv.key().c_str();
+ 
+-        // Create temporary AudioFile on stack
+-        AudioFile file;
+-        file.audioKey = key;
+-        file.description = entryData["description"] | "Unknown";
+-        file.type = entryData["type"] | "unknown";
+-        file.data = entryData["path"] | entryData["data"]  | "";
+-        file.ext = entryData["ext"] | "";
+-        file.gap = entryData["gap"] | 0;
+-        file.duration = entryData["duration"] | 0;
+-        file.ringDuration = entryData["ring_duration"] | 0;
+-        
+-        // Register the main audio file
+-        if (!registerAudioFile(&file)) {
++        // Hash the JSON for change detection — skip reconstruction if unchanged
++        uint32_t hash = hashJsonObject(entryData);
++        const AudioEntry* existing = audioKeyRegistry.getEntry(key);
++        if (existing && existing->contentHash == hash) {
++            processedCount++;
++            if (callback) callback(existing, userData);
+             continue;
+         }
+-        processedCount++;
+ 
+-#if ENABLE_PLAYLIST_FEATURES
+-        // Build playlist with enrichment (ringback, click, previous/next)
+-        // Build desired playlist nodes
+-        std::vector<PlaylistNode> desiredNodes;
+-        
+-        // Parse "previous" array
+-        if (entryData["previous"].is<JsonArray>()) {
+-            JsonArray prevArray = entryData["previous"].as<JsonArray>();
+-            for (JsonVariant item : prevArray) {
+-                const char* prevKey = item.as<const char*>();
+-                if (prevKey && strlen(prevKey) > 0) {
+-                    desiredNodes.emplace_back(prevKey, 0, 0);
+-                }
+-            }
++        const char* typeStr = entryData["type"] | "audio";
++
++        // Case-insensitive type detection
++        AudioStreamType streamType = AudioStreamType::FILE_STREAM;
++        if (jsonTypeEquals(typeStr, "generator")) {
++            streamType = AudioStreamType::GENERATOR;
++        } else if (jsonTypeEquals(typeStr, "url")) {
++            streamType = AudioStreamType::URL_STREAM;
+         }
+-        
+-        // Add ringback if specified
+-        if (file.ringDuration > 0)
+-            desiredNodes.emplace_back("ringback", 0, file.ringDuration);
+-        
+-        // Add the main audio file
+-        desiredNodes.emplace_back(file.audioKey, file.gap, file.duration);
+-        
+-        // Add click after main audio (only if "click" is a registered key)
+-        if (keyRegistry.hasKey("click"))
+-            desiredNodes.emplace_back("click", 0, 0);
+-        
+-        // Parse "next" array
+-        if (entryData["next"].is<JsonArray>()) {
+-            JsonArray nextArray = entryData["next"].as<JsonArray>();
+-            for (JsonVariant item : nextArray) {
+-                const char* nextKey = item.as<const char*>();
+-                if (nextKey && strlen(nextKey) > 0) {
+-                    desiredNodes.emplace_back(nextKey, 0, 0);
+-                }
++
++        // Build a complete AudioEntry, then register once
++        AudioEntry entry;
++        entry.audioKey = key;
++        entry.type = streamType;
++        entry.contentHash = hash;
++
++        // Type-specific payload
++        if (streamType == AudioStreamType::GENERATOR) {
++            entry.generator = buildGeneratorFromJson(entryData);
++            if (!entry.generator)
++            {
++                Logger.printf("⚠️ Failed to build generator for '%s'\n", key);
++                continue;
+             }
+-        }
+-        
+-        // Create or update the playlist
+-        Playlist *playlist = playlistRegistry.getPlaylistMutable(key);
+-        if (playlist) {
+-            playlist->update(desiredNodes);
+         } else {
+-            playlist = playlistRegistry.createPlaylist(key);
+-            if (playlist) {
+-                for (const auto& node : desiredNodes) {
+-                    playlist->append(node);
+-                }
++            entry.file = new FileData();
++            entry.file->path = entryData["path"] | entryData["data"] | entryData["url"] | "";
++            entry.file->ext = entryData["ext"] | entryData["codec"] | entryData["extension"] | "";
++            if (entry.file->path.empty()) {
++                Logger.printf("⚠️ No path for: %s\n", key);
++                continue;
+             }
+         }
+-#else
+-        // Simple mode: no playlist creation, just use audio keys directly
+-#endif
+-        
++
++        // Timing metadata
++        entry.timing = parseAudioTiming(entryData);
++
++        // AudioLinks
++        if (!entryData["previous"].isNull())
++            entry.previous = parseAudioLink(entryData["previous"]);
++        if (!entryData["next"].isNull())
++            entry.next = parseAudioLink(entryData["next"]);
++
++        // Single registration point — moves entry into registry
++        audioKeyRegistry.registerEntry(std::move(entry));
++
++        // Re-fetch pointer for callback (entry was moved)
++        const AudioEntry* registered = audioKeyRegistry.getEntry(key);
++        processedCount++;
++
+         // Invoke callback if provided
+-        if (callback)
+-            callback(&file, userData);
++        if (callback && registered)
++            callback(registered, userData);
+     }
+ 
+     return processedCount;
+@@ -879,7 +820,7 @@ static bool isCacheStale(int audioFileCount = -1, bool allowRemoteValidation = t
+ {
+     // Use registry size if count not provided
+     if (audioFileCount < 0)
+-        audioFileCount = keyRegistry.size();
++        audioFileCount = audioKeyRegistry.size();
+     
+     if (audioFileCount == 0)
+     {
+@@ -1011,7 +952,9 @@ static int loadAudioFilesFromSDCard()
+     }
+     
+     // Resolve all playlists after registration
++#if ENABLE_PLAYLIST_FEATURES
+     playlistRegistry.resolveAllPlaylists();
++#endif
+     
+     Logger.printf("✅ Loaded and registered %d audio files from SD card\n", registeredCount);
+     return registeredCount;
+@@ -1044,7 +987,10 @@ AudioSource *initializeAudioFileManager()
+         source = new AudioSourceSD(SD_AUDIO_PATH, "wav", SD_CS_PIN, SPI);
+         Logger.println("✅ AudioSourceSD created");
+ #endif
+-
++        // Create registry mutex and wire it into the download queue so that
++        // re-registrations from the download task are safe.
++        if (!registryMutex) registryMutex = xSemaphoreCreateMutex();
++        downloadQueue.setRegistryMutex(registryMutex);
+     }
+     else
+     {
+@@ -1069,21 +1015,15 @@ AudioSource *initializeAudioFileManager()
+         else
+         {
+             // Cache looks fresh locally - verify remotely in the first loop without delaying boot.
+-            pendingBootCacheValidation = true;
++            Logger.println("Cache looks fresh, clearing it, will refresh when WiFi is available");
++            invalidateAudioCache();
+         }
+-        keyRegistry.listKeys();
++        audioKeyRegistry.listKeys();
+         
+-        // Only queue downloads from cache if it's NOT stale
+-        // If stale, we'll get a fresh catalog with correct extensions first
+-        if (!stale)
+-        {
+-            // Queue any missing remote audio files so downloads can start immediately
+-            enqueueMissingAudioFilesFromRegistry();
+-        }
+-        else
+-        {
+-            Logger.println("ℹ️ Deferring download queue until catalog is refreshed");
+-        }
++        // Always queue missing audio files immediately from the cached registry.
++        // If cache is stale, a catalog refresh will also be enqueued (non-blocking);
++        // when it completes its callback will re-queue any newly-discovered files.
++        enqueueMissingAudioFilesFromRegistry();
+     }
+     else
+     {
+@@ -1093,60 +1033,21 @@ AudioSource *initializeAudioFileManager()
+     return source;
+ }
+ 
+-// Forward declaration for internal download function
+-static bool downloadAudioInternal();
+-
+-bool downloadAudio(int maxRetries, unsigned long retryDelayMs)
+-{
+-    // Check WiFi connection
+-    if (WiFi.status() != WL_CONNECTED)
+-    {
+-        Logger.println("❌ WiFi not connected, cannot download audio files");
+-        return false;
+-    }
+-    
+-    // Check if cache is still valid
+-    if (!isCacheStale())
+-    {
+-        Logger.println("✅ Cache is still valid, skipping download");
+-        return true;
+-    }
+-    
+-    // Retry loop
+-    for (int attempt = 1; attempt <= maxRetries; attempt++)
+-    {
+-        if (attempt > 1)
+-        {
+-            Logger.printf("🔄 Retry attempt %d/%d after %lums delay...\n", attempt, maxRetries, retryDelayMs);
+-            delay(retryDelayMs);
+-        }
+-        
+-        if (downloadAudioInternal())
+-        {
+-            return true;
+-        }
+-    }
+-    
+-    Logger.printf("❌ Download failed after %d attempts\n", maxRetries);
+-    return false;
+-}
++// ============================================================================
++// CATALOG URL BUILDER
++// ============================================================================
+ 
+-// Internal download implementation (single attempt)
+-static bool downloadAudioInternal()
++/**
++ * @brief Build the catalog URL with streaming parameter and optional DNS cache IP.
++ * @return Fully-qualified catalog URL ready for HTTP GET.
++ */
++static String buildCatalogUrl()
+ {
+-    Logger.println("🌐 Downloading list from server...");
+-    
+-    // Build catalog URL with streaming parameter
+-    // - SD card available: streaming=false -> direct Drive download URLs for caching
+-    // - URL streaming mode: streaming=true -> authenticated URLs for real-time playback
+     String catalogUrl = KNOWN_SEQUENCES_URL;
+-    String originalHost = "";
+-    
++
+     // If DNS is pre-cached, try to use the IP instead of hostname
+-    // This allows downloads to work even if WireGuard broke public DNS
+     if (dnsPreCached && cachedGitHubIP != IPAddress(0,0,0,0))
+     {
+-        // Extract and replace hostname with cached IP
+         int protoEnd = catalogUrl.indexOf("://");
+         if (protoEnd > 0)
+         {
+@@ -1155,140 +1056,135 @@ static bool downloadAudioInternal()
+             int hostEnd = catalogUrl.indexOf('/', hostStart);
+             if (hostEnd > hostStart)
+             {
+-                originalHost = catalogUrl.substring(hostStart, hostEnd);
+                 String path = catalogUrl.substring(hostEnd);
+                 catalogUrl = protocol + cachedGitHubIP.toString() + path;
+-                Logger.printf("🌐 Using cached IP: %s -> %s\n", originalHost.c_str(), cachedGitHubIP.toString().c_str());
+             }
+         }
+     }
+-    
+-    // Check if URL already has query parameters
+-    if (catalogUrl.indexOf('?') >= 0) {
+-        catalogUrl += "&streaming=";
+-    } else {
+-        catalogUrl += "?streaming=";
+-    }
++
++    // Append streaming parameter
++    catalogUrl += (catalogUrl.indexOf('?') >= 0) ? "&streaming=" : "?streaming=";
+     catalogUrl += sdCardAvailable ? "false" : "true";
+-    
+-    if (sdCardAvailable) {
+-        Logger.println("💾 SD card available - requesting direct download URLs");
+-    } else {
+-        Logger.println("🌐 URL streaming mode - requesting authenticated URLs");
+-    }
+-    
+-    // Build per-request headers (Content-Type + optional Host for virtual hosts)
+-    static HttpClient::Header extraHeaders[2];
+-    int headerCount = 0;
+-    extraHeaders[headerCount++] = {"Content-Type", "application/json"};
+-    if (originalHost.length() > 0) {
+-        extraHeaders[headerCount++] = {"Host", originalHost.c_str()};
+-    }
++    return catalogUrl;
++}
+ 
+-    HttpClient http(HTTP_TIMEOUT_CATALOG_MS, extraHeaders, headerCount);
+-    
+-    Logger.printf("📡 Making GET request to: %s\n", catalogUrl.c_str());
+-    
+-    if (!http.get(catalogUrl.c_str(), extraHeaders, headerCount))
+-    {
+-        Logger.printf("❌ HTTP request failed: %d\n", http.statusCode());
+-        return false;
++// ============================================================================
++// CATALOG COMPLETION CALLBACK
++// ============================================================================
++
++/**
++ * @brief Called by the download queue when a catalog fetch completes.
++ *
++ * Runs on core 1 (from tick()), so registry access is safe.
++ * Parses JSON, registers entries, prunes orphans, saves to SD, and
++ * enqueues missing audio files for download.
++ */
++static void onCatalogDownloaded(bool success, const String& payload, void* /*userData*/)
++{
++    catalogDownloadPending = false;
++
++    if (!success || payload.length() == 0) {
++        Logger.println("❌ Catalog download failed");
++        return;
+     }
+-    
+-    String payload = http.getString();
+-    
+-    Logger.printf("✅ Received response (%d bytes)\n", payload.length());
+-    
+-    if (payload.length() > MAX_HTTP_RESPONSE_SIZE)
+-    {
+-        Logger.println("❌ Response too large");
+-        return false;
++
++    Logger.printf("✅ Catalog received (%d bytes), parsing...\n", payload.length());
++
++    if (payload.length() > MAX_HTTP_RESPONSE_SIZE) {
++        Logger.println("❌ Catalog response too large");
++        return;
+     }
+-    
+-    // Local mark-and-sweep: collect existing non-generator keys, then remove
+-    // any that weren't in the new catalog
++
++    // Mark-and-sweep: collect existing non-generator keys
+     std::set<std::string> existingKeys;
+-    for (const auto& pair : keyRegistry) {
+-        // Only track non-generator keys for pruning
+-        if (pair.second.type != AudioStreamType::GENERATOR) {
++    for (const auto& pair : audioKeyRegistry) {
++        if (pair.second.type != AudioStreamType::GENERATOR)
+             existingKeys.insert(pair.first);
+-        }
+     }
+-    
+-    // Track which keys we see in the new catalog
++
+     std::set<std::string> seenKeys;
+-    
+-    // Parse and register audio files directly with registry
+-    int registeredCount = parseAndRegisterAudioFiles(payload, 
+-            [](const AudioFile* file, void* userData) -> void {
+-        auto* seenKeys = static_cast<std::set<std::string>*>(userData);
+-            if (seenKeys) {
+-                seenKeys->insert(file->audioKey);
+-            }
+-    }, &seenKeys);
+-    
+-    if (registeredCount < 0) {
+-        return false; // Parse error
+-    }
+-    
+-    // Sweep: remove keys that existed before but weren't in new catalog
++
++    int registeredCount = parseAndRegisterAudioFiles(payload,
++        [](const AudioEntry* entry, void* ud) {
++            auto* seen = static_cast<std::set<std::string>*>(ud);
++            if (seen) seen->insert(entry->audioKey);
++        }, &seenKeys);
++
++    if (registeredCount < 0) return;
++
++    // Prune orphaned keys
+     int prunedCount = 0;
+     for (const auto& key : existingKeys) {
+         if (seenKeys.find(key) == seenKeys.end()) {
+             Logger.printf("🗑️ Pruning orphaned key: %s\n", key.c_str());
+-            keyRegistry.unregisterKey(key.c_str());
++            audioKeyRegistry.unregisterKey(key.c_str());
+             prunedCount++;
+         }
+     }
+-    if (prunedCount > 0) {
++    if (prunedCount > 0)
+         Logger.printf("✅ Pruned %d orphaned audio keys\n", prunedCount);
+-    }
+-    
+-    // Resolve all playlists after registration
++
++#if ENABLE_PLAYLIST_FEATURES
+     playlistRegistry.resolveAllPlaylists();
+-    
+-    Logger.printf("✅ Downloaded and registered %d audio files%s\n", 
+-                  registeredCount,
+-                  prunedCount > 0 ? " (pruned orphans)" : "");
+-    
+-    // Only save to SD card and queue downloads if SD is available
+-    if (sdCardAvailable)
+-    {
+-        // Save raw JSON payload to SD card for caching
++#endif
++
++    Logger.printf("✅ Registered %d audio files%s\n",
++                  registeredCount, prunedCount > 0 ? " (pruned orphans)" : "");
++
++    // Save to SD card
++    if (sdCardAvailable) {
+         File audioJsonFile = SD_OPEN(AUDIO_JSON_FILE, FILE_WRITE);
+-        if (audioJsonFile)
+-        {
++        if (audioJsonFile) {
+             audioJsonFile.print(payload);
+             audioJsonFile.close();
+-            
+-            // Save timestamp
++
+             File timestampFile = SD_OPEN(CACHE_TIMESTAMP_FILE, FILE_WRITE);
+-            if (timestampFile)
+-            {
++            if (timestampFile) {
+                 timestampFile.print(millis());
+                 timestampFile.close();
+                 lastCacheTime = millis();
+             }
+             Logger.println("💾 Audio catalog cached to SD card");
+-        }
+-        else
+-        {
++        } else {
+             Logger.println("⚠️ Failed to cache audio catalog to SD card");
+         }
+ 
+-        // Clear old download queue before re-populating
+-        downloadQueueCount = 0;
+-        downloadQueueIndex = 0;
+-        
+-        // Queue any missing remote audio files from the registry
++        // Queue missing audio file downloads
+         enqueueMissingAudioFilesFromRegistry();
+     }
+-    else
+-    {
+-        Logger.println("ℹ️ No SD card - audio catalog held in memory only");
++}
++
++// ============================================================================
++// PUBLIC DOWNLOAD API
++// ============================================================================
++
++bool downloadAudio(int /*maxRetries*/, unsigned long /*retryDelayMs*/)
++{
++    if (WiFi.status() != WL_CONNECTED) {
++        Logger.println("❌ WiFi not connected, cannot download audio catalog");
++        return false;
+     }
+-    
+-    return true;
++
++    if (catalogDownloadPending) {
++        Logger.println("ℹ️ Catalog download already in progress");
++        return true;
++    }
++
++    String url = buildCatalogUrl();
++    Logger.printf("📡 Enqueueing catalog download: %s\n", url.c_str());
++
++    auto result = downloadQueue.enqueueCatalog(url.c_str(), onCatalogDownloaded);
++    if (result == DownloadQueue::EnqueueResult::OK) {
++        catalogDownloadPending = true;
++        return true;
++    }
++    if (result == DownloadQueue::EnqueueResult::ALREADY_QUEUED) {
++        catalogDownloadPending = true;
++        return true;
++    }
++
++    Logger.println("⚠️ Failed to enqueue catalog download (queue full?)");
++    return false;
+ }
+ 
+ void invalidateAudioCache()
+@@ -1299,8 +1195,7 @@ void invalidateAudioCache()
+     cachedEtag[0] = '\0';
+ 
+     // Clear pending downloads so the next catalog load repopulates from fresh state.
+-    downloadQueueCount = 0;
+-    downloadQueueIndex = 0;
++    downloadQueue.reset();
+     
+     // Remove all persisted cache artifacts from SD card.
+     if (sdCardAvailable && initializeSDCard())
+@@ -1327,26 +1222,7 @@ void invalidateAudioCache()
+ 
+ void audioMaintenanceLoop()
+ {
+-    // One-time post-boot validation: do a remote cache check after startup
+-    // instead of blocking initialization.
+-    if (pendingBootCacheValidation)
+-    {
+-        if (WiFi.status() == WL_CONNECTED)
+-        {
+-            pendingBootCacheValidation = false;
+-            if (isCacheStale())
+-            {
+-                Logger.println("🔄 Post-boot cache validation detected changes, refreshing catalog...");
+-                downloadAudio(1, 0);
+-            }
+-            else
+-            {
+-                Logger.println("✅ Post-boot cache validation confirmed catalog is current");
+-            }
+-        }
+-    }
+-
+-    // 1. Periodic catalog refresh: re-download if cache is stale
++    // 1. Periodic catalog refresh: enqueue catalog download if stale
+     //    isCacheStale() is lightweight — only does HTTP when enough time has passed
+     static unsigned long lastCatalogCheck = 0;
+     unsigned long now = millis();
+@@ -1355,13 +1231,19 @@ void audioMaintenanceLoop()
+         lastCatalogCheck = now;
+         if (WiFi.status() == WL_CONNECTED && isCacheStale())
+         {
+-            Logger.println("🔄 Cache stale — refreshing audio catalog...");
+-            downloadAudio(1, 0);  // Single attempt, no delay (non-blocking context)
++            Logger.println("🔄 Cache stale — enqueueing catalog refresh...");
++            downloadAudio();  // non-blocking: enqueues catalog download
+         }
+     }
+ 
+-    // 2. Process download queue (rate-limited internally)
+-    processAudioDownloadQueue();
++    // 2. Cooperative download queue: one chunk (~4 KB) per call.
++    //    When idle this is rate-limited internally; when streaming it returns
++    //    in ~2-4 ms so audio playback copy() isn't starved.
++    downloadQueue.tick();
++
++    // 3. Refill the download page when it drains (and no catalog is pending)
++    if (!catalogDownloadPending && downloadQueue.isEmpty() && !downloadQueue.isActive())
++        enqueueMissingAudioFilesFromRegistry();
+ }
+ 
+ // ============================================================================
+@@ -1370,121 +1252,16 @@ void audioMaintenanceLoop()
+ 
+ bool processAudioDownloadQueue()
+ {
+-    // Skip if SD card is not available - audio files need SD storage
+-    if (!initializeSDCard())
+-    {
+-        return false;
+-    }
+-    
+-    static unsigned long lastDownloadCheck = 0;
+-    
+-    // Rate limit: only process if enough time has passed
+-    if (millis() - lastDownloadCheck < DOWNLOAD_QUEUE_CHECK_INTERVAL_MS)
+-    {
+-        return false;
+-    }
+-    
+-    lastDownloadCheck = millis();
+-    return processDownloadQueueInternal();
++    if (!initializeSDCard()) return false;
++    return downloadQueue.tick();
+ }
+ 
+-int getDownloadQueueCount()
+-{
+-    return downloadQueueCount - downloadQueueIndex; // Remaining items
+-}
+-
+-int getTotalDownloadQueueSize()
+-{
+-    return downloadQueueCount;
+-}
+-
+-void listDownloadQueue()
+-{
+-    Logger.printf("📥 Audio Download Queue (%d items, %d processed):\n", 
+-                 downloadQueueCount, downloadQueueIndex);
+-    Logger.println("========================================================");
+-    
+-    if (downloadQueueCount == 0)
+-    {
+-        Logger.println("   No items in download queue.");
+-        return;
+-    }
+-    
+-    for (int i = 0; i < downloadQueueCount; i++)
+-    {
+-        AudioDownloadItem* item = &downloadQueue[i];
+-        const char* status = i < downloadQueueIndex ? "✅ Downloaded" : 
+-                           item->inProgress ? "🔄 In Progress" : "⏳ Pending";
+-        
+-        Logger.printf("%2d. %s %s\n", i + 1, status, item->description);
+-        Logger.printf("    URL: %s\n", item->url);
+-        Logger.printf("    Local: %s\n", item->localPath);
+-        Logger.println();
+-    }
+-}
+-
+-void clearDownloadQueue()
+-{
+-    Logger.println("🗑️ Clearing download queue...");
+-    downloadQueueCount = 0;
+-    downloadQueueIndex = 0;
+-    Logger.println("✅ Download queue cleared");
+-}
+-
+-bool isDownloadQueueEmpty()
+-{
+-    return (downloadQueueIndex >= downloadQueueCount);
+-}
++// int getDownloadQueueCount()    { return downloadQueue.pendingCount(); }
++// int getTotalDownloadQueueSize() { return downloadQueue.totalCount(); }
++// void listDownloadQueue()        { downloadQueue.listItems(); }
++// void clearDownloadQueue()       { downloadQueue.reset(); }
++// bool isDownloadQueueEmpty()     { return downloadQueue.isEmpty(); }
+ 
+ // ============================================================================
+ // REGISTRY INTEGRATION
+-// ============================================================================
+-
+-/**
+- * @brief Register a single audio file with the AudioKeyRegistry and create its playlist
+- * 
+- * This function is idempotent - calling it multiple times with the same AudioFile
+- * will produce the same result. Existing registrations are updated, playlists are
+- * recreated with the same content.
+- * 
+- * @param file Pointer to the AudioFile to register
+- * @return true if registration successful, false if skipped or failed
+- */
+-bool registerAudioFile(const AudioFile* file)
+-{
+-    if (!file || !file->audioKey || !file->type) {
+-        return false;
+-    }
+-    
+-    // Only register audio type entries
+-    if (strcmp(file->type, "audio") != 0) {
+-        Logger.printf("⏭️ Skipping non-audio entry: %s (%s)\n", file->audioKey, file->type);
+-        return false;
+-    }
+-
+-    if (!file->data || strlen(file->data) == 0) {
+-        Logger.printf("⚠️ No data for: %s\n", file->audioKey);
+-        return false;
+-    }
+-    // Register the audio key - overload handles stream type detection and URL fallback
+-    // registerKey is idempotent - it will update existing entries
+-    keyRegistry.registerKey(file->audioKey, file->data, file->ext);
+-    
+-    return true;
+-}
+-
+-unsigned long getAudioKeyRingDuration(const char* key)
+-{
+-    if (!key) return 0;
+-    
+-    const Playlist* playlist = playlistRegistry.getPlaylist(key);
+-    if (!playlist) return 0;
+-    
+-    // Look for a "ringback" node in the playlist and return its duration
+-    for (const auto& node : playlist->nodes) {
+-        if (node.audioKey == "ringback" && node.durationMs > 0) {
+-            return node.durationMs;
+-        }
+-    }
+-    return 0;
+-}
++// ============================================================================
+\ No newline at end of file
+diff --git a/src/audio_key_registry.cpp b/src/audio_key_registry.cpp
+index a9602b6..7c33564 100644
+--- a/src/audio_key_registry.cpp
++++ b/src/audio_key_registry.cpp
+@@ -8,13 +8,23 @@
+  */
+ 
+ #include "audio_key_registry.h"
++#include "tone_generators.h"
+ #include "file_utils.h"
+ #include "logging.h"
+ #include <cstring>
+ 
++// ============================================================================
++// STATIC MEMBER DEFINITION
++// ============================================================================
++AudioKeyRegistry AudioKeyRegistry::instance;
++
+ // ============================================================================
+ // KEY REGISTRATION
+ // ============================================================================
++AudioKeyRegistry &getAudioKeyRegistry()
++{
++    return AudioKeyRegistry::instance;
++}
+ 
+ void AudioKeyRegistry::registerKey(const char* audioKey, const char* path, AudioStreamType type, const char* alternatePath) {
+     if (!audioKey || !path) return;
+@@ -26,7 +36,7 @@ void AudioKeyRegistry::registerKey(const char* audioKey, const char* path, Audio
+         return;
+     }
+     
+-    KeyEntry entry(audioKey, path, type, alternatePath);
++    AudioEntry entry(audioKey, path, type, alternatePath);
+     registry[std::string(audioKey)] = entry;
+     
+     if (alternatePath && strlen(alternatePath) > 0) {
+@@ -47,8 +57,14 @@ void AudioKeyRegistry::registerKey(const char* audioKey, const char* primaryPath
+         const char *localPath = asLocalPath(primaryPath, ext);
+         if (localPath && strlen(localPath) == 0)
+           localPath = nullptr;
+-        // URL with local path: use local as primary, URL as streaming fallback
+-        registerKey(audioKey, localPath, AudioStreamType::FILE_STREAM, primaryPath);
++        if (!localPath) {
++            // No local path could be derived — register as URL-only so the
++            // entry exists in the registry (streaming fallback will be used).
++            registerKey(audioKey, primaryPath, AudioStreamType::URL_STREAM, nullptr);
++        } else {
++            // URL with local path: use local as primary, URL as streaming fallback
++            registerKey(audioKey, localPath, AudioStreamType::FILE_STREAM, primaryPath);
++        }
+     } else {
+         // Local path only
+         registerKey(audioKey, primaryPath, AudioStreamType::FILE_STREAM, nullptr);
+@@ -58,18 +74,60 @@ void AudioKeyRegistry::registerKey(const char* audioKey, const char* primaryPath
+     if (ext && strlen(ext) > 0) {
+         auto it = registry.find(std::string(audioKey));
+         if (it != registry.end()) {
+-            it->second.ext = ext;
++            it->second.file->ext = ext;
+         }
+     }
+ }
++void AudioKeyRegistry::registerGenerator(const char *audioKey, SoundGenerator<int16_t> *generator, unsigned long repeatMs) {
++    this->registerGenerator(audioKey, generator, repeatMs, repeatMs);
++}
+ 
+-void AudioKeyRegistry::registerGenerator(const char* audioKey, SoundGenerator<int16_t>* generator) {
++void AudioKeyRegistry::registerGenerator(const char *audioKey, SoundGenerator<int16_t> *generator, unsigned long toneMs, unsigned long silenceMs)
++{
+     if (!audioKey || !generator) return;
+-    
+-    KeyEntry entry(audioKey, generator);
+-    registry[std::string(audioKey)] = entry;
+-    
+-    Logger.printf("🎵 Registered generator: %s\n", audioKey);
++    if(toneMs > 0 && silenceMs > 0) {
++        generator = new RepeatingToneGenerator<int16_t>(
++            std::unique_ptr<SoundGenerator<int16_t>>(generator),
++            toneMs, silenceMs);
++    }
++    AudioEntry entry(audioKey, generator);
++    entry.audioKey = audioKey;
++    registerEntry(std::move(entry));
++}
++
++void AudioKeyRegistry::registerEntry(AudioEntry&& entry) {
++    if (entry.audioKey.empty()) return;
++
++    std::string key = entry.audioKey;
++
++    // If replacing an existing owned generator, remove it from ownedGenerators
++    // so we don't accumulate dead generators until clearKeys().
++    auto existing = registry.find(key);
++    if (existing != registry.end()
++        && existing->second.type == AudioStreamType::GENERATOR
++        && existing->second.generator) {
++        auto* old = existing->second.generator;
++        ownedGenerators.erase(
++            std::remove_if(ownedGenerators.begin(), ownedGenerators.end(),
++                [old](const std::unique_ptr<SoundGenerator<int16_t>>& p) { return p.get() == old; }),
++            ownedGenerators.end());
++    }
++
++    if (entry.type == AudioStreamType::GENERATOR && entry.generator) {
++        ownedGenerators.emplace_back(entry.generator);
++    } else if (entry.type != AudioStreamType::GENERATOR && entry.file) {
++        // URL detection: convert URL primary path to local path + streaming fallback
++        if (isUrl(entry.file->path.c_str())) {
++            const char* ext = entry.file->ext.empty() ? nullptr : entry.file->ext.c_str();
++            const char* localPath = asLocalPath(entry.file->path.c_str(), ext);
++            if (localPath && strlen(localPath) > 0) {
++                entry.file->alternatePath = entry.file->path;
++                entry.file->path = localPath;
++            }
++        }
++    }
++
++    registry[key] = std::move(entry);
+ }
+ 
+ void AudioKeyRegistry::unregisterKey(const char* audioKey) {
+@@ -80,9 +138,16 @@ void AudioKeyRegistry::unregisterKey(const char* audioKey) {
+ 
+ void AudioKeyRegistry::clearKeys() {
+     registry.clear();
++    ownedGenerators.clear();
+     Logger.println("🔑 Cleared all audioKeys");
+ }
+ 
++AudioEntry* AudioKeyRegistry::getEntryMutable(const char* audioKey) {
++    if (!audioKey) return nullptr;
++    auto it = registry.find(std::string(audioKey));
++    return (it != registry.end()) ? &it->second : nullptr;
++}
++
+ // ============================================================================
+ // KEY LOOKUP
+ // ============================================================================
+@@ -123,7 +188,7 @@ bool AudioKeyRegistry::hasKeyWithPrefix(const char* prefix) const {
+     return false;
+ }
+ 
+-const KeyEntry* AudioKeyRegistry::getEntry(const char* audioKey) const {
++const AudioEntry* AudioKeyRegistry::getEntry(const char* audioKey) const {
+     if (!audioKey) return nullptr;
+     
+     auto it = registry.find(std::string(audioKey));
+@@ -166,7 +231,7 @@ const char* AudioKeyRegistry::resolveKey(const char* audioKey) const {
+         if (it->second.isGenerator()) {
+             return nullptr;
+         }
+-        return it->second.path.c_str();
++        return it->second.file->path.c_str();
+     }
+     
+     // Try dynamic resolver as fallback
+@@ -216,10 +281,6 @@ void AudioKeyRegistry::listKeys() const {
+         const KeyEntry& entry = it->second;
+         Logger.printf("%2d. %s\n", index++, entry.audioKey.c_str());
+         
+-        if (entry.getDescription()) {
+-            Logger.printf("    Description: %s\n", entry.getDescription());
+-        }
+-        
+         const char* typeStr = "unknown";
+         switch (entry.type) {
+             case AudioStreamType::GENERATOR: typeStr = "generator"; break;
+@@ -229,8 +290,9 @@ void AudioKeyRegistry::listKeys() const {
+         }
+         Logger.printf("    Type: %s\n", typeStr);
+         
+-        if (entry.getPath()) {
+-            Logger.printf("    Path: %s\n", entry.getPath());
++        FileData* f = entry.getFile();
++        if (f && !f->path.empty()) {
++            Logger.printf("    Path: %s\n", f->path.c_str());
+         }
+         Logger.println();
+     }
+diff --git a/src/audio_playlist_registry.cpp b/src/audio_playlist_registry.cpp
+index 422e0a2..bd559b7 100644
+--- a/src/audio_playlist_registry.cpp
++++ b/src/audio_playlist_registry.cpp
+@@ -5,55 +5,29 @@
+  * @date 2025
+  */
+ 
++#include <config.h>
++#if ENABLE_PLAYLIST_FEATURES
++
+ #include "audio_playlist_registry.h"
+ #include "logging.h"
+ #include "tone_generators.h"
+ 
+-// ============================================================================
+-// GLOBAL TONE GENERATORS
+-// ============================================================================
+-
+-
+-// Dial tone: 350 Hz + 440 Hz (North American standard)
+-static DualToneGenerator dialtoneGenerator(350.0f, 440.0f, 16000.0f);
+-
+-// Ringback base tone: 440 Hz + 480 Hz (North American standard)
+-static DualToneGenerator ringbackTone(440.0f, 480.0f, 16000.0f);
+-
+-// Ringback with cadence: RINGBACK_TONE_MS on, RINGBACK_SILENCE_MS off
+-static RepeatingToneGenerator<int16_t> ringbackToneGenerator(ringbackTone, RINGBACK_TONE_MS, RINGBACK_SILENCE_MS);
+-
+ // ============================================================================
+ // GLOBAL INSTANCES
+ // ============================================================================
+ 
+-// Global key registry
+-static AudioKeyRegistry* globalKeyRegistry = nullptr;
+-
+-// Global playlist registry  
+-static AudioPlaylistRegistry* globalPlaylistRegistry = nullptr;
+-
+-
+-AudioKeyRegistry& getAudioKeyRegistry() {
+-    if (!globalKeyRegistry) {
+-        globalKeyRegistry = new AudioKeyRegistry();
+-        globalKeyRegistry->registerGenerator("dialtone", &dialtoneGenerator);
+-        globalKeyRegistry->registerGenerator("ringback", &ringbackToneGenerator);
+-        Logger.println("✅ Global AudioKeyRegistry initialized with tone generators");
+-    }
+-    return *globalKeyRegistry;
+-}
+ 
+ AudioPlaylistRegistry& getAudioPlaylistRegistry() {
+-    if (!globalPlaylistRegistry) {
+-        globalPlaylistRegistry = new AudioPlaylistRegistry();
+-        globalPlaylistRegistry->setKeyRegistry(&getAudioKeyRegistry());
+-        
+-        Logger.println("✅ Global AudioPlaylistRegistry initialized");
++    static AudioPlaylistRegistry instance;
++    static bool linked = false;
++    if (!linked) {
++        instance.setKeyRegistry(&getAudioKeyRegistry());
++        linked = true;
+     }
+-    return *globalPlaylistRegistry;
++    return instance;
+ }
+ 
++
+ // ============================================================================
+ // PLAYLIST MANAGEMENT
+ // ============================================================================
+@@ -139,7 +113,7 @@ bool AudioPlaylistRegistry::appendToPlaylist(const char* playlistName, const cha
+     
+     // Validate entry exists in registry if we have one
+     if (keyRegistry) {
+-        const KeyEntry* entry = keyRegistry->getEntry(audioKey);
++        const AudioEntry* entry = keyRegistry->getEntry(audioKey);
+         if (!entry) {
+             Logger.printf("⚠️ Warning: audioKey '%s' not found in registry (appending anyway)\n", audioKey);
+         }
+@@ -151,7 +125,7 @@ bool AudioPlaylistRegistry::appendToPlaylist(const char* playlistName, const cha
+     return true;
+ }
+ 
+-bool AudioPlaylistRegistry::appendToPlaylist(const char* playlistName, const KeyEntry* entry, unsigned long durationMs) {
++bool AudioPlaylistRegistry::appendToPlaylist(const char* playlistName, const AudioEntry* entry, unsigned long durationMs) {
+     if (!playlistName || !entry) return false;
+     
+     // Delegate to string-based version
+@@ -209,7 +183,7 @@ size_t AudioPlaylistRegistry::resolvePlaylist(const char* playlistName) {
+     // Validate that each audioKey exists in the registry
+     size_t valid = 0;
+     for (const auto& node : playlist->nodes) {
+-        const KeyEntry* entry = keyRegistry->getEntry(node.audioKey.c_str());
++        const AudioEntry* entry = keyRegistry->getEntry(node.audioKey.c_str());
+         if (entry) {
+             valid++;
+         } else {
+@@ -243,7 +217,7 @@ bool Playlist::appendEntry(const char* audioKey, unsigned long durationMs) {
+     
+     // Validate entry exists in registry if we have one
+     if (keyRegistry) {
+-        const KeyEntry* entry = keyRegistry->getEntry(audioKey);
++        const AudioEntry* entry = keyRegistry->getEntry(audioKey);
+         if (!entry) {
+             Logger.printf("⚠️ Warning: audioKey '%s' not found in registry (appending anyway)\n", audioKey);
+         }
+@@ -258,7 +232,7 @@ bool Playlist::prependEntry(const char* audioKey, unsigned long durationMs) {
+     
+     // Validate entry exists in registry if we have one
+     if (keyRegistry) {
+-        const KeyEntry* entry = keyRegistry->getEntry(audioKey);
++        const AudioEntry* entry = keyRegistry->getEntry(audioKey);
+         if (!entry) {
+             Logger.printf("⚠️ Warning: audioKey '%s' not found in registry (prepending anyway)\n", audioKey);
+         }
+@@ -273,7 +247,7 @@ bool Playlist::replaceEntry(size_t index, const char* audioKey, unsigned long du
+     
+     // Validate entry exists in registry if we have one
+     if (keyRegistry) {
+-        const KeyEntry* entry = keyRegistry->getEntry(audioKey);
++        const AudioEntry* entry = keyRegistry->getEntry(audioKey);
+         if (!entry) {
+             Logger.printf("⚠️ Warning: audioKey '%s' not found in registry (replacing anyway)\n", audioKey);
+         }
+@@ -282,3 +256,5 @@ bool Playlist::replaceEntry(size_t index, const char* audioKey, unsigned long du
+     nodes[index] = PlaylistNode(audioKey, durationMs);
+     return true;
+ }
++
++#endif // ENABLE_PLAYLIST_FEATURES
+diff --git a/src/download_queue.cpp b/src/download_queue.cpp
+index f8525b0..7cbe94c 100644
+--- a/src/download_queue.cpp
++++ b/src/download_queue.cpp
+@@ -1,6 +1,10 @@
+ /**
+  * @file download_queue.cpp
+- * @brief Non-blocking audio file download queue implementation
++ * @brief Cooperative chunked download queue — state machine implementation
++ *
++ * All work runs on core 1 via tick().  Each tick() call does at most one
++ * ~4 KB chunk of I/O so the main loop can service audio playback between
++ * chunks.  See download_queue.h for the full design.
+  */
+ 
+ #include "download_queue.h"
+@@ -31,7 +35,6 @@ extern AudioKeyRegistry& getAudioKeyRegistry();
+ 
+ // ============================================================================
+ // MIME → extension table (shared with audio_file_manager.cpp via extern)
+-// Declare the lookup so this TU can use it without duplicating the table.
+ // ============================================================================
+ struct MimeExtMapping { const char* mime; const char* ext; };
+ extern const MimeExtMapping kMimeExtTable[];
+@@ -48,12 +51,12 @@ static const char* mimeToExt(const char* contentType) {
+ }
+ 
+ // ============================================================================
+-// Magic-byte format detection (same heuristic as audio_file_manager.cpp)
++// Magic-byte format detection
+ // ============================================================================
+ static const char* detectExtFromBytes(const uint8_t* hdr, size_t len) {
+     if (len < 12) return nullptr;
+-    if (memcmp(hdr + 4, "ftyp", 4) == 0)                                     return "m4a";
+-    if (memcmp(hdr, "RIFF", 4) == 0 && memcmp(hdr + 8, "WAVE", 4) == 0)      return "wav";
++    if (memcmp(hdr + 4, "ftyp", 4) == 0)                                      return "m4a";
++    if (memcmp(hdr, "RIFF", 4) == 0 && memcmp(hdr + 8, "WAVE", 4) == 0)       return "wav";
+     if (memcmp(hdr, "ID3",  3) == 0 || (hdr[0] == 0xFF && (hdr[1] & 0xE0) == 0xE0)) return "mp3";
+     if (memcmp(hdr, "OggS", 4) == 0)                                           return "ogg";
+     if (memcmp(hdr, "fLaC", 4) == 0)                                           return "flac";
+@@ -61,26 +64,25 @@ static const char* detectExtFromBytes(const uint8_t* hdr, size_t len) {
+ }
+ 
+ // ============================================================================
+-// DownloadQueue — construction / destruction
++// Construction / destruction
+ // ============================================================================
+ 
+ DownloadQueue::DownloadQueue() {
+-    _mutex = xSemaphoreCreateMutex();
+     memset(_items, 0, sizeof(_items));
++    memset(_headerBuf, 0, sizeof(_headerBuf));
+ }
+ 
+ DownloadQueue::~DownloadQueue() {
+-    stop();
+-    if (_mutex) vSemaphoreDelete(_mutex);
++    _cleanupActive();
+ }
+ 
+ // ============================================================================
+ // Configuration
+ // ============================================================================
+ 
+-void DownloadQueue::setCompletionCallback(CompletionCallback cb, void* userData) {
+-    _cb         = cb;
+-    _cbUserData = userData;
++void DownloadQueue::setFileCallback(FileCallback cb, void* userData) {
++    _fileCb         = cb;
++    _fileCbUserData = userData;
+ }
+ 
+ void DownloadQueue::setRegistryMutex(SemaphoreHandle_t mutex) {
+@@ -91,63 +93,86 @@ void DownloadQueue::setRegistryMutex(SemaphoreHandle_t mutex) {
+ // Queue operations
+ // ============================================================================
+ 
+-DownloadQueue::EnqueueResult DownloadQueue::enqueue(
++DownloadQueue::EnqueueResult DownloadQueue::enqueueFile(
+         const char* audioKey, const char* url,
+         const char* localPath, const char* ext)
+ {
+     if (!url || !url[0] || !localPath || !localPath[0])
+-        return EnqueueResult::BAD_PATH;
+-
+-    if (!_lock()) return EnqueueResult::QUEUE_FULL; // mutex timeout
++        return EnqueueResult::BAD_INPUT;
+ 
+     // Duplicate check
+     for (int i = 0; i < _count; i++) {
+         if (_items[i].state != ItemState::EMPTY &&
+             strcmp(_items[i].url, url) == 0) {
+-            _unlock();
+-            Logger.printf("ℹ️ [DL] Already queued: %s\n", audioKey ? audioKey : url);
+             return EnqueueResult::ALREADY_QUEUED;
+         }
+     }
+ 
+-    if (_count >= MAX_DOWNLOAD_QUEUE) {
+-        _unlock();
+-        Logger.println("⚠️ [DL] Queue full");
++    if (_count >= MAX_DOWNLOAD_QUEUE)
+         return EnqueueResult::QUEUE_FULL;
+-    }
+ 
+     Item& it = _items[_count];
++    memset(&it, 0, sizeof(it));
+     strncpy(it.audioKey,  audioKey  ? audioKey  : "", sizeof(it.audioKey)  - 1);
+-    strncpy(it.url,       url,                          sizeof(it.url)       - 1);
+-    strncpy(it.localPath, localPath,                    sizeof(it.localPath) - 1);
++    strncpy(it.url,       url,                         sizeof(it.url)       - 1);
++    strncpy(it.localPath, localPath,                   sizeof(it.localPath) - 1);
+     strncpy(it.ext,       ext       ? ext       : "", sizeof(it.ext)       - 1);
+-    it.audioKey[sizeof(it.audioKey)   - 1] = '\0';
+-    it.url[sizeof(it.url)             - 1] = '\0';
+-    it.localPath[sizeof(it.localPath) - 1] = '\0';
+-    it.ext[sizeof(it.ext)             - 1] = '\0';
++    it.type  = ItemType::FILE_DL;
+     it.state = ItemState::PENDING;
++    it.catalogCb       = nullptr;
++    it.catalogUserData = nullptr;
+     _count++;
+ 
+-    Logger.printf("📥 [DL] Queued: %s → %s\n", it.audioKey, it.localPath);
+-    _unlock();
++    Logger.printf("📥 [DL] Queued file: %s → %s\n", it.audioKey, it.localPath);
++    return EnqueueResult::OK;
++}
++
++DownloadQueue::EnqueueResult DownloadQueue::enqueueCatalog(
++        const char* url, CatalogCallback cb, void* userData)
++{
++    if (!url || !url[0] || !cb)
++        return EnqueueResult::BAD_INPUT;
++
++    // Duplicate check
++    for (int i = 0; i < _count; i++) {
++        if (_items[i].state != ItemState::EMPTY &&
++            _items[i].type == ItemType::CATALOG_DL &&
++            strcmp(_items[i].url, url) == 0) {
++            return EnqueueResult::ALREADY_QUEUED;
++        }
++    }
++
++    if (_count >= MAX_DOWNLOAD_QUEUE)
++        return EnqueueResult::QUEUE_FULL;
++
++    Item& it = _items[_count];
++    memset(&it, 0, sizeof(it));
++    strncpy(it.url, url, sizeof(it.url) - 1);
++    snprintf(it.audioKey, sizeof(it.audioKey), "(catalog)");
++    it.type            = ItemType::CATALOG_DL;
++    it.state           = ItemState::PENDING;
++    it.catalogCb       = cb;
++    it.catalogUserData = userData;
++    _count++;
++
++    Logger.printf("📥 [DL] Queued catalog: %s\n", url);
+     return EnqueueResult::OK;
+ }
+ 
+ void DownloadQueue::clear() {
+-    if (!_lock()) return;
+     for (int i = _nextIndex; i < _count; i++) {
+         if (_items[i].state == ItemState::PENDING)
+             _items[i].state = ItemState::EMPTY;
+     }
+-    _unlock();
+ }
+ 
+ void DownloadQueue::reset() {
+-    if (!_lock()) return;
++    _cleanupActive();
+     memset(_items, 0, sizeof(_items));
+     _count     = 0;
+     _nextIndex = 0;
+-    _unlock();
++    _consecutiveFailures = 0;
++    _backoffUntil        = 0;
+ }
+ 
+ // ============================================================================
+@@ -155,253 +180,316 @@ void DownloadQueue::reset() {
+ // ============================================================================
+ 
+ int DownloadQueue::pendingCount() const {
+-    if (!_lock()) return 0;
+     int n = 0;
+     for (int i = _nextIndex; i < _count; i++)
+         if (_items[i].state == ItemState::PENDING) n++;
+-    _unlock();
+     return n;
+ }
+ 
+ int DownloadQueue::totalCount() const {
+-    if (!_lock()) return 0;
+-    int n = _count;
+-    _unlock();
+-    return n;
++    return _count;
+ }
+ 
+ bool DownloadQueue::isEmpty() const {
+-    return pendingCount() == 0;
++    return pendingCount() == 0 && _activeIdx < 0;
+ }
+ 
+ void DownloadQueue::listItems() const {
+-    if (!_lock()) return;
+-    Logger.printf("📥 DownloadQueue (%d items, next=%d):\n", _count, _nextIndex);
++    Logger.printf("📥 DownloadQueue (%d items, next=%d, active=%d):\n",
++                  _count, _nextIndex, _activeIdx);
+     for (int i = 0; i < _count; i++) {
+         const Item& it = _items[i];
+         const char* st =
+             it.state == ItemState::PENDING     ? "⏳ pending"     :
+-            it.state == ItemState::IN_PROGRESS ? "🔄 in-progress" :
++            it.state == ItemState::IN_PROGRESS ? "🔄 streaming"   :
+             it.state == ItemState::DONE        ? "✅ done"        :
+             it.state == ItemState::FAILED      ? "❌ failed"      : "   empty";
+-        Logger.printf("  [%d] %s  %s → %s\n", i, st, it.audioKey, it.localPath);
++        const char* tp = it.type == ItemType::CATALOG_DL ? "CAT" : "FILE";
++        Logger.printf("  [%d] %s %s  %s → %s\n", i, tp, st, it.audioKey,
++                      it.type == ItemType::FILE_DL ? it.localPath : "(string)");
+     }
+-    _unlock();
+ }
+ 
+ // ============================================================================
+-// Polled tick
++// Cooperative tick — the heart of the state machine
+ // ============================================================================
+ 
+ bool DownloadQueue::tick() {
+-    static unsigned long lastTick = 0;
++    // Active download in progress → stream one chunk
++    if (_activeIdx >= 0) {
++        return _streamChunk();
++    }
++
++    // No active download — rate-limit idle checks
+     unsigned long now = millis();
+-    if (now - lastTick < DOWNLOAD_QUEUE_CHECK_INTERVAL_MS) return false;
+-    lastTick = now;
+-    return _processNext();
++    if (now - _lastIdleTick < DOWNLOAD_QUEUE_IDLE_INTERVAL_MS)
++        return false;
++    _lastIdleTick = now;
++
++    // Backoff after failures
++    if (_consecutiveFailures > 0 && now < _backoffUntil)
++        return false;
++
++    // Try to start the next pending item
++    return _startNext();
+ }
+ 
+ // ============================================================================
+-// Async task
++// _findNextPending — catalog items have priority over file items
+ // ============================================================================
+ 
+-void DownloadQueue::start(UBaseType_t priority, BaseType_t core) {
+-    if (_taskHandle) {
+-        Logger.println("⚠️ [DL] Task already running");
+-        return;
+-    }
+-    _taskShouldRun = true;
+-    xTaskCreatePinnedToCore(
+-        _taskEntry, "AudioDL", 12288, this,
+-        priority, &_taskHandle, core
+-    );
+-    Logger.printf("📥 [DL] Task started (core %d, pri %d)\n", (int)core, (int)priority);
+-}
+-
+-void DownloadQueue::stop() {
+-    if (!_taskHandle) return;
+-    _taskShouldRun = false;
+-    for (int i = 0; i < 200 && _taskHandle; i++)
+-        vTaskDelay(pdMS_TO_TICKS(10));
+-    if (_taskHandle) {
+-        vTaskDelete(_taskHandle);
+-        _taskHandle = nullptr;
++DownloadQueue::Item* DownloadQueue::_findNextPending() {
++    // First pass: find first CATALOG PENDING
++    for (int i = _nextIndex; i < _count; i++) {
++        if (_items[i].state == ItemState::PENDING &&
++            _items[i].type == ItemType::CATALOG_DL)
++            return &_items[i];
+     }
+-}
+-
+-bool DownloadQueue::isRunning() const {
+-    return _taskHandle != nullptr && _taskShouldRun;
+-}
+-
+-void DownloadQueue::_taskEntry(void* param) {
+-    DownloadQueue* q = static_cast<DownloadQueue*>(param);
+-    Logger.println("📥 [DL] Task loop started");
+-    while (q->_taskShouldRun) {
+-        if (!q->_processNext()) {
+-            // Nothing to do — sleep longer to yield to Goertzel task
+-            vTaskDelay(pdMS_TO_TICKS(DOWNLOAD_QUEUE_CHECK_INTERVAL_MS));
+-        } else {
+-            vTaskDelay(pdMS_TO_TICKS(10)); // brief yield after a download
+-        }
++    // Second pass: first FILE PENDING
++    for (int i = _nextIndex; i < _count; i++) {
++        if (_items[i].state == ItemState::PENDING &&
++            _items[i].type == ItemType::FILE_DL)
++            return &_items[i];
+     }
+-    Logger.println("📥 [DL] Task stopped");
+-    q->_taskHandle = nullptr;
+-    vTaskDelete(nullptr);
++    return nullptr;
+ }
+ 
+ // ============================================================================
+-// Core download logic
++// _startNext — open HTTP connection + prepare SD file / String accumulator
+ // ============================================================================
+ 
+-bool DownloadQueue::_processNext() {
+-    static int  consecutiveFailures = 0;
+-    static unsigned long backoffUntil = 0;
+-
+-    if (consecutiveFailures > 0 && millis() < backoffUntil)
+-        return false;
++bool DownloadQueue::_startNext() {
++    Item* item = _findNextPending();
++    if (!item) return false;
+ 
+-    // --- pick next pending item under lock ---
+-    if (!_lock()) return false;
+-    Item* item = nullptr;
+-    for (int i = _nextIndex; i < _count; i++) {
+-        if (_items[i].state == ItemState::PENDING) {
+-            item = &_items[i];
+-            item->state = ItemState::IN_PROGRESS;
+-            _nextIndex = i + 1;
+-            break;
+-        }
+-    }
+-    _unlock();
++    int idx = (int)(item - _items);
+ 
+-    if (!item) return false; // nothing pending
++    Logger.printf("📥 [DL] Starting %s: %s\n",
++                  item->type == ItemType::CATALOG_DL ? "catalog" : item->audioKey,
++                  item->url);
+ 
+-    Logger.printf("📥 [DL] %s\n     %s\n  → %s\n",
+-                  item->audioKey, item->url, item->localPath);
++    // Allocate HTTP client (on heap so it persists across tick calls)
++    _http = new HttpClient(
++        item->type == ItemType::CATALOG_DL ? HTTP_TIMEOUT_CATALOG_MS
++                                           : HTTP_TIMEOUT_DOWNLOAD_MS);
+ 
+-    // --- HTTP download ---
+-    HttpClient http(HTTP_TIMEOUT_DOWNLOAD_MS);
+-    http.useOwnSecure(); // must not touch shared singleton from a background task
+     const char* wantHeaders[] = {"Content-Type"};
+-    http.collectHeaders(wantHeaders, 1);
++    _http->collectHeaders(wantHeaders, 1);
+ 
+-    if (!http.get(item->url)) {
+-        Logger.printf("❌ [DL] HTTP %d for %s\n", http.statusCode(), item->audioKey);
+-        if (!_lock()) return false;
++    if (!_http->get(item->url)) {
++        Logger.printf("❌ [DL] HTTP %d for %s\n", _http->statusCode(), item->audioKey);
++        delete _http; _http = nullptr;
+         item->state = ItemState::FAILED;
+-        _unlock();
+-
+-        consecutiveFailures++;
+-        unsigned long backoff = min(300000UL, 10000UL << min(consecutiveFailures - 1, 5));
+-        backoffUntil = millis() + backoff;
++        _consecutiveFailures++;
++        unsigned long backoff = min(300000UL, 10000UL << min(_consecutiveFailures - 1, 5));
++        _backoffUntil = millis() + backoff;
+         Logger.printf("⏳ [DL] Backoff %lus after %d failure(s)\n",
+-                      backoff / 1000, consecutiveFailures);
+-        if (_cb) _cb(item->audioKey, item->localPath, item->ext, -1, _cbUserData);
++                      backoff / 1000, _consecutiveFailures);
++
++        if (item->type == ItemType::FILE_DL && _fileCb)
++            _fileCb(item->audioKey, item->localPath, item->ext, -1, _fileCbUserData);
++        if (item->type == ItemType::CATALOG_DL && item->catalogCb)
++            item->catalogCb(false, String(), item->catalogUserData);
+         return false;
+     }
+ 
+-    // --- Content-Type → corrected extension ---
+-    String ct = http.header("Content-Type");
+-    const char* detectedExt = mimeToExt(ct.c_str());
+-    if (detectedExt && item->ext[0] && strcmp(detectedExt, item->ext) != 0) {
+-        Logger.printf("🔍 [DL] Content-Type '%s' → '%s' (was '%s')\n",
+-                      ct.c_str(), detectedExt, item->ext);
+-    }
+-    if (detectedExt) {
+-        // Recompute localPath with corrected extension
+-        char corrected[128];
+-        if (getLocalPathForUrl(item->url, corrected, detectedExt)) {
+-            if (!_lock()) { http.end(); return false; }
+-            strncpy(item->localPath, corrected, sizeof(item->localPath) - 1);
+-            item->localPath[sizeof(item->localPath) - 1] = '\0';
+-            strncpy(item->ext, detectedExt, sizeof(item->ext) - 1);
+-            item->ext[sizeof(item->ext) - 1] = '\0';
+-            _unlock();
++    // Connection established — mark IN_PROGRESS
++    item->state = ItemState::IN_PROGRESS;
++    _activeIdx  = idx;
++    _totalBytes = 0;
++    _headerLen  = 0;
++
++    _http->beginChunkedRead();
++
++    if (item->type == ItemType::FILE_DL) {
++        // --- Content-Type → corrected extension ---
++        String ct = _http->header("Content-Type");
++        const char* detectedExt = mimeToExt(ct.c_str());
++        if (detectedExt && item->ext[0] && strcmp(detectedExt, item->ext) != 0) {
++            Logger.printf("🔍 [DL] Content-Type '%s' → '%s' (was '%s')\n",
++                          ct.c_str(), detectedExt, item->ext);
++        }
++        if (detectedExt) {
++            char corrected[128];
++            if (getLocalPathForUrl(item->url, corrected, detectedExt)) {
++                strncpy(item->localPath, corrected, sizeof(item->localPath) - 1);
++                item->localPath[sizeof(item->localPath) - 1] = '\0';
++                strncpy(item->ext, detectedExt, sizeof(item->ext) - 1);
++                item->ext[sizeof(item->ext) - 1] = '\0';
++            }
+         }
+-    }
+ 
+-    // --- Remove stale files with wrong extension for the same base name ---
+-    char base[64]; urlToBaseFilename(item->url, base, nullptr);
+-    if (char* dot = strrchr(base, '.')) *dot = '\0';
+-    const char* allExts[] = {".mp3", ".wav", ".ogg", ".flac", ".aac", ".m4a"};
+-    for (int i = 0; i < 6; i++) {
+-        char old[128];
+-        snprintf(old, sizeof(old), "%s/%s%s", AUDIO_FILES_DIR, base, allExts[i]);
+-        if (strcmp(old, item->localPath) != 0 && DQ_SD_EXISTS(old)) {
+-            Logger.printf("🗑️ [DL] Remove stale: %s\n", old);
+-            DQ_SD_REMOVE(old);
++        // --- Remove stale files with wrong extension ---
++        char base[64]; urlToBaseFilename(item->url, base, nullptr);
++        if (char* dot = strrchr(base, '.')) *dot = '\0';
++        const char* allExts[] = {".mp3", ".wav", ".ogg", ".flac", ".aac", ".m4a"};
++        for (int i = 0; i < 6; i++) {
++            char old[128];
++            snprintf(old, sizeof(old), "%s/%s%s", AUDIO_FILES_DIR, base, allExts[i]);
++            if (strcmp(old, item->localPath) != 0 && DQ_SD_EXISTS(old)) {
++                Logger.printf("🗑️ [DL] Remove stale: %s\n", old);
++                DQ_SD_REMOVE(old);
++            }
+         }
+-    }
+ 
+-    // --- Write to SD ---
+-    File f = DQ_SD_OPEN(item->localPath, FILE_WRITE);
+-    if (!f) {
+-        Logger.printf("❌ [DL] Cannot create file: %s\n", item->localPath);
+-        http.end();
+-        if (!_lock()) return false;
+-        item->state = ItemState::FAILED;
+-        _unlock();
+-        if (_cb) _cb(item->audioKey, item->localPath, item->ext, -1, _cbUserData);
+-        return false;
++        // --- Open SD file for writing ---
++        _sdFile = DQ_SD_OPEN(item->localPath, FILE_WRITE);
++        if (!_sdFile) {
++            Logger.printf("❌ [DL] Cannot create file: %s\n", item->localPath);
++            _failCurrent();
++            return false;
++        }
++    } else {
++        // CATALOG: prepare String accumulator
++        _bodyAccum = String();
++        _bodyAccum.reserve(_http->getSize() > 0 ? _http->getSize() : 4096);
+     }
+ 
+-    int totalBytes = http.streamBody([&](const uint8_t* buf, size_t len) {
+-        f.write(buf, len);
++    return true;
++}
++
++// ============================================================================
++// _streamChunk — read one chunk (~4 KB) from HTTP → SD file or String
++// ============================================================================
++
++bool DownloadQueue::_streamChunk() {
++    if (_activeIdx < 0 || !_http) return false;
++    Item& item = _items[_activeIdx];
++
++    uint8_t buf[DOWNLOAD_CHUNK_SIZE];
++    int n = _http->readChunk(buf, sizeof(buf));
++
++    if (n > 0) {
++        // Capture first 12 bytes for magic-byte detection (FILE_DL only)
++        if (item.type == ItemType::FILE_DL && _headerLen < (int)sizeof(_headerBuf)) {
++            int tocopy = min(n, (int)sizeof(_headerBuf) - _headerLen);
++            memcpy(_headerBuf + _headerLen, buf, tocopy);
++            _headerLen += tocopy;
++        }
++
++        if (item.type == ItemType::FILE_DL) {
++            _sdFile.write(buf, n);
++        } else {
++            _bodyAccum.concat((const char*)buf, n);
++        }
++        _totalBytes += n;
+         return true;
+-    });
+-    f.close();
++    }
+ 
+-    if (totalBytes <= 0) {
+-        Logger.printf("❌ [DL] Zero bytes written for %s\n", item->audioKey);
+-        if (!_lock()) return false;
+-        item->state = ItemState::FAILED;
+-        _unlock();
+-        consecutiveFailures++;
+-        unsigned long backoff = min(300000UL, 10000UL << min(consecutiveFailures - 1, 5));
+-        backoffUntil = millis() + backoff;
+-        if (_cb) _cb(item->audioKey, item->localPath, item->ext, -1, _cbUserData);
+-        return false;
++    if (n < 0 || _http->bodyDone()) {
++        // Body complete (or error)
++        bool ok = (_totalBytes > 0);
++        if (!ok) {
++            Logger.printf("❌ [DL] Zero bytes for %s\n", item.audioKey);
++            _failCurrent();
++        } else {
++            _finishCurrent(true);
++        }
++        return true;
+     }
+ 
+-    Logger.printf("✅ [DL] %d bytes → %s\n", totalBytes, item->localPath);
+-
+-    // --- Magic-byte validation: Google Drive may lie about Content-Type ---
+-    File verify = DQ_SD_OPEN(item->localPath, FILE_READ);
+-    if (verify && verify.size() >= 12) {
+-        uint8_t hdr[12];
+-        verify.read(hdr, 12);
+-        verify.close();
+-
+-        const char* actualExt = detectExtFromBytes(hdr, 12);
+-        if (actualExt && item->ext[0] && strcmp(actualExt, item->ext) != 0) {
+-            Logger.printf("⚠️ [DL] '%s' content is %s not %s — renaming\n",
+-                          item->audioKey, actualExt, item->ext);
+-            char newPath[128];
+-            if (getLocalPathForUrl(item->url, newPath, actualExt)) {
+-                DQ_SD_RENAME(item->localPath, newPath);
+-                if (!_lock()) return false;
+-                strncpy(item->localPath, newPath, sizeof(item->localPath) - 1);
+-                item->localPath[sizeof(item->localPath) - 1] = '\0';
+-                strncpy(item->ext, actualExt, sizeof(item->ext) - 1);
+-                item->ext[sizeof(item->ext) - 1] = '\0';
+-                _unlock();
++    // n == 0 and body not done: nothing available yet, try next tick
++    return false;
++}
++
++// ============================================================================
++// _finishCurrent — close file, magic-byte verify, re-register key, callback
++// ============================================================================
++
++void DownloadQueue::_finishCurrent(bool ok) {
++    if (_activeIdx < 0) return;
++    Item& item = _items[_activeIdx];
++
++    if (item.type == ItemType::FILE_DL) {
++        _sdFile.close();
++
++        if (ok) {
++            Logger.printf("✅ [DL] %d bytes → %s\n", _totalBytes, item.localPath);
++
++            // Magic-byte validation: Google Drive may lie about Content-Type
++            if (_headerLen >= 12) {
++                const char* actualExt = detectExtFromBytes(_headerBuf, _headerLen);
++                if (actualExt && item.ext[0] && strcmp(actualExt, item.ext) != 0) {
++                    Logger.printf("⚠️ [DL] '%s' content is %s not %s — renaming\n",
++                                  item.audioKey, actualExt, item.ext);
++                    char newPath[128];
++                    if (getLocalPathForUrl(item.url, newPath, actualExt)) {
++                        DQ_SD_RENAME(item.localPath, newPath);
++                        strncpy(item.localPath, newPath, sizeof(item.localPath) - 1);
++                        item.localPath[sizeof(item.localPath) - 1] = '\0';
++                        strncpy(item.ext, actualExt, sizeof(item.ext) - 1);
++                        item.ext[sizeof(item.ext) - 1] = '\0';
++                    }
++                }
+             }
++
++            // Re-register key with correct extension
++            AudioKeyRegistry& reg = getAudioKeyRegistry();
++            if (_regMutex) xSemaphoreTake(_regMutex, portMAX_DELAY);
++            reg.registerKey(item.audioKey, item.url, item.ext[0] ? item.ext : nullptr);
++            if (_regMutex) xSemaphoreGive(_regMutex);
+         }
+-    } else if (verify) {
+-        verify.close();
++
++        item.state = ok ? ItemState::DONE : ItemState::FAILED;
++        if (_fileCb)
++            _fileCb(item.audioKey, item.localPath, item.ext,
++                    ok ? _totalBytes : -1, _fileCbUserData);
++    } else {
++        // CATALOG_DL
++        Logger.printf("✅ [DL] Catalog received (%d bytes)\n", _totalBytes);
++        item.state = ok ? ItemState::DONE : ItemState::FAILED;
++        if (item.catalogCb)
++            item.catalogCb(ok, _bodyAccum, item.catalogUserData);
++        _bodyAccum = String(); // release memory
++    }
++
++    _consecutiveFailures = 0;
++    _cleanupActive();
++}
++
++// ============================================================================
++// _failCurrent — mark failed, apply backoff, fire callback
++// ============================================================================
++
++void DownloadQueue::_failCurrent() {
++    if (_activeIdx < 0) return;
++    Item& item = _items[_activeIdx];
++
++    if (item.type == ItemType::FILE_DL) {
++        _sdFile.close();
++        // Clean up partial file
++        if (item.localPath[0] && DQ_SD_EXISTS(item.localPath))
++            DQ_SD_REMOVE(item.localPath);
+     }
+ 
+-    consecutiveFailures = 0;
++    item.state = ItemState::FAILED;
++    _consecutiveFailures++;
++    unsigned long backoff = min(300000UL, 10000UL << min(_consecutiveFailures - 1, 5));
++    _backoffUntil = millis() + backoff;
++    Logger.printf("⏳ [DL] Backoff %lus after %d failure(s)\n",
++                  backoff / 1000, _consecutiveFailures);
+ 
+-    // --- Re-register key with correct extension (caller-supplied mutex) ---
+-    AudioKeyRegistry& reg = getAudioKeyRegistry();
+-    if (_regMutex) xSemaphoreTake(_regMutex, portMAX_DELAY);
+-    reg.registerKey(item->audioKey, item->url, item->ext[0] ? item->ext : nullptr);
+-    if (_regMutex) xSemaphoreGive(_regMutex);
++    if (item.type == ItemType::FILE_DL && _fileCb)
++        _fileCb(item.audioKey, item.localPath, item.ext, -1, _fileCbUserData);
++    if (item.type == ItemType::CATALOG_DL && item.catalogCb)
++        item.catalogCb(false, String(), item.catalogUserData);
+ 
+-    if (!_lock()) return false;
+-    item->state = ItemState::DONE;
+-    _unlock();
++    _bodyAccum = String();
++    _cleanupActive();
++}
+ 
+-    if (_cb) _cb(item->audioKey, item->localPath, item->ext, totalBytes, _cbUserData);
+-    return true;
++// ============================================================================
++// _cleanupActive — release HTTP client + file handle, reset active index
++// ============================================================================
++
++void DownloadQueue::_cleanupActive() {
++    if (_http) {
++        _http->end();
++        delete _http;
++        _http = nullptr;
++    }
++    if (_sdFile) _sdFile.close();
++    _activeIdx  = -1;
++    _totalBytes = 0;
++    _headerLen  = 0;
+ }

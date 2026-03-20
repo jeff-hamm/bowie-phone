@@ -17,6 +17,7 @@
 // ============================================================================
 #include <Arduino.h>
 #include "config.h"
+#include "audio_key_registry.h"
 
 // Forward declarations
 namespace audio_tools {
@@ -52,31 +53,9 @@ using namespace audio_tools;
 #ifndef AUDIO_FILES_DIR
 #define AUDIO_FILES_DIR "/audio"    ///< Directory for cached audio files
 #endif
-#ifndef MAX_DOWNLOAD_QUEUE
-#define MAX_DOWNLOAD_QUEUE 4        ///< Active download page size (auto-refills from registry)
-#endif
 #ifndef MAX_FILENAME_LENGTH
 #define MAX_FILENAME_LENGTH 64      ///< Maximum length for generated filenames
 #endif
-
-// ============================================================================
-// STRUCTURES
-// ============================================================================
-
-/**
- * @brief Structure representing an audio file entry
- */
-struct AudioFile
-{
-    const char *audioKey;    ///< Audio key (e.g., "dialtone", "busy", or DTMF sequence like "123")
-    const char *description; ///< Human-readable description
-    const char *type;        ///< Entry type (e.g., "audio", "service", "shortcut", "url")
-    const char *data;        ///< File path or URL
-    const char *ext;         ///< File extension (e.g., "wav", "mp3") - from server metadata
-    unsigned long ringDuration; ///< Ring duration in ms (how long ringback plays before audio)
-    unsigned long gap;          ///< Gap duration in ms between audio files in a playlist
-    unsigned long duration;          ///< Gap duration in ms between audio files in a playlist
-};
 
 // ============================================================================
 // FUNCTION DECLARATIONS
@@ -155,41 +134,42 @@ void invalidateAudioCache();
 void audioMaintenanceLoop();
 
 /**
- * @brief Process next item in audio download queue
- * @return true if item was processed, false if queue empty or error
- * 
- * Call this function periodically in main loop to download audio files
- * in the background. Non-blocking operation with rate limiting.
- * 
+ * @brief Process next item in audio download queue (polled / fallback mode)
+ * @return true if a download tick was processed, false if queue empty or error
+ *
+ * Under normal operation the download queue runs on its own FreeRTOS task
+ * (started automatically by initializeAudioFileManager).  Call this from
+ * audioMaintenanceLoop() only when task mode is unavailable.
+ *
  * @note Prefer audioMaintenanceLoop() which also handles catalog refresh.
  */
 bool processAudioDownloadQueue();
 
-/**
- * @brief Get number of items remaining in download queue
- * @return Number of items not yet processed
- */
-int getDownloadQueueCount();
+// /**
+//  * @brief Get number of items remaining in download queue
+//  * @return Number of items not yet processed
+//  */
+// int getDownloadQueueCount();
 
-/**
- * @brief Get total number of items ever added to download queue
- * @return Total queue size (including processed items)
- */
-int getTotalDownloadQueueSize();
+// /**
+//  * @brief Get total number of items ever added to download queue
+//  * @return Total queue size (including processed items)
+//  */
+// int getTotalDownloadQueueSize();
 
-/**
- * @brief List all items in download queue to serial output
- * 
- * Shows pending, in-progress, and completed downloads.
- */
-void listDownloadQueue();
+// /**
+//  * @brief List all items in download queue to serial output
+//  * 
+//  * Shows pending, in-progress, and completed downloads.
+//  */
+// void listDownloadQueue();
 
-/**
- * @brief Clear all items from download queue
- * 
- * Resets queue to empty state. Does not delete downloaded files.
- */
-void clearDownloadQueue();
+// /**
+//  * @brief Clear all items from download queue
+//  * 
+//  * Resets queue to empty state. Does not delete downloaded files.
+//  */
+// void clearDownloadQueue();
 
 /**
  * @brief Check if download queue is empty
@@ -207,15 +187,15 @@ bool isDownloadQueueEmpty();
 void preCacheDNS();
 
 /**
- * @brief Register a single audio file with the AudioKeyRegistry and create its playlist
+ * @brief Register a single audio entry with the AudioKeyRegistry and create its playlist
  * 
- * This function is idempotent - calling it multiple times with the same AudioFile
+ * This function is idempotent - calling it multiple times with the same AudioEntry
  * will produce the same result. If the key is already registered, it will be
  * updated with the new values.
  * 
- * @param file Pointer to the AudioFile to register
+ * @param entry Pointer to the AudioEntry to register
  * @return true if registration successful, false if skipped or failed
  */
-bool registerAudioFile(const AudioFile* file);
+bool registerAudioFile(const AudioEntry* entry);
 
 #endif // AUDIO_FILE_MANAGER_H

@@ -5,54 +5,28 @@
  * @date 2025
  */
 
+#include <config.h>
+#if ENABLE_PLAYLIST_FEATURES
+
 #include "audio_playlist_registry.h"
 #include "logging.h"
 #include "tone_generators.h"
 
 // ============================================================================
-// GLOBAL TONE GENERATORS
-// ============================================================================
-
-
-// Dial tone: 350 Hz + 440 Hz (North American standard)
-static DualToneGenerator dialtoneGenerator(350.0f, 440.0f, 16000.0f);
-
-// Ringback base tone: 440 Hz + 480 Hz (North American standard)
-static DualToneGenerator ringbackTone(440.0f, 480.0f, 16000.0f);
-
-// Ringback with cadence: RINGBACK_TONE_MS on, RINGBACK_SILENCE_MS off
-static RepeatingToneGenerator<int16_t> ringbackToneGenerator(ringbackTone, RINGBACK_TONE_MS, RINGBACK_SILENCE_MS);
-
-// ============================================================================
 // GLOBAL INSTANCES
 // ============================================================================
 
-// Global key registry
-static AudioKeyRegistry* globalKeyRegistry = nullptr;
-
-// Global playlist registry  
-static AudioPlaylistRegistry* globalPlaylistRegistry = nullptr;
-
-
-AudioKeyRegistry& getAudioKeyRegistry() {
-    if (!globalKeyRegistry) {
-        globalKeyRegistry = new AudioKeyRegistry();
-        globalKeyRegistry->registerGenerator("dialtone", &dialtoneGenerator);
-        globalKeyRegistry->registerGenerator("ringback", &ringbackToneGenerator);
-        Logger.println("✅ Global AudioKeyRegistry initialized with tone generators");
-    }
-    return *globalKeyRegistry;
-}
 
 AudioPlaylistRegistry& getAudioPlaylistRegistry() {
-    if (!globalPlaylistRegistry) {
-        globalPlaylistRegistry = new AudioPlaylistRegistry();
-        globalPlaylistRegistry->setKeyRegistry(&getAudioKeyRegistry());
-        
-        Logger.println("✅ Global AudioPlaylistRegistry initialized");
+    static AudioPlaylistRegistry instance;
+    static bool linked = false;
+    if (!linked) {
+        instance.setKeyRegistry(&getAudioKeyRegistry());
+        linked = true;
     }
-    return *globalPlaylistRegistry;
+    return instance;
 }
+
 
 // ============================================================================
 // PLAYLIST MANAGEMENT
@@ -139,7 +113,7 @@ bool AudioPlaylistRegistry::appendToPlaylist(const char* playlistName, const cha
     
     // Validate entry exists in registry if we have one
     if (keyRegistry) {
-        const KeyEntry* entry = keyRegistry->getEntry(audioKey);
+        const AudioEntry* entry = keyRegistry->getEntry(audioKey);
         if (!entry) {
             Logger.printf("⚠️ Warning: audioKey '%s' not found in registry (appending anyway)\n", audioKey);
         }
@@ -151,7 +125,7 @@ bool AudioPlaylistRegistry::appendToPlaylist(const char* playlistName, const cha
     return true;
 }
 
-bool AudioPlaylistRegistry::appendToPlaylist(const char* playlistName, const KeyEntry* entry, unsigned long durationMs) {
+bool AudioPlaylistRegistry::appendToPlaylist(const char* playlistName, const AudioEntry* entry, unsigned long durationMs) {
     if (!playlistName || !entry) return false;
     
     // Delegate to string-based version
@@ -209,7 +183,7 @@ size_t AudioPlaylistRegistry::resolvePlaylist(const char* playlistName) {
     // Validate that each audioKey exists in the registry
     size_t valid = 0;
     for (const auto& node : playlist->nodes) {
-        const KeyEntry* entry = keyRegistry->getEntry(node.audioKey.c_str());
+        const AudioEntry* entry = keyRegistry->getEntry(node.audioKey.c_str());
         if (entry) {
             valid++;
         } else {
@@ -243,7 +217,7 @@ bool Playlist::appendEntry(const char* audioKey, unsigned long durationMs) {
     
     // Validate entry exists in registry if we have one
     if (keyRegistry) {
-        const KeyEntry* entry = keyRegistry->getEntry(audioKey);
+        const AudioEntry* entry = keyRegistry->getEntry(audioKey);
         if (!entry) {
             Logger.printf("⚠️ Warning: audioKey '%s' not found in registry (appending anyway)\n", audioKey);
         }
@@ -258,7 +232,7 @@ bool Playlist::prependEntry(const char* audioKey, unsigned long durationMs) {
     
     // Validate entry exists in registry if we have one
     if (keyRegistry) {
-        const KeyEntry* entry = keyRegistry->getEntry(audioKey);
+        const AudioEntry* entry = keyRegistry->getEntry(audioKey);
         if (!entry) {
             Logger.printf("⚠️ Warning: audioKey '%s' not found in registry (prepending anyway)\n", audioKey);
         }
@@ -273,7 +247,7 @@ bool Playlist::replaceEntry(size_t index, const char* audioKey, unsigned long du
     
     // Validate entry exists in registry if we have one
     if (keyRegistry) {
-        const KeyEntry* entry = keyRegistry->getEntry(audioKey);
+        const AudioEntry* entry = keyRegistry->getEntry(audioKey);
         if (!entry) {
             Logger.printf("⚠️ Warning: audioKey '%s' not found in registry (replacing anyway)\n", audioKey);
         }
@@ -282,3 +256,5 @@ bool Playlist::replaceEntry(size_t index, const char* audioKey, unsigned long du
     nodes[index] = PlaylistNode(audioKey, durationMs);
     return true;
 }
+
+#endif // ENABLE_PLAYLIST_FEATURES

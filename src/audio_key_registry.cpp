@@ -8,13 +8,23 @@
  */
 
 #include "audio_key_registry.h"
+#include "tone_generators.h"
 #include "file_utils.h"
 #include "logging.h"
 #include <cstring>
 
 // ============================================================================
+// STATIC MEMBER DEFINITION
+// ============================================================================
+AudioKeyRegistry AudioKeyRegistry::instance;
+
+// ============================================================================
 // KEY REGISTRATION
 // ============================================================================
+AudioKeyRegistry &getAudioKeyRegistry()
+{
+    return AudioKeyRegistry::instance;
+}
 
 void AudioKeyRegistry::registerKey(const char* audioKey, const char* path, AudioStreamType type, const char* alternatePath) {
     if (!audioKey || !path) return;
@@ -26,7 +36,7 @@ void AudioKeyRegistry::registerKey(const char* audioKey, const char* path, Audio
         return;
     }
     
-    KeyEntry entry(audioKey, path, type, alternatePath);
+    AudioEntry entry(audioKey, path, type, alternatePath);
     registry[std::string(audioKey)] = entry;
     
     if (alternatePath && strlen(alternatePath) > 0) {
@@ -47,8 +57,14 @@ void AudioKeyRegistry::registerKey(const char* audioKey, const char* primaryPath
         const char *localPath = asLocalPath(primaryPath, ext);
         if (localPath && strlen(localPath) == 0)
           localPath = nullptr;
-        // URL with local path: use local as primary, URL as streaming fallback
-        registerKey(audioKey, localPath, AudioStreamType::FILE_STREAM, primaryPath);
+        if (!localPath) {
+            // No local path could be derived — register as URL-only so the
+            // entry exists in the registry (streaming fallback will be used).
+            registerKey(audioKey, primaryPath, AudioStreamType::URL_STREAM, nullptr);
+        } else {
+            // URL with local path: use local as primary, URL as streaming fallback
+            registerKey(audioKey, localPath, AudioStreamType::FILE_STREAM, primaryPath);
+        }
     } else {
         // Local path only
         registerKey(audioKey, primaryPath, AudioStreamType::FILE_STREAM, nullptr);
@@ -58,18 +74,60 @@ void AudioKeyRegistry::registerKey(const char* audioKey, const char* primaryPath
     if (ext && strlen(ext) > 0) {
         auto it = registry.find(std::string(audioKey));
         if (it != registry.end()) {
-            it->second.ext = ext;
+            it->second.file->ext = ext;
         }
     }
 }
+void AudioKeyRegistry::registerGenerator(const char *audioKey, SoundGenerator<int16_t> *generator, unsigned long repeatMs) {
+    this->registerGenerator(audioKey, generator, repeatMs, repeatMs);
+}
 
-void AudioKeyRegistry::registerGenerator(const char* audioKey, SoundGenerator<int16_t>* generator) {
+void AudioKeyRegistry::registerGenerator(const char *audioKey, SoundGenerator<int16_t> *generator, unsigned long toneMs, unsigned long silenceMs)
+{
     if (!audioKey || !generator) return;
-    
-    KeyEntry entry(audioKey, generator);
-    registry[std::string(audioKey)] = entry;
-    
-    Logger.printf("🎵 Registered generator: %s\n", audioKey);
+    if(toneMs > 0 && silenceMs > 0) {
+        generator = new RepeatingToneGenerator<int16_t>(
+            std::unique_ptr<SoundGenerator<int16_t>>(generator),
+            toneMs, silenceMs);
+    }
+    AudioEntry entry(audioKey, generator);
+    entry.audioKey = audioKey;
+    registerEntry(std::move(entry));
+}
+
+void AudioKeyRegistry::registerEntry(AudioEntry&& entry) {
+    if (entry.audioKey.empty()) return;
+
+    std::string key = entry.audioKey;
+
+    // If replacing an existing owned generator, remove it from ownedGenerators
+    // so we don't accumulate dead generators until clearKeys().
+    auto existing = registry.find(key);
+    if (existing != registry.end()
+        && existing->second.type == AudioStreamType::GENERATOR
+        && existing->second.generator) {
+        auto* old = existing->second.generator;
+        ownedGenerators.erase(
+            std::remove_if(ownedGenerators.begin(), ownedGenerators.end(),
+                [old](const std::unique_ptr<SoundGenerator<int16_t>>& p) { return p.get() == old; }),
+            ownedGenerators.end());
+    }
+
+    if (entry.type == AudioStreamType::GENERATOR && entry.generator) {
+        ownedGenerators.emplace_back(entry.generator);
+    } else if (entry.type != AudioStreamType::GENERATOR && entry.file) {
+        // URL detection: convert URL primary path to local path + streaming fallback
+        if (isUrl(entry.file->path.c_str())) {
+            const char* ext = entry.file->ext.empty() ? nullptr : entry.file->ext.c_str();
+            const char* localPath = asLocalPath(entry.file->path.c_str(), ext);
+            if (localPath && strlen(localPath) > 0) {
+                entry.file->alternatePath = entry.file->path;
+                entry.file->path = localPath;
+            }
+        }
+    }
+
+    registry[key] = std::move(entry);
 }
 
 void AudioKeyRegistry::unregisterKey(const char* audioKey) {
@@ -80,7 +138,14 @@ void AudioKeyRegistry::unregisterKey(const char* audioKey) {
 
 void AudioKeyRegistry::clearKeys() {
     registry.clear();
+    ownedGenerators.clear();
     Logger.println("🔑 Cleared all audioKeys");
+}
+
+AudioEntry* AudioKeyRegistry::getEntryMutable(const char* audioKey) {
+    if (!audioKey) return nullptr;
+    auto it = registry.find(std::string(audioKey));
+    return (it != registry.end()) ? &it->second : nullptr;
 }
 
 // ============================================================================
@@ -123,7 +188,7 @@ bool AudioKeyRegistry::hasKeyWithPrefix(const char* prefix) const {
     return false;
 }
 
-const KeyEntry* AudioKeyRegistry::getEntry(const char* audioKey) const {
+const AudioEntry* AudioKeyRegistry::getEntry(const char* audioKey) const {
     if (!audioKey) return nullptr;
     
     auto it = registry.find(std::string(audioKey));
@@ -166,7 +231,7 @@ const char* AudioKeyRegistry::resolveKey(const char* audioKey) const {
         if (it->second.isGenerator()) {
             return nullptr;
         }
-        return it->second.path.c_str();
+        return it->second.file->path.c_str();
     }
     
     // Try dynamic resolver as fallback
@@ -216,10 +281,6 @@ void AudioKeyRegistry::listKeys() const {
         const KeyEntry& entry = it->second;
         Logger.printf("%2d. %s\n", index++, entry.audioKey.c_str());
         
-        if (entry.getDescription()) {
-            Logger.printf("    Description: %s\n", entry.getDescription());
-        }
-        
         const char* typeStr = "unknown";
         switch (entry.type) {
             case AudioStreamType::GENERATOR: typeStr = "generator"; break;
@@ -229,8 +290,9 @@ void AudioKeyRegistry::listKeys() const {
         }
         Logger.printf("    Type: %s\n", typeStr);
         
-        if (entry.getPath()) {
-            Logger.printf("    Path: %s\n", entry.getPath());
+        FileData* f = entry.getFile();
+        if (f && !f->path.empty()) {
+            Logger.printf("    Path: %s\n", f->path.c_str());
         }
         Logger.println();
     }

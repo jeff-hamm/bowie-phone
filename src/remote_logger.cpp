@@ -2,6 +2,7 @@
 #include "logging.h"
 #include "tailscale_manager.h"
 #include <WiFi.h>
+#include "web_queue.h"
 #include "http_utils.h"
 #include <Preferences.h>
 #include <WebServer.h>
@@ -23,7 +24,8 @@ static const char* REMOTE_LOG_DROPPED_LINE =
     "[I] StreamCopy.h : 187 - StreamCopy::copy  2048 -> 2048 -> 2048 bytes - in 1 hops";
 
 RemoteLoggerClass::RemoteLoggerClass() 
-    : lineCount(0), lastFlushTime(0), enabled(false), vpnRequired(true), bootSent(false) {
+    : lineCount(0), lastFlushTime(0), enabled(false), vpnRequired(true),
+      bootSent(false), _streamingEnabled(true), _postPending(false) {
     serverUrl[0] = '\0';
     deviceId[0] = '\0';
     bootId[0] = '\0';
@@ -38,6 +40,7 @@ bool RemoteLoggerClass::isDroppedRemoteLogLine(const String& line) {
 }
 
 void RemoteLoggerClass::trimLogBuffer() {
+    bool trimmed = false;
     while (logBuffer.length() >= REMOTE_LOG_BUFFER_SIZE - 256) {
         int nl = logBuffer.indexOf('\n');
         if (nl < 0) {
@@ -51,6 +54,11 @@ void RemoteLoggerClass::trimLogBuffer() {
         if (lineCount > 0) {
             lineCount--;
         }
+        trimmed = true;
+    }
+    // Indicate that lines were dropped so the receiver knows the log is incomplete
+    if (trimmed && !logBuffer.startsWith("...\n")) {
+        logBuffer = "...\n" + logBuffer;
     }
 }
 
@@ -176,11 +184,15 @@ size_t RemoteLoggerClass::write(const uint8_t* buffer, size_t size) {
 }
 
 void RemoteLoggerClass::flush() {
-    static bool flushing = false;
     static int consecutiveFailures = 0;
     static unsigned long backoffUntil = 0;
 
-    if (flushing || !enabled || logBuffer.length() == 0 || millis() - lastFlushTime < REMOTE_LOG_FLUSH_INTERVAL_MS)
+    if (!enabled || !_streamingEnabled || logBuffer.length() == 0 ||
+        millis() - lastFlushTime < REMOTE_LOG_FLUSH_INTERVAL_MS)
+        return;
+
+    // Don't double-queue
+    if (_postPending)
         return;
 
     // Exponential backoff: 10s, 20s, 40s, 80s … capped at 5 min
@@ -188,91 +200,91 @@ void RemoteLoggerClass::flush() {
         return;
     }
 
-    flushing = true;
+    // Check connectivity: WiFi must be up
+    if (!WiFi.isConnected()) return;
+
     // Check VPN requirement
     if (vpnRequired && !isTailscaleConnected()) {
         // Don't flush, keep buffering (up to limit)
         if (logBuffer.length() >= REMOTE_LOG_BUFFER_SIZE - 256) {
-            // Buffer full, drop oldest data
             int newlinePos = logBuffer.indexOf('\n');
             if (newlinePos > 0) {
                 logBuffer.remove(0, newlinePos + 1);
                 lineCount--;
             }
         }
-        flushing = false;
         return;
     }
 
+    if (strlen(serverUrl) == 0) return;
+
     // Send boot notification on first flush (includes firmware/reset info)
     if (!bootSent) {
-        if (sendBootNotification()) {
-            bootSent = true;
+        String bootJson;
+        if (buildBootJson(bootJson)) {
+            auto result = webQueue.enqueuePost(serverUrl, bootJson,
+                                               onBootPostDone, this,
+                                               "application/json",
+                                               "X-Device-ID", deviceId);
+            if (result == WebQueue::EnqueueResult::OK) {
+                // bootSent will be set in callback
+            }
+            // Don't block log sending on boot notification
         }
     }
-    
-    // Try to send logs
-    if (sendLogs(logBuffer)) {
+
+    // Snapshot the buffer and send
+    String json;
+    if (!buildLogsJson(json, logBuffer)) return;
+
+    auto result = webQueue.enqueuePost(serverUrl, json,
+                                       onLogPostDone, this,
+                                       "application/json",
+                                       "X-Device-ID", deviceId);
+    if (result == WebQueue::EnqueueResult::OK) {
+        _postPending = true;
         logBuffer = "";
         lineCount = 0;
         consecutiveFailures = 0;
-    } else {
+    } else if (result == WebQueue::EnqueueResult::QUEUE_FULL) {
+        // Keep the buffer, try again later
         consecutiveFailures++;
         unsigned long delay = min(300000UL, 10000UL << min(consecutiveFailures - 1, 5));
         backoffUntil = millis() + delay;
     }
-    
+
     lastFlushTime = millis();
-    flushing = false;
 }
 
-bool RemoteLoggerClass::sendLogs(const String& logs) {
-    if (!WiFi.isConnected() || strlen(serverUrl) == 0) {
-        return false;
-    }
-    
-    // Pre-size JSON: header ~120 bytes + escaped logs (worst case 6× for \uXXXX)
-    String json;
-    json.reserve(200 + logs.length() * 2);
-    
-    // Build JSON payload using snprintf for the fixed parts
+bool RemoteLoggerClass::buildLogsJson(String& out, const String& logs) {
+    out.reserve(200 + logs.length() * 2);
+
     char header[160];
     snprintf(header, sizeof(header),
              "{\"device\":\"%s\",\"boot_id\":\"%s\",\"uptime_sec\":%lu,\"logs\":\"",
              deviceId, bootId, millis() / 1000);
-    json += header;
-    
+    out += header;
+
     // Escape log content
     for (size_t i = 0; i < logs.length(); i++) {
         char c = logs[i];
         switch (c) {
-            case '"':  json += "\\\""; break;
-            case '\\': json += "\\\\"; break;
-            case '\n': json += "\\n"; break;
-            case '\r': json += "\\r"; break;
-            case '\t': json += "\\t"; break;
+            case '"':  out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
             default:
                 if (c >= 32 && c < 127) {
-                    json += c;
+                    out += c;
                 }
         }
     }
-    json += "\"}"; 
-    
-    HttpClient::Header hdrs[] = {
-        {"Content-Type", "application/json"},
-        {"X-Device-ID", deviceId}
-    };
-    HttpClient http(HTTP_TIMEOUT_SHORT_MS);
-    return http.post(serverUrl, json, hdrs, 2);
+    out += "\"}";
+    return true;
 }
 
-bool RemoteLoggerClass::sendBootNotification() {
-    if (!WiFi.isConnected() || strlen(serverUrl) == 0) {
-        return false;
-    }
-
-    // Gather boot context
+bool RemoteLoggerClass::buildBootJson(String& out) {
     esp_reset_reason_t reason = esp_reset_reason();
     const char* reasonStr = "unknown";
     switch (reason) {
@@ -289,31 +301,38 @@ bool RemoteLoggerClass::sendBootNotification() {
 
     const char* tsIp = getTailscaleIP();
 
-    String json = "{";
-    json += "\"device\":\"" + String(deviceId) + "\",";
-    json += "\"boot_id\":\"" + String(bootId) + "\",";
-    json += "\"boot\":true,";
-    json += "\"boot_reason\":\"" + String(reasonStr) + "\",";
-    json += "\"firmware\":\"" FIRMWARE_VERSION "\",";
-    json += "\"uptime_sec\":" + String(millis() / 1000) + ",";
-    json += "\"rssi\":" + String(WiFi.RSSI()) + ",";
-    json += "\"free_heap\":" + String(ESP.getFreeHeap()) + ",";
-    json += "\"wifi_ip\":\"" + WiFi.localIP().toString() + "\",";
+    out = "{";
+    out += "\"device\":\"" + String(deviceId) + "\",";
+    out += "\"boot_id\":\"" + String(bootId) + "\",";
+    out += "\"boot\":true,";
+    out += "\"boot_reason\":\"" + String(reasonStr) + "\",";
+    out += "\"firmware\":\"" FIRMWARE_VERSION "\",";
+    out += "\"uptime_sec\":" + String(millis() / 1000) + ",";
+    out += "\"rssi\":" + String(WiFi.RSSI()) + ",";
+    out += "\"free_heap\":" + String(ESP.getFreeHeap()) + ",";
+    out += "\"wifi_ip\":\"" + WiFi.localIP().toString() + "\",";
     if (tsIp) {
-        json += "\"tailscale_ip\":\"" + String(tsIp) + "\",";
+        out += "\"tailscale_ip\":\"" + String(tsIp) + "\",";
     }
-    // Include a compact boot line so receivers that require a non-empty
-    // `logs` field do not reject boot notifications with HTTP 400.
-    json += "\"logs\":\"BOOT firmware=" FIRMWARE_VERSION " reason=";
-    json += String(reasonStr);
-    json += "\"}";
-    
-    HttpClient::Header hdrs[] = {
-        {"Content-Type", "application/json"},
-        {"X-Device-ID", deviceId}
-    };
-    HttpClient http(HTTP_TIMEOUT_SHORT_MS);
-    return http.post(serverUrl, json, hdrs, 2);
+    out += "\"logs\":\"BOOT firmware=" FIRMWARE_VERSION " reason=";
+    out += String(reasonStr);
+    out += "\"}";
+    return true;
+}
+
+void RemoteLoggerClass::onLogPostDone(bool success, int statusCode, void* userData) {
+    auto* self = static_cast<RemoteLoggerClass*>(userData);
+    self->_postPending = false;
+    if (!success) {
+        Logger.printf("⚠️ [LOG] POST failed (HTTP %d)\n", statusCode);
+    }
+}
+
+void RemoteLoggerClass::onBootPostDone(bool success, int statusCode, void* userData) {
+    auto* self = static_cast<RemoteLoggerClass*>(userData);
+    if (success) {
+        self->bootSent = true;
+    }
 }
 
 // ============================================================================

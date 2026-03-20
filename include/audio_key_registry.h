@@ -7,7 +7,7 @@
  * - URLs
  * - Tone generators
  * 
- * Uses a unified KeyEntry structure that can hold either a path or a generator.
+ * Uses a unified AudioEntry structure that can hold either a path or a generator.
  * 
  * @date 2025
  */
@@ -18,7 +18,9 @@
 #include "AudioTools.h"
 #include "AudioTools/CoreAudio/AudioEffects/SoundGenerator.h"
 #include <map>
+#include <memory>
 #include <string>
+#include <vector>
 
 using namespace audio_tools;
 
@@ -37,96 +39,135 @@ enum class AudioStreamType {
 };
 
 // ============================================================================
-// KEY ENTRY STRUCTURE
+// AUDIO ENTRY — discriminated union for all audio resource types
 // ============================================================================
 
+
 /**
- * @brief Unified entry for audio keys - contains either a path or a generator
- * 
- * Each KeyEntry holds:
- * - The audioKey name
- * - The stream type
- * - Either a path (for files/URLs) or a generator pointer (for tones)
- * - Optional metadata (description, extension)
+ * @brief Reusable playback timing metadata
  */
-struct KeyEntry {
+struct AudioTiming {
+    unsigned long durationMs = 0;   ///< Playback duration in ms (0 = play to end)
+    unsigned long gapBefore  = 0;   ///< Silence before playback in ms
+    unsigned long gapAfter   = 0;   ///< Silence after playback in ms
+    unsigned long loop       = 0;   ///< Repeat count (0 = no loop, >0 = repeat N times)
+};
+
+struct AudioLink {
+    std::string audioKey;            ///< Audio key name (owned copy)
+    AudioTiming timing;              ///< Playback timing metadata
+
+    AudioLink() = default;
+    AudioLink(const char* key, AudioTiming t = {})
+        : audioKey(key ? key : ""), timing(t) {}
+};
+
+/**
+ * @brief Type-specific data for file/URL-based audio entries
+ */
+struct FileData {
+    std::string path;            ///< Local file path (for FILE_STREAM)
+    std::string alternatePath;   ///< Original URL for streaming fallback
+    std::string ext;             ///< File extension (e.g., "wav", "mp3")
+};
+
+/**
+ * @brief Unified entry for audio keys — holds file, URL, or generator data
+ *
+ * Discriminated by `type`:
+ * - FILE_STREAM / URL_STREAM → `file` sub-struct is valid
+ * - GENERATOR → `generator` pointer is valid
+ */
+struct AudioEntry {
     std::string audioKey;           ///< The key name
-    AudioStreamType type;           ///< Type of audio stream
-    
-    // Union-like storage: either path or generator (only one is valid based on type)
-    std::string path;               ///< Local file path (for FILE_STREAM)
-    std::string alternatePath;       ///< Original URL for streaming fallback
-    SoundGenerator<int16_t>* generator = nullptr;  ///< Generator pointer (for GENERATOR type)
-    
-    // Metadata
-    std::string description;        ///< Human-readable description
-    std::string ext;                ///< File extension (e.g., "wav", "mp3")
-    
-    KeyEntry() : type(AudioStreamType::NONE) {}
-    
-    /**
-     * @brief Construct a path-based entry (file or URL)
-     * @param key The audio key name
-     * @param pathStr Local file path
-     * @param streamType The stream type
-     * @param urlStr Optional streaming URL for fallback
-     */
-    KeyEntry(const char* key, const char* pathStr, AudioStreamType streamType, const char* urlStr = nullptr)
-        : audioKey(key ? key : "")
-        , type(streamType)
-        , path(pathStr ? pathStr : "")
-        , alternatePath(urlStr ? urlStr : "")
-        , generator(nullptr) {}
-    
-    /**
-     * @brief Construct a generator-based entry
-     */
-    KeyEntry(const char* key, SoundGenerator<int16_t>* gen)
-        : audioKey(key ? key : "")
-        , type(AudioStreamType::GENERATOR)
-        , path("")
-        , generator(gen) {}
-    
-    /**
-     * @brief Check if this entry represents a generator
-     */
-    bool isGenerator() const { return type == AudioStreamType::GENERATOR && generator != nullptr; }
-    
-    /**
-     * @brief Check if this entry represents a path (file or URL)
-     */
-    bool isPath() const { return type != AudioStreamType::GENERATOR && !path.empty(); }
-    
-    /**
-     * @brief Check if this entry has a streaming URL
-     */
-    bool hasUrl() const { return !alternatePath.empty(); }
+    AudioStreamType type;           ///< Discriminant
+    AudioTiming timing;              ///< Playback timing metadata
+    uint32_t contentHash = 0;        ///< Hash of source JSON for change detection
+    AudioLink* previous = nullptr;   ///< Audio to play before this entry (owned, nullable)
+    AudioLink* next     = nullptr;   ///< Audio to play after this entry (owned, nullable)
+
+    union {
+        FileData* file;                     ///< Owned. Valid when type is FILE_STREAM or URL_STREAM
+        SoundGenerator<int16_t>* generator; ///< Not owned. Valid when type is GENERATOR
+    };
+
+    AudioEntry() : type(AudioStreamType::NONE), file(nullptr) {}
 
     /**
-     * @brief Get the path or nullptr if this is a generator
+     * @brief Construct a path-based entry (file or URL)
      */
-    const char* getPath() const { return isPath() ? path.c_str() : nullptr; }
-    
+    AudioEntry(const char* key, const char* pathStr, AudioStreamType streamType, const char* urlStr = nullptr)
+        : audioKey(key ? key : "")
+        , type(streamType)
+        , file(new FileData{pathStr ? pathStr : "", urlStr ? urlStr : "", ""}) {}
+
     /**
-     * @brief Get the streaming URL or nullptr if not set
+     * @brief Construct a generator-based entry from a pre-built generator
      */
-    const char* getUrl() const { return hasUrl() ? alternatePath.c_str() : nullptr; }
-    
-    /**
-     * @brief Get the generator or nullptr if this is a path
-     */
+    AudioEntry(const char* key, SoundGenerator<int16_t>* gen)
+        : audioKey(key ? key : "")
+        , type(AudioStreamType::GENERATOR)
+        , generator(gen) {}
+
+    ~AudioEntry() {
+        delete previous; delete next;
+        if (type != AudioStreamType::GENERATOR) delete file;
+    }
+
+    // Copy
+    AudioEntry(const AudioEntry& o)
+        : audioKey(o.audioKey), type(o.type), timing(o.timing), contentHash(o.contentHash)
+        , previous(o.previous ? new AudioLink(*o.previous) : nullptr)
+        , next(o.next ? new AudioLink(*o.next) : nullptr) {
+        if (type == AudioStreamType::GENERATOR) generator = o.generator;
+        else file = o.file ? new FileData(*o.file) : nullptr;
+    }
+    AudioEntry& operator=(const AudioEntry& o) {
+        if (this == &o) return *this;
+        delete previous; delete next;
+        if (type != AudioStreamType::GENERATOR) delete file;
+        audioKey = o.audioKey; type = o.type; timing = o.timing; contentHash = o.contentHash;
+        previous = o.previous ? new AudioLink(*o.previous) : nullptr;
+        next = o.next ? new AudioLink(*o.next) : nullptr;
+        if (type == AudioStreamType::GENERATOR) generator = o.generator;
+        else file = o.file ? new FileData(*o.file) : nullptr;
+        return *this;
+    }
+
+    // Move
+    AudioEntry(AudioEntry&& o) noexcept
+        : audioKey(std::move(o.audioKey)), type(o.type), timing(o.timing), contentHash(o.contentHash)
+        , previous(o.previous), next(o.next) {
+        o.previous = nullptr; o.next = nullptr;
+        if (type == AudioStreamType::GENERATOR) { generator = o.generator; o.generator = nullptr; }
+        else { file = o.file; o.file = nullptr; }
+        o.type = AudioStreamType::NONE;
+    }
+    AudioEntry& operator=(AudioEntry&& o) noexcept {
+        if (this == &o) return *this;
+        delete previous; delete next;
+        if (type != AudioStreamType::GENERATOR) delete file;
+        audioKey = std::move(o.audioKey); type = o.type; timing = o.timing; contentHash = o.contentHash;
+        previous = o.previous; next = o.next;
+        o.previous = nullptr; o.next = nullptr;
+        if (type == AudioStreamType::GENERATOR) { generator = o.generator; o.generator = nullptr; }
+        else { file = o.file; o.file = nullptr; }
+        o.type = AudioStreamType::NONE;
+        return *this;
+    }
+
+    // — Convenience accessors (gate on type) ——————————————————
+
+    bool isGenerator() const { return type == AudioStreamType::GENERATOR && generator != nullptr; }
+    bool isFile()      const { return type != AudioStreamType::GENERATOR && file && !file->path.empty(); }
+    bool hasUrl()      const { return type != AudioStreamType::GENERATOR && file && !file->alternatePath.empty(); }
+
+    FileData* getFile()          const { return type != AudioStreamType::GENERATOR ? file : nullptr; }
     SoundGenerator<int16_t>* getGenerator() const { return isGenerator() ? generator : nullptr; }
-    
-    /**
-     * @brief Get the description
-     */
-    const char* getDescription() const { return description.empty() ? nullptr : description.c_str(); }
-    
-    /**
-     * @brief Get the file extension
-     */
-    const char* getExt() const { return ext.empty() ? nullptr : ext.c_str(); }
 };
+
+// Backward-compatible alias — remove once all call-sites are migrated
+using KeyEntry = AudioEntry;
 
 // ============================================================================
 // CALLBACK TYPES
@@ -168,7 +209,8 @@ public:
     // ========================================================================
     // KEY REGISTRATION
     // ========================================================================
-    
+    static AudioKeyRegistry instance;
+
     /**
      * @brief Register a path-based audioKey (file or URL)
      * @param audioKey The key name
@@ -195,13 +237,28 @@ public:
      *                  localPath becomes primary and primaryPath becomes streaming fallback
      */
     virtual void registerKey(const char* audioKey, const char* primaryPath, const char* ext = nullptr);
-    
+
     /**
-     * @brief Register a generator-based audioKey
+     * @brief Register a generator-based audioKey (registry takes ownership)
      * @param audioKey The key name (e.g., "dialtone", "ringback")
-     * @param generator Pointer to the SoundGenerator (caller retains ownership)
+     * @param generator Heap-allocated SoundGenerator — registry owns and deletes it
      */
-    virtual void registerGenerator(const char* audioKey, SoundGenerator<int16_t>* generator);
+    virtual void registerGenerator(const char *audioKey, SoundGenerator<int16_t> *generator,unsigned long repeatMs=0);
+    /**
+     * @brief Register a generator-based audioKey (registry takes ownership)
+     * @param audioKey The key name (e.g., "dialtone", "ringback")
+     * @param generator Heap-allocated SoundGenerator — registry owns and deletes it
+     */
+    virtual void registerGenerator(const char *audioKey, SoundGenerator<int16_t> *generator,unsigned long toneMs, unsigned long silenceMs);
+
+    /**
+     * @brief Register a fully-built AudioEntry, taking ownership via move
+     * 
+     * For file/URL entries, handles URL detection and local-path conversion.
+     * For generators, adds the pointer to ownedGenerators.
+     * Skips registration if an identical entry already exists for the key.
+     */
+    virtual void registerEntry(AudioEntry&& entry);
     
     /**
      * @brief Unregister an audioKey (path or generator)
@@ -230,10 +287,18 @@ public:
     virtual bool hasKeyWithPrefix(const char* prefix) const;
     
     /**
-     * @brief Get a KeyEntry by audioKey
+     * @brief Get an AudioEntry by audioKey (const)
      * @return Pointer to the entry, or nullptr if not found
      */
-    virtual const KeyEntry* getEntry(const char* audioKey) const;
+    virtual const AudioEntry* getEntry(const char* audioKey) const;
+    
+    /**
+     * @brief Get a mutable AudioEntry by audioKey
+     * 
+     * Use to set timing/links after registration.
+     * @return Pointer to the entry, or nullptr if not found
+     */
+    AudioEntry* getEntryMutable(const char* audioKey);
     
     /**
      * @brief Check if the key is a registered generator
@@ -283,12 +348,12 @@ public:
     /**
      * @brief Get iterator to beginning of registry
      */
-    std::map<std::string, KeyEntry>::const_iterator begin() const { return registry.begin(); }
+    std::map<std::string, AudioEntry>::const_iterator begin() const { return registry.begin(); }
     
     /**
      * @brief Get iterator to end of registry
      */
-    std::map<std::string, KeyEntry>::const_iterator end() const { return registry.end(); }
+    std::map<std::string, AudioEntry>::const_iterator end() const { return registry.end(); }
     
     /**
      * @brief List all registered keys to serial output
@@ -299,9 +364,15 @@ public:
     
 protected:
     // Unified registry - single map for all entry types
-    std::map<std::string, KeyEntry> registry;
+    std::map<std::string, AudioEntry> registry;
+    
+    // Owns dynamically-created generators (from JSON config).
+    // Static generators (dialtone, ringback) are NOT in this list.
+    std::vector<std::unique_ptr<SoundGenerator<int16_t>>> ownedGenerators;
     
     // Dynamic resolution callbacks (fallback when key not in registry)
     AudioKeyResolverCallback keyResolver = nullptr;
     AudioKeyExistsCallback keyExistsCallback = nullptr;
 };
+
+AudioKeyRegistry &getAudioKeyRegistry();

@@ -1,9 +1,4 @@
-********************************************************************************
-Obsolete PIO Core v6.1.18 is used (previous was 6.1.19)
-Please remove multiple PIO Cores from a system:
-https://docs.platformio.org/en/latest/core/installation/troubleshooting.html
-********************************************************************************
-Processing bowie-phone-1 (platform: espressif32; board: esp32dev; framework: arduino)
+Processing bowie-phone-custom (platform: espressif32; board: esp32dev; framework: arduino)
 --------------------------------------------------------------------------------
 Verbose mode can be enabled via `-v, --verbose` option
 CONFIGURATION: https://docs.platformio.org/page/boards/espressif32/esp32dev.html
@@ -13,6 +8,7 @@ DEBUG: Current (cmsis-dap) External (cmsis-dap, esp-bridge, esp-prog, iot-bus-jt
 PACKAGES: 
  - framework-arduinoespressif32 @ 3.20017.241212+sha.dcc1105b 
  - tool-esptoolpy @ 2.40900.250804 (4.9.0) 
+ - tool-openocd-esp32 @ 2.1100.20220706 (11.0) 
  - toolchain-xtensa-esp32 @ 8.4.0+2021r2-patch5
 Converting main.ino
 LDF: Library Dependency Finder -> https://bit.ly/configure-pio-ldf
@@ -20,38 +16,44 @@ LDF Modes: Finder ~ chain, Compatibility ~ soft
 Found 40 compatible libraries
 Scanning dependencies...
 Dependency Graph
-|-- audio-driver @ 0.2.0+sha.84c7de2
-|-- audio-tools @ 1.2.1+sha.334f79f
+|-- audio-driver @ 0.2.1+sha.b5824ed
+|-- audio-tools @ 1.2.2+sha.c4ccfe0
 |-- audiokit @ 0.7.0+sha.f8c4139
-|-- libhelix @ 0.9.2+sha.0d70b7f
+|-- libhelix @ 0.9.2+sha.63af214
 |-- WireGuard-ESP32 @ 0.1.5+sha.3048281
-|-- ESP Telnet @ 2.2.3+sha.545891d
+|-- ESP Telnet @ 2.2.3+sha.1d622ec
 |-- ArduinoOTA @ 2.0.0
-|-- ArduinoJson @ 7.4.2
+|-- ArduinoJson @ 7.4.3
 |-- FS @ 2.0.0
-|-- HTTPClient @ 2.0.0
 |-- SD @ 2.0.0
 |-- SD_MMC @ 2.0.0
 |-- SPI @ 2.0.0
 |-- WiFi @ 2.0.0
-|-- WiFiClientSecure @ 2.0.0
 |-- Preferences @ 2.0.0
 |-- WebServer @ 2.0.0
 |-- Update @ 2.0.0
+|-- HTTPClient @ 2.0.0
+|-- WiFiClientSecure @ 2.0.0
 |-- EEPROM @ 2.0.0
 |-- DNSServer @ 2.0.0
 Building in release mode
-Compiling .pio\build\bowie-phone-1\src\main.ino.cpp.o
-Linking .pio\build\bowie-phone-1\firmware.elf
-c:/users/jumper/.platformio/packages/toolchain-xtensa-esp32@8.4.0+2021r2-patch5/bin/../lib/gcc/xtensa-esp32-elf/8.4.0/../../../../xtensa-esp32-elf/bin/ld.exe: .pio/build/bowie-phone-1/src/test/test_esp32_integration/test_dtmf_frequency_integration.cpp.o: in function `setup()':
-C:\Users\Jumper\Projects\bowie-phone/src/test/test_esp32_integration/test_dtmf_frequency_integration.cpp:387: multiple definition of `setup()'; .pio/build/bowie-phone-1/src/main.ino.cpp.o:C:/Users/Jumper/Projects/bowie-phone/src/main.ino:63: first defined here
-c:/users/jumper/.platformio/packages/toolchain-xtensa-esp32@8.4.0+2021r2-patch5/bin/../lib/gcc/xtensa-esp32-elf/8.4.0/../../../../xtensa-esp32-elf/bin/ld.exe: .pio/build/bowie-phone-1/src/test/test_esp32_integration/test_dtmf_frequency_integration.cpp.o: in function `loop()':
-test_dtmf_frequency_integration.cpp:(.text._Z4loopv+0x0): multiple definition of `loop()'; .pio/build/bowie-phone-1/src/main.ino.cpp.o:C:/Users/Jumper/Projects/bowie-phone/src/main.ino:266: first defined here
-collect2.exe: error: ld returned 1 exit status
-*** [.pio\build\bowie-phone-1\firmware.elf] Error 1
-========================= [FAILED] Took 15.58 seconds =========================
+Warning! We have just detected `upload_port` as IP address or host name of ESP device. `upload_protocol` is switched to `espota`.
+Please specify `upload_protocol = espota` in `platformio.ini` project configuration file.
+Compiling .pio\build\bowie-phone-custom\src\main.ino.cpp.o
+Linking .pio\build\bowie-phone-custom\firmware.elf
+Retrieving maximum program size .pio\build\bowie-phone-custom\firmware.elf
+Checking size .pio\build\bowie-phone-custom\firmware.elf
+Advanced Memory Usage is available via "PlatformIO Home > Project Inspect"
+RAM:   [===       ]  28.5% (used 93392 bytes from 327680 bytes)
+Flash: [==========]  97.3% (used 1912821 bytes from 1966080 bytes)
+Building .pio\build\bowie-phone-custom\firmware.bin
+esptool.py v4.9.0
+Creating esp32 image...
+Merged 27 ELF sections
+Successfully created esp32 image.
+========================= [SUCCESS] Took 15.14 seconds =========================
 
-Environment    Status    Duration
--------------  --------  ------------
-bowie-phone-1  FAILED    00:00:15.584
-==================== 1 failed, 0 succeeded in 00:00:15.584 ====================
+Environment         Status    Duration
+------------------  --------  ------------
+bowie-phone-custom  SUCCESS   00:00:15.140
+========================= 1 succeeded in 00:00:15.140 =========================

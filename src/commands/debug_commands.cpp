@@ -231,6 +231,7 @@ static void processDebugCommand(const String& cmd) {
         Logger.println("   pullota <url> - Pull firmware from URL");
         Logger.println("   update        - Enter firmware bootloader mode");
         Logger.println("   refresh-audio - Refresh audio catalog from server");
+        Logger.println("   logstream     - Toggle remote log streaming on/off");
         Logger.println("   reboot        - Reboot Device");
         Logger.println("   <digits>      - Simulate DTMF sequence");
         Logger.println();
@@ -295,6 +296,11 @@ static void processDebugCommand(const String& cmd) {
         bool newState = !isFFTDebugEnabled();
         setFFTDebugEnabled(newState);
         Logger.printf("🎵 FFT debug output: %s\n", newState ? "ENABLED" : "DISABLED");
+    }
+    else if (cmd.equalsIgnoreCase("logstream")) {
+        bool newState = !RemoteLogger.isStreamingEnabled();
+        RemoteLogger.setStreamingEnabled(newState);
+        Logger.printf("📡 Log streaming: %s\n", newState ? "ENABLED" : "DISABLED");
     }
     else if (cmd.startsWith("debugaudio") || cmd.startsWith("debugAudio") || cmd.equalsIgnoreCase("audiodebug")) {
         int durationSec = 20;

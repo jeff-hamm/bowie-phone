@@ -1347,7 +1347,9 @@ void handleNetworkLoop()
         }
     }
     
+    #if ENABLE_REMOTE_UPDATES
     checkForRemoteUpdates();
+    #endif
 
     // Handle OTA updates (only if started and WiFi is ready)
     if (otaStarted && (WiFi.status() == WL_CONNECTED || isConfigMode))
