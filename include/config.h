@@ -52,12 +52,11 @@
 // AUDIO CONFIGURATION
 // ============================================================================
 
-// Set to 1 to enable playlist enrichment features (ringback before audio,
-// click after audio, previous/next chaining). When 0, each audioKey plays
-// its single audio file directly without playlist wrapping.
-#ifndef ENABLE_PLAYLIST_FEATURES
-#define ENABLE_PLAYLIST_FEATURES 0
-#endif
+// DEPRECATED: Old playlist enrichment (ringback, click, previous/next chaining)
+// is replaced by the previous/next AudioLink system on AudioEntry.
+// #ifndef ENABLE_PLAYLIST_FEATURES
+// #define ENABLE_PLAYLIST_FEATURES 0
+// #endif
 
 // Ringback rings before audio playback (random count in [min, max])
 // Each ring = RINGBACK_TONE_MS + RINGBACK_SILENCE_MS.  Set min to 0 to disable.
@@ -72,6 +71,10 @@
 #ifndef RINGBACK_TONE_MS
 #define RINGBACK_TONE_MS 2000
 #endif
+#ifndef OFF_HOOK_MS
+#define OFF_HOOK_MS 100
+#endif
+
 #ifndef RINGBACK_SILENCE_MS
 #define RINGBACK_SILENCE_MS 3000
 #endif
@@ -83,6 +86,8 @@
 #ifndef AUDIO_CHANNELS
 #define AUDIO_CHANNELS 1
 #endif
+
+
 
 #ifndef AUDIO_SAMPLE_RATE
 #define AUDIO_SAMPLE_RATE 44100

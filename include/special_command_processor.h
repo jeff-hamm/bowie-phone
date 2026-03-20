@@ -32,10 +32,20 @@ void enterFirmwareUpdateMode();
 void shutdownAudioForOTA();
 
 /**
- * @brief Process debug input from a stream (Serial or Telnet)
- * @param input Stream to read debug commands from
+ * @brief Register a stream as a debug input source.
+ * processDebugInput() will poll all registered streams each call.
  */
-void processDebugInput(Stream& input);
+void addDebugStream(Stream& stream);
+
+/**
+ * @brief Unregister a previously added debug input stream.
+ */
+void removeDebugStream(Stream& stream);
+
+/**
+ * @brief Poll all registered debug input streams for commands.
+ */
+void processDebugInput();
 
 /**
  * @brief CPU load test for Goertzel-based DTMF detection during audio playback

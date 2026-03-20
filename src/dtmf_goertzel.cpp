@@ -35,12 +35,6 @@ static const char GOERTZEL_DTMF_KEYPAD[4][4] = {
     {'*', '0', '#', 'D'}
 };
 
-// Maximum twist ratio (high/low magnitude) to accept as valid DTMF
-// Bowie Phone has asymmetric band magnitudes: high band 2-9x stronger than low
-static const float MAX_TWIST_RATIO = 12.0f;
-
-// Number of consecutive silent blocks before considering key released
-static const int RELEASE_BLOCK_COUNT = 4;
 
 // Reference structure for Goertzel DTMF frequencies
 struct GoertzelDTMFRef {
@@ -124,7 +118,7 @@ static void evaluateBlock() {
         // No frequencies above threshold in this cycle — silence
         consecutiveMisses++;
         
-        if (consecutiveMisses >= RELEASE_BLOCK_COUNT) {
+        if (consecutiveMisses >= config.releaseBlockCount) {
             // Key released — reset for next press
             if (emittedKey != 0) {
                 Logger.printf("🎵 Goertzel: key '%c' released (silence)\n", emittedKey);
@@ -238,7 +232,7 @@ static GoertzelDTMFRef colRefs[4] = {
 // INITIALIZATION
 // ============================================================================
 
-void initGoertzelDecoder(GoertzelStream &goertzel, StreamCopy &copier)
+void initGoertzelDecoder(GoertzelStream &goertzel, StreamCopy &copier, bool startTask)
 {
     const PhoneConfig& config = getPhoneConfig();
     
@@ -283,7 +277,10 @@ void initGoertzelDecoder(GoertzelStream &goertzel, StreamCopy &copier)
                   config.fundamentalMagnitudeThreshold,
                   config.minDetectionMagnitude,
                   config.requiredConsecutive,
-                  MAX_TWIST_RATIO);
+                  config.maxTwistRatio);
+    if (startTask) {
+        startGoertzelTask(copier);
+    }
 }
 
 // ============================================================================

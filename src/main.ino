@@ -29,9 +29,9 @@
 #include <WiFi.h>
 #include <SPI.h>
 #include <SD.h>
-#include <ESPTelnetStream.h>
+#include "tone_generators.h"
+#include "crash_counter.h"
 
-ESPTelnetStream telnet;  // Telnet server for remote logging
 AudioBoardStream kit(AudioKitEs8388V1); // Audio source
 AudioSource *source = nullptr;          // to be initialized in setup()
 MultiDecoder multi_decoder;
@@ -41,7 +41,7 @@ AACDecoderHelix aac_decoder;       // Decodes AAC frames extracted from M4A
 MultiDecoder m4a_inner_decoder;    // Routes demuxed AAC frames to aac_decoder
 ContainerM4A m4a_decoder;          // Demuxes M4A/MP4 container
 ExtendedAudioPlayer& audioPlayer = getExtendedAudioPlayer();
-
+AudioKeyRegistry& audioKeyRegistry = getAudioKeyRegistry();
 // Goertzel-based DTMF detection (more efficient during dial tone)
 GoertzelStream goertzel;                // Goertzel detector
 StreamCopy goertzelCopier(goertzel, kit); // copy mic to Goertzel
@@ -57,68 +57,6 @@ const int FIRMWARE_UPDATE_KEY = 19;  // GPIO 19 = KEY3
 // Flag to track if audio board was initialized
 static bool audioKitInitialized = false;
 
-// ============================================================================
-// CRASH COUNTER — boot-loop protection via RTC memory
-// ============================================================================
-// RTC_NOINIT_ATTR survives soft resets (panic, WDT) but is undefined after
-// power-on or brownout.  A magic sentinel validates stored data.
-static const uint32_t CRASH_COUNTER_MAGIC = 0xDEAD0042;
-static const uint32_t SAFE_MODE_RETRY_MAGIC = 0xBEEF0001;
-RTC_NOINIT_ATTR static uint32_t rtcCrashMagic;
-RTC_NOINIT_ATTR static uint32_t rtcCrashCount;
-RTC_NOINIT_ATTR static uint32_t rtcSafeModeRetry;
-
-#ifndef CRASH_SAFE_MODE_THRESHOLD
-#define CRASH_SAFE_MODE_THRESHOLD 3
-#endif
-#ifndef CRASH_STABILITY_MS
-#define CRASH_STABILITY_MS 60000   // 60 s normal uptime = stable → clear counter
-#endif
-#ifndef SAFE_MODE_REBOOT_MS
-#define SAFE_MODE_REBOOT_MS 300000 // 5 min in safe mode before retrying normal boot
-#endif
-
-static bool inSafeMode = false;
-
-// Evaluate crash history and return true if safe mode should be entered.
-// Called once at the very top of setup(), after Logger is ready.
-static bool evaluateCrashCounter() {
-    esp_reset_reason_t reason = esp_reset_reason();
-
-    // Invalid magic or power-on/brownout → RTC data is garbage, initialize
-    if (rtcCrashMagic != CRASH_COUNTER_MAGIC ||
-        reason == ESP_RST_POWERON || reason == ESP_RST_BROWNOUT) {
-        rtcCrashMagic = CRASH_COUNTER_MAGIC;
-        rtcCrashCount = 0;
-        rtcSafeModeRetry = 0;
-        return false;
-    }
-
-    // Safe-mode retry flag set before last reboot → try normal boot once
-    if (rtcSafeModeRetry == SAFE_MODE_RETRY_MAGIC) {
-        rtcSafeModeRetry = 0;
-        Logger.printf("🔄 Safe-mode retry: attempting normal boot (crash count: %d)\n",
-                      rtcCrashCount);
-        return false;
-    }
-
-    // Crash-type resets → increment
-    switch (reason) {
-        case ESP_RST_PANIC:
-        case ESP_RST_INT_WDT:
-        case ESP_RST_TASK_WDT:
-        case ESP_RST_WDT:
-            rtcCrashCount++;
-            Logger.printf("⚠️ Crash detected (reason %d), count: %d/%d\n",
-                          reason, rtcCrashCount, CRASH_SAFE_MODE_THRESHOLD);
-            break;
-        default:
-            break;  // ESP_RST_SW etc. — preserve counter, don't increment
-    }
-
-    return rtcCrashCount >= CRASH_SAFE_MODE_THRESHOLD;
-}
-
 
 // DTMF sequence checking moved to sequence_processor.cpp
 
@@ -131,6 +69,7 @@ void setup()
     Logger.addLogger(Serial);
     // Add remote logger early so pre-VPN boot logs are buffered and shipped later
     Logger.addLogger(RemoteLogger);
+    addDebugStream(Serial);
 
 
     Logger.printf("\n\n=== Bowie Phone Starting ===\n");
@@ -154,18 +93,7 @@ void setup()
             enterFirmwareUpdateMode();
         }
 
-        initWiFi([]() {
-            telnet.onConnect([](String ip) {
-                Logger.printf("📡 Telnet: %s\n", ip.c_str());
-                Logger.printf("🛡️ SAFE MODE — crash count: %d\n", rtcCrashCount);
-                Logger.addLogger(telnet);
-            });
-            telnet.onDisconnect([](String ip) {
-                Logger.removeLogger(telnet);
-            });
-            telnet.begin(23);
-        });
-
+        initWiFi();
         Logger.println("🛡️ Safe mode ready — OTA at /update, retry timer running");
         return; // Skip all heavy init (audio, phone, Goertzel, etc.)
     }
@@ -254,62 +182,17 @@ void setup()
     // Initialize Audio Player with event callback
     // Register MP3 decoder
 
-    audioPlayer.setRegistry(&getAudioKeyRegistry());
-    
-    // Register decoders with the audio player
-    audioPlayer.addDecoder(mp3_decoder, "audio/mpeg");
-    // Register WAV decoder with all common MIME types
-    // WAV files can be detected as audio/wav, audio/wave, or audio/vnd.wave
-    audioPlayer.addDecoder(wav_decoder, "audio/wav");
-    audioPlayer.addDecoder(wav_decoder, "audio/vnd.wave");
-    audioPlayer.addDecoder(wav_decoder, "audio/wave");
-    // Register M4A decoder: ContainerM4A demuxes the MP4 box structure,
-    // then m4a_inner_decoder routes the extracted AAC frames to aac_decoder.
-    // checkM4A is inactive by default in MimeDetector — the 3-arg overload activates it.
-    m4a_inner_decoder.addDecoder(aac_decoder, "audio/aac");
-    m4a_decoder.setDecoder(m4a_inner_decoder);
-    audioPlayer.addDecoder(m4a_decoder, "audio/m4a", MimeDetector::checkM4A);
-    audioPlayer.begin(kit, source != nullptr);
-    
+    setupAudioPlayer();
+
     // Initialize Goertzel-based DTMF decoder
     // Goertzel is O(n*k) for 8 DTMF frequencies — the only detector we need
-    initGoertzelDecoder(goertzel, goertzelCopier);
-    
-    // Start Goertzel processing on separate FreeRTOS task (core 0)
-    // This prevents blocking the main loop (audio runs on core 1)
-    startGoertzelTask(goertzelCopier);
+    initGoertzelDecoder(goertzel, goertzelCopier, true);
 
     // Initialize WiFi with careful error handling
     Logger.println("🔧 Starting WiFi initialization...");
 
 
     initWiFi([]() {
-        // This is called when WiFi successfully connects
-        // Note: WiFi/Tailscale LED notifications are handled in wifi_manager/tailscale_manager
-        
-        // Start telnet server for remote logging
-        telnet.onConnect([](String ip) {
-            Logger.printf("📡 Telnet client connected from: %s\n", ip.c_str());
-            Logger.printf("🔧 Firmware: %s  Build: %s %s\n", FIRMWARE_VERSION, __DATE__, __TIME__);
-            Logger.addLogger(telnet);  // Add telnet as a log output stream
-        });
-        telnet.onConnectionAttempt([](String ip) {
-            Logger.printf("📡 Telnet connection attempt from: %s\n", ip.c_str());
-        });
-        telnet.onReconnect([](String ip) {
-            Logger.printf("📡 Telnet client reconnected from: %s\n", ip.c_str());
-        });
-        telnet.onDisconnect([](String ip) {
-            Logger.printf("📡 Telnet client disconnected from: %s\n", ip.c_str());
-            Logger.removeLogger(telnet);  // Remove from logger streams
-        });
-        
-        if (telnet.begin(23)) {
-            Logger.println("✅ Telnet server started on port 23");
-        } else {
-            Logger.println("❌ Failed to start telnet server");
-        }
-        
         // Download audio catalog (non-critical, can fail)
         // Uses cached DNS if WireGuard broke public DNS
         Logger.println("🌐 Downloading audio catalog...");
@@ -367,23 +250,52 @@ void setup()
     }
 }
 
+void setupAudioPlayer()
+{
+    audioPlayer.setRegistry(&audioKeyRegistry);
+
+    // Dial tone: 350 Hz + 440 Hz (North American standard)
+    audioKeyRegistry.registerEntry(AudioEntry("dialtone",
+                                              new DualToneGenerator(350.0f, 440.0f, 16000.0f)));
+
+    // Ringback: 440 Hz + 480 Hz with cadence
+    audioKeyRegistry.registerEntry(AudioEntry("ringback",
+                                      new RepeatingToneGenerator<int16_t>(
+                                          std::unique_ptr<SoundGenerator<int16_t>>(new DualToneGenerator(440.0f, 480.0f, 16000.0f)),
+                                          RINGBACK_TONE_MS, RINGBACK_SILENCE_MS)));
+    audioKeyRegistry.registerEntry(AudioEntry("off_hook",
+                                              new RepeatingToneGenerator<int16_t>(
+                                                  std::unique_ptr<SoundGenerator<int16_t>>(
+                                                    new MultiToneGenerator(
+                                                        std::array<float, 4>{1400.0f, 2060.0f, 2450.0f, 2600.0f}, 16000.0f)),
+                                                  OFF_HOOK_MS, OFF_HOOK_MS)));
+
+    // Register decoders with the audio player
+    audioPlayer.addDecoder(mp3_decoder, "audio/mpeg");
+    // Register WAV decoder with all common MIME types
+    // WAV files can be detected as audio/wav, audio/wave, or audio/vnd.wave
+    audioPlayer.addDecoder(wav_decoder, "audio/wav");
+    audioPlayer.addDecoder(wav_decoder, "audio/vnd.wave");
+    audioPlayer.addDecoder(wav_decoder, "audio/wave");
+    // Register M4A decoder: ContainerM4A demuxes the MP4 box structure,
+    // then m4a_inner_decoder routes the extracted AAC frames to aac_decoder.
+    // checkM4A is inactive by default in MimeDetector — the 3-arg overload activates it.
+    m4a_inner_decoder.addDecoder(aac_decoder, "audio/aac");
+    m4a_decoder.setDecoder(m4a_inner_decoder);
+    audioPlayer.addDecoder(m4a_decoder, "audio/m4a", MimeDetector::checkM4A);
+    audioPlayer.begin(kit, source != nullptr);
+    Logger.println("✅ Default tone generators registered");
+}
+
 void loop()
 {
     // === Safe mode: minimal loop (WiFi + OTA + telnet only) ===
-    if (inSafeMode) {
+    if (tickSafeMode()) {
         static unsigned long lastCheck = 0;
         unsigned long now = millis();
         if (now - lastCheck >= 100) {
             lastCheck = now;
-            telnet.loop();
             handleNetworkLoop();
-        }
-        // Retry normal boot after SAFE_MODE_REBOOT_MS
-        if (millis() >= SAFE_MODE_REBOOT_MS) {
-            Logger.println("🔄 Safe mode: retrying normal boot...");
-            delay(500);
-            rtcSafeModeRetry = SAFE_MODE_RETRY_MAGIC;
-            ESP.restart();
         }
         return;
     }
@@ -456,27 +368,15 @@ void loop()
     if (now - lastMaintenanceCheck >= limit) {
         lastMaintenanceCheck = now;
         
-        // Handle telnet server (process incoming connections)
-        telnet.loop();
 
         // Handle WiFi management (config portal and OTA)
         handleNetworkLoop();
         // Audio maintenance: catalog refresh (if stale) + download queue processing
         audioMaintenanceLoop();
         // Process debug commands from Serial and Telnet
-        processDebugInput(Serial);
-        processDebugInput(telnet);
+        processDebugInput();
         // Handle Tailscale VPN keepalive/reconnection and remote logging
 
-        // Clear crash counter once uptime exceeds stability threshold
-        static bool crashCounterCleared = false;
-        if (!crashCounterCleared && millis() >= CRASH_STABILITY_MS) {
-            if (rtcCrashCount > 0) {
-                Logger.printf("✅ Stable for %ds — crash counter cleared (was %d)\n",
-                              CRASH_STABILITY_MS / 1000, rtcCrashCount);
-            }
-            rtcCrashCount = 0;
-            crashCounterCleared = true;
-        }
+        tickCrashStabilityCheck();
     }
 }

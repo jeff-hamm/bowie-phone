@@ -14,6 +14,7 @@
 #pragma once
 
 #include <array>
+#include <memory>
 #include <config.h>
 #include "AudioTools/CoreAudio/AudioEffects/SoundGenerator.h"
 
@@ -118,75 +119,67 @@ using MultiToneGenerator = ToneGenerator<4>;
  * 
  * Wraps another tone generator and adds silence periods to create
  * repeating cadences. Useful for ringback tones, busy signals, etc.
+ * 
+ * Two construction modes:
+ * - Non-owning (reference): for static generators (dialtone, ringback)
+ * - Owning (unique_ptr): for dynamically-built generators from JSON
  */
 template<typename T>
 class RepeatingToneGenerator : public SoundGenerator<int16_t> {
 public:
     /**
-     * @brief Construct a new RepeatingToneGenerator
-     * @param generator Reference to the tone generator to wrap
-     * @param toneMs Duration of tone in milliseconds
-     * @param silenceMs Duration of silence in milliseconds
+     * @brief Construct non-owning — wraps an externally-managed generator
      */
     RepeatingToneGenerator(SoundGenerator<T>& generator, unsigned long toneMs, unsigned long silenceMs)
-        : m_generator(generator), m_toneDurationMs(toneMs), m_silenceDurationMs(silenceMs) {
+        : m_generator(&generator), m_toneDurationMs(toneMs), m_silenceDurationMs(silenceMs) {
+        m_sampleRate = AUDIO_SAMPLE_RATE;
+        recalcSampleCounts();
+    }
+
+    /**
+     * @brief Construct owning — takes ownership of a heap-allocated generator
+     */
+    RepeatingToneGenerator(std::unique_ptr<SoundGenerator<T>> generator, unsigned long toneMs, unsigned long silenceMs)
+        : m_ownedGenerator(std::move(generator)), m_generator(m_ownedGenerator.get())
+        , m_toneDurationMs(toneMs), m_silenceDurationMs(silenceMs) {
         m_sampleRate = AUDIO_SAMPLE_RATE;
         recalcSampleCounts();
     }
     
-    /**
-     * @brief Initialize the generator with audio format info
-     * @param info Audio format configuration
-     * @return true if initialization succeeded
-     */
     bool begin(AudioInfo info) override {
         SoundGenerator<int16_t>::begin(info);
         m_sampleRate = info.sample_rate;
-        m_generator.begin(info);
+        m_generator->begin(info);
         recalcSampleCounts();
         reset();
         return true;
     }
     
-    /**
-     * @brief Reset the pattern to beginning (start with tone)
-     */
     void reset() {
         m_sampleCounter = 0;
         m_inTonePeriod = true;
     }
     
-    /**
-     * @brief Recalculate sample counts based on current sample rate
-     */
     void recalcSampleCounts() {
         m_toneSamples = (m_toneDurationMs * m_sampleRate) / 1000;
         m_silenceSamples = (m_silenceDurationMs * m_sampleRate) / 1000;
     }
     
-    /**
-     * @brief Generate next audio sample
-     * @return 16-bit audio sample (tone or silence)
-     */
     int16_t readSample() override {
         int16_t sample = 0;
         
         if (m_inTonePeriod) {
-            // Output tone from wrapped generator
-            sample = m_generator.readSample();
+            sample = m_generator->readSample();
             m_sampleCounter++;
             
-            // Check if tone period is complete
             if (m_sampleCounter >= m_toneSamples) {
                 m_inTonePeriod = false;
                 m_sampleCounter = 0;
             }
         } else {
-            // Output silence (zero)
             sample = 0;
             m_sampleCounter++;
             
-            // Check if silence period is complete
             if (m_sampleCounter >= m_silenceSamples) {
                 m_inTonePeriod = true;
                 m_sampleCounter = 0;
@@ -197,7 +190,8 @@ public:
     }
     
 private:
-    SoundGenerator<T>& m_generator;      ///< Wrapped tone generator
+    std::unique_ptr<SoundGenerator<T>> m_ownedGenerator; ///< Owns the generator (if constructed with unique_ptr)
+    SoundGenerator<T>* m_generator;       ///< Always valid — points to owned or external generator
     unsigned long m_toneDurationMs;       ///< Tone duration in milliseconds
     unsigned long m_silenceDurationMs;    ///< Silence duration in milliseconds
     int m_sampleRate;                     ///< Current sample rate

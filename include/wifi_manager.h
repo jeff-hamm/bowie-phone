@@ -56,6 +56,7 @@ bool startConfigPortalSafe();
 void handleRoot();
 void handleSave();
 void handleNetworkLoop();
+void initTelnet();
 void clearWiFiCredentials();
 String getSavedSSID();
 

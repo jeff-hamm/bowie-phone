@@ -7,7 +7,7 @@
 // Initialize Goertzel-based DTMF decoder
 // More efficient than FFT when only detecting specific frequencies
 // Goertzel is O(n*k) vs FFT O(n log n), much faster for 8 DTMF frequencies
-void initGoertzelDecoder(GoertzelStream &goertzel, StreamCopy &copier);
+void initGoertzelDecoder(GoertzelStream &goertzel, StreamCopy &copier, bool startTask=false);
 
 // Start Goertzel processing on a separate FreeRTOS task (core 0)
 // This prevents blocking the main loop (audio runs on core 1)

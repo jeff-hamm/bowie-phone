@@ -8,6 +8,7 @@
 #include "logging.h"
 #include "mbedtls/platform.h"
 #include "esp_heap_caps.h"
+#include <freertos/task.h>
 
 #ifndef FIRMWARE_VERSION
 #define FIRMWARE_VERSION "0.0.0"
@@ -62,7 +63,7 @@ public:
         }
     }
 
-    ~HttpClient() { end(); }
+    ~HttpClient() { end(); delete _ownSecure; _ownSecure = nullptr; }
 
     // -- configuration -------------------------------------------------------
 
@@ -86,6 +87,23 @@ public:
 
     // Change the request timeout
     void setTimeout(int ms) { _timeoutMs = ms; }
+
+    // Force this instance to use a private WiFiClientSecure instead of the
+    // shared singleton.  Required for HttpClient instances created off the
+    // main task (e.g. a core-0 download task running alongside Goertzel).
+    void useOwnSecure() {
+        if (!_ownSecure) {
+            mbedtls_platform_set_calloc_free(
+                [](size_t n, size_t sz) -> void* {
+                    void* p = heap_caps_calloc(n, sz, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+                    return p ? p : heap_caps_calloc(n, sz, MALLOC_CAP_8BIT);
+                },
+                [](void* p) { heap_caps_free(p); }
+            );
+            _ownSecure = new WiFiClientSecure();
+            _ownSecure->setInsecure();
+        }
+    }
 
     // Register response headers you want to read after the request.
     // Persists across requests on the same instance.
@@ -266,8 +284,77 @@ public:
     // Access the underlying HTTPClient for edge cases (e.g. errorToString)
     HTTPClient& raw() { return _http; }
 
+    // -- async downloads ---------------------------------------------------
+    // Each method spawns a self-deleting FreeRTOS task.  The task creates its
+    // own WiFiClientSecure (via useOwnSecure) so it never touches the shared
+    // singleton.  SD access inside the callback is NOT automatically
+    // serialised — hold any SD mutex before queuing a write from the callback.
+
+    using AsyncFileCallback   = void(*)(int bytesWritten, void* userData);
+    using AsyncStringCallback = void(*)(bool success, const String& body, void* userData);
+
+    // Async file download: saves response body to sdPath, calls cb when done.
+    static TaskHandle_t getFileAsync(
+            const char* url, const char* sdPath,
+            AsyncFileCallback cb = nullptr, void* userData = nullptr,
+            int timeoutMs = HTTP_TIMEOUT_DOWNLOAD_MS,
+            UBaseType_t priority = 1, BaseType_t core = 0)
+    {
+        struct State {
+            char url[300]; char sdPath[128];
+            int timeoutMs;
+            AsyncFileCallback cb; void* userData;
+        };
+        auto* s = new State();
+        strncpy(s->url,    url,    sizeof(s->url)    - 1); s->url[sizeof(s->url)-1]       = '\0';
+        strncpy(s->sdPath, sdPath, sizeof(s->sdPath) - 1); s->sdPath[sizeof(s->sdPath)-1] = '\0';
+        s->timeoutMs = timeoutMs; s->cb = cb; s->userData = userData;
+
+        TaskHandle_t handle = nullptr;
+        xTaskCreatePinnedToCore([](void* p) {
+            auto* s = static_cast<State*>(p);
+            HttpClient http(s->timeoutMs);
+            http.useOwnSecure();
+            int result = http.getFile(s->url, s->sdPath, s->timeoutMs);
+            if (s->cb) s->cb(result, s->userData);
+            delete s;
+            vTaskDelete(nullptr);
+        }, "HttpDL", 12288, s, priority, &handle, core);
+        return handle;
+    }
+
+    // Async GET: fetches response body as a String, calls cb when done.
+    static TaskHandle_t getStringAsync(
+            const char* url,
+            AsyncStringCallback cb, void* userData = nullptr,
+            int timeoutMs = HTTP_TIMEOUT_CATALOG_MS,
+            UBaseType_t priority = 1, BaseType_t core = 0)
+    {
+        struct State {
+            char url[300]; int timeoutMs;
+            AsyncStringCallback cb; void* userData;
+        };
+        auto* s = new State();
+        strncpy(s->url, url, sizeof(s->url) - 1); s->url[sizeof(s->url)-1] = '\0';
+        s->timeoutMs = timeoutMs; s->cb = cb; s->userData = userData;
+
+        TaskHandle_t handle = nullptr;
+        xTaskCreatePinnedToCore([](void* p) {
+            auto* s = static_cast<State*>(p);
+            HttpClient http(s->timeoutMs);
+            http.useOwnSecure();
+            bool ok = http.get(s->url);
+            String body = ok ? http.getString() : String();
+            if (s->cb) s->cb(ok, body, s->userData);
+            delete s;
+            vTaskDelete(nullptr);
+        }, "HttpGet", 16384, s, priority, &handle, core);
+        return handle;
+    }
+
     // Process-wide shared WiFiClientSecure — allocated once, never freed.
-    // All HTTP runs on core 1 (main loop), so no mutex needed.
+    // Only safe from the main task (core 1).  Background tasks must call
+    // useOwnSecure() instead to get a per-instance client.
     static WiFiClientSecure& sharedSecure() {
         static WiFiClientSecure* s = nullptr;
         if (!s) {
@@ -291,6 +378,8 @@ private:
     int _statusCode;
     int _timeoutMs;
     String _statusMsg;
+
+    WiFiClientSecure* _ownSecure = nullptr;  // non-null when running off the main task
 
     // -- persistent headers --------------------------------------------------
     static constexpr int MAX_HEADERS = 8;
@@ -324,7 +413,7 @@ private:
                 Logger.printf("⚠️ HTTPS low heap: free=%u max_block=%u\n",
                               (unsigned)freeHeap, (unsigned)maxBlock);
             }
-            return _http.begin(sharedSecure(), url);
+            return _http.begin(_ownSecure ? *_ownSecure : sharedSecure(), url);
         }
         return _http.begin(url);
     }

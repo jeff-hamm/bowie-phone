@@ -43,43 +43,47 @@ static const PhoneConfig BOWIE_PHONE_CONFIG = {
     // Identification
     .name = "Bowie Phone",
     .description = "ESP32-A1S AudioKit with SLIC - standard DTMF fundamentals (repaired)",
-    
     // Frequency scaling
     .freqScale = 1.0f,
-    
+    .goertzelBlockSize = 2048, // ~46ms blocks @ 44100Hz (good SNR, low overhead)
+    // Number of consecutive silent blocks before considering key released
+    .requiredConsecutive = 2, // 2 consecutive matching blocks to confirm
+    .releaseBlockCount = 2,   // 2 consecutive silent blocks to consider key released
+
+    // Maximum twist ratio (high/low magnitude) to accept as valid DTMF
+    // Bowie Phone has asymmetric band magnitudes: high band 2-9x stronger than low
+    .maxTwistRatio = 12.0f,
     // Detection thresholds
     // GoertzelStream fires callback when magnitude > threshold
     // With normalized magnitudes: noise ~0.1-2.0, real tones ~50-500+
     // Set low enough to catch weak row frequencies, debouncing handles noise
     .fundamentalMagnitudeThreshold = 10.0f,
-    .minDetectionMagnitude = 40.0f,           // Reject DAC→ADC loopback artifacts (typ. 12-24)
-    .summedMagnitudeThreshold = 0.0f,         // Not used - standard DTMF only
-    .freqTolerance = 75.0f,                   // Hz tolerance for freq matching
-    .summedFreqTolerance = 0.0f,              // Not used
-    
+    .minDetectionMagnitude = 40.0f,   // Reject DAC→ADC loopback artifacts (typ. 12-24)
+    .summedMagnitudeThreshold = 0.0f, // Not used - standard DTMF only
+    .freqTolerance = 75.0f,           // Hz tolerance for freq matching
+    .summedFreqTolerance = 0.0f,      // Not used
+
     // Detection timing
-    .detectionCooldown = 200,                 // 200ms between distinct digit emissions
-    .gapThreshold = 120,                      // 120ms silence = button released
-    .requiredConsecutive = 3,                 // 3 consecutive matching blocks to confirm
-    
+    .detectionCooldown = 200, // 200ms between distinct digit emissions
+    .gapThreshold = 120,      // 120ms silence = button released
+
     // Goertzel-specific timing
-    .goertzelBlockTimeoutMs = 30,             // Row+Col must be in same block (generous)
-    .goertzelReleaseMs = 120,                 // Key released after 120ms silence
-    .goertzelBlockSize = 2048,                // ~46ms blocks @ 44100Hz (good SNR, low overhead)
-    .goertzelCopierBufferSize = 2048,         // Match block size for efficiency
-    
+    .goertzelBlockTimeoutMs = 30,     // Row+Col must be in same block (generous)
+    .goertzelReleaseMs = 120,         // Key released after 120ms silence
+    .goertzelCopierBufferSize = 2048, // Match block size for efficiency
+
     // Detection mode - standard DTMF fundamentals only
     .useSummedFreqDetection = false,
     .useFundamentalDetection = true,
     .summedTriggersRowCheck = false,
-    
+
     // No summed frequency table needed (repaired hardware has good fundamentals)
     .summedFreqTable = nullptr,
     .summedFreqTableSize = 0,
-    
+
     // Standard DTMF row frequencies
     .rowFreqs = {697.0f, 770.0f, 852.0f, 941.0f},
-    
+
     // Standard DTMF column frequencies
     .colFreqs = {1209.0f, 1336.0f, 1477.0f, 1633.0f},
 };

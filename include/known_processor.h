@@ -158,32 +158,32 @@ bool processAudioDownloadQueue();
  * @brief Get number of items remaining in download queue
  * @return Number of items not yet processed
  */
-int getDownloadQueueCount();
+//int getDownloadQueueCount();
 
 /**
  * @brief Get total number of items ever added to download queue
  * @return Total queue size (including processed items)
  */
-int getTotalDownloadQueueSize();
+//int getTotalDownloadQueueSize();
 
 /**
  * @brief List all items in download queue to serial output
  * 
  * Shows pending, in-progress, and completed downloads.
  */
-void listDownloadQueue();
+//void listDownloadQueue();
 
 /**
  * @brief Clear all items from download queue
  * 
  * Resets queue to empty state. Does not delete downloaded files.
  */
-void clearDownloadQueue();
+//void clearDownloadQueue();
 
 /**
  * @brief Check if download queue is empty
  * @return true if no items remain to process, false otherwise
  */
-bool isDownloadQueueEmpty();
+//bool isDownloadQueueEmpty();
 
 #endif // KNOWN_PROCESSOR_H

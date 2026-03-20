@@ -63,5 +63,35 @@
     "description": "Extended Information",
     "type": "audio",
     "path": "https://codeskulptor-demos.commondatastorage.googleapis.com/pang/pop.mp3"
+  },
+  "555": {
+    "description": "Custom Dial Tone (JSON generator)",
+    "type": "generator",
+    "frequencies": [350, 440],
+    "amplitude": 16000
+  },
+  "556": {
+    "description": "Custom Ringback (JSON generator with cadence)",
+    "type": "generator",
+    "frequencies": [440, 480],
+    "amplitude": 16000,
+    "toneMs": 2000,
+    "silenceMs": 4000
+  },
+  "557": {
+    "description": "Three-tone alert",
+    "type": "generator",
+    "frequencies": [950, 1400, 1800],
+    "amplitude": 12000,
+    "toneMs": 330,
+    "silenceMs": 1000
+  },
+  "700": {
+    "description": "Story with intro and outro",
+    "type": "audio",
+    "path": "https://example.com/story.mp3",
+    "duration": 30000,
+    "previous": {"key": "555", "duration": 1000},
+    "next": "click"
   }
 }

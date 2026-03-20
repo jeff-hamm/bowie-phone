@@ -4,9 +4,14 @@
 // MODULE-PRIVATE STATE
 // ============================================================================
 
-// Serial/Telnet debug input line buffer
-static char debugInputBuffer[64];
-static int debugInputPos = 0;
+// Registered debug input streams
+#define MAX_DEBUG_STREAMS 4
+static Stream* debugStreams[MAX_DEBUG_STREAMS];
+static int debugStreamCount = 0;
+
+// Per-stream line buffers
+static char debugInputBuffers[MAX_DEBUG_STREAMS][64];
+static int debugInputPositions[MAX_DEBUG_STREAMS];
 
 // Audio capture on next off-hook. Can be preset at build time with
 // -DCAPTURE_ON_OFFHOOK=<seconds>.
@@ -90,21 +95,46 @@ static void processDebugCommand(const String& cmd);
 // PUBLIC API
 // ============================================================================
 
-void processDebugInput(Stream& input) {
-    while (input.available()) {
-        char c = input.read();
+void addDebugStream(Stream& stream) {
+    if (debugStreamCount < MAX_DEBUG_STREAMS) {
+        debugStreams[debugStreamCount] = &stream;
+        debugInputPositions[debugStreamCount] = 0;
+        debugStreamCount++;
+    }
+}
 
-        if (c == '\n' || c == '\r') {
-            if (debugInputPos > 0) {
-                debugInputBuffer[debugInputPos] = '\0';
-                String cmd = String(debugInputBuffer);
-                cmd.trim();
-                processDebugCommand(cmd);
-                debugInputPos = 0;
+void removeDebugStream(Stream& stream) {
+    for (int i = 0; i < debugStreamCount; i++) {
+        if (debugStreams[i] == &stream) {
+            for (int j = i; j < debugStreamCount - 1; j++) {
+                debugStreams[j] = debugStreams[j + 1];
+                debugInputPositions[j] = debugInputPositions[j + 1];
+                memcpy(debugInputBuffers[j], debugInputBuffers[j + 1], sizeof(debugInputBuffers[0]));
             }
+            debugStreamCount--;
+            return;
         }
-        else if (debugInputPos < (int)sizeof(debugInputBuffer) - 1) {
-            debugInputBuffer[debugInputPos++] = c;
+    }
+}
+
+void processDebugInput() {
+    for (int s = 0; s < debugStreamCount; s++) {
+        Stream& input = *debugStreams[s];
+        char* buf = debugInputBuffers[s];
+        int& pos = debugInputPositions[s];
+        while (input.available()) {
+            char c = input.read();
+            if (c == '\n' || c == '\r') {
+                if (pos > 0) {
+                    buf[pos] = '\0';
+                    String cmd = String(buf);
+                    cmd.trim();
+                    processDebugCommand(cmd);
+                    pos = 0;
+                }
+            } else if (pos < (int)sizeof(debugInputBuffers[0]) - 1) {
+                buf[pos++] = c;
+            }
         }
     }
 }

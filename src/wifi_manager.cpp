@@ -1,3 +1,4 @@
+#include <ESPTelnetStream.h>
 #include "wifi_manager.h"
 #include "logging.h"
 #include "config.h"
@@ -24,6 +25,7 @@
 #ifndef OTA_HOSTNAME
 #define OTA_HOSTNAME "jump-phone"
 #endif
+ESPTelnetStream telnet; // Telnet server for remote logging
 
 // WiFi Setup Variables
 WebServer server(80);
@@ -1267,7 +1269,7 @@ void handleNetworkLoop()
             } else {
                 Logger.println("🌐 Tailscale skipped (not enabled)");
             }
-            
+            initTelnet();
             // Call the user-provided callback if set
             if (wifiConnectedCallback != nullptr)
             {
@@ -1366,4 +1368,37 @@ void handleNetworkLoop()
     }
 
     handleTailscaleLoop();
+    // Handle telnet server (process incoming connections)
+    telnet.loop();
+}
+
+void initTelnet()
+{
+    // Start telnet server for remote logging
+    telnet.onConnect([](String ip)
+                     {
+                         Logger.printf("📡 Telnet client connected from: %s\n", ip.c_str());
+                         Logger.printf("🔧 Firmware: %s  Build: %s %s\n", FIRMWARE_VERSION, __DATE__, __TIME__);
+                         Logger.addLogger(telnet); // Add telnet as a log output stream
+                         addDebugStream(telnet);
+                     });
+    telnet.onConnectionAttempt([](String ip)
+                               { Logger.printf("📡 Telnet connection attempt from: %s\n", ip.c_str()); });
+    telnet.onReconnect([](String ip)
+                       { Logger.printf("📡 Telnet client reconnected from: %s\n", ip.c_str()); });
+    telnet.onDisconnect([](String ip)
+                        {
+                            Logger.printf("📡 Telnet client disconnected from: %s\n", ip.c_str());
+                            Logger.removeLogger(telnet); // Remove from logger streams
+                            removeDebugStream(telnet);
+                        });
+
+    if (telnet.begin(23))
+    {
+        Logger.println("✅ Telnet server started on port 23");
+    }
+    else
+    {
+        Logger.println("❌ Failed to start telnet server");
+    }
 }
